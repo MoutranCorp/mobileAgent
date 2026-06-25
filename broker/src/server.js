@@ -62,7 +62,7 @@ export class BrokerServer {
       getActiveProject: () => this.projects.getActive(),
       emit,
     });
-    this.transcript.setProject(this.projects.getActive()?.id || null);
+    this.transcript.setProject(this.session.activeKey); // same key convention as sessions (project.id | '__main__')
 
     this.usage = new UsageLedger(config.stateDir);
     this.autoverify = new AutoVerify({
@@ -94,7 +94,7 @@ export class BrokerServer {
   async stop() {
     this.transcript.replay(); // flush any pending text record to disk
     this.runner.stopAll();
-    await this.session.stopEngine();
+    await this.session.stopAll();
     for (const ws of this.clients) {
       try {
         ws.close();
@@ -121,49 +121,76 @@ export class BrokerServer {
     this._sendSnapshot(ws);
   }
 
-  /** Central outbound hook: record transcript + detect native-dep change, then broadcast. */
+  /** Central outbound hook. Every engine event is tagged with `sessionKey`; we
+   *  record it to ITS session's transcript and do its bookkeeping against ITS
+   *  project, but only the ACTIVE session's full stream reaches the UI (background
+   *  sessions are surfaced via the SESSIONS event / busy badge instead). */
   _emitEvent(ev) {
+    const activeKey = this.session.activeKey;
+    const key = ev.sessionKey != null ? ev.sessionKey : activeKey;
     try {
-      // Stamp the turn/checkpoint id onto this turn's user_echo (FIFO, one in flight)
-      // so its bubble can be reverted later. Must happen before transcript.record.
-      if (ev.type === EventType.USER_ECHO && this._pendingTurn) {
+      // Stamp the turn/checkpoint id onto the active turn's user_echo (FIFO, one in
+      // flight) so its bubble can be reverted later. Must precede transcript.record.
+      if (ev.type === EventType.USER_ECHO && this._pendingTurn && key === activeKey) {
         ev.turnId = this._pendingTurn.turnId;
         ev.checkpointId = this._pendingTurn.checkpointId;
         this._pendingTurn = null;
       }
-      this.transcript.record(ev);
-      // Learn alias -> versioned id for FREE from the live engine's init, so the
-      // model picker can show "Opus 4.8" without an extra probe spawn.
-      if (ev.type === EventType.CAPABILITIES && ev.model && this.session.currentModel) {
+      this.transcript.record(ev); // routes by ev.sessionKey -> per-session buffer
+      // Learn alias -> versioned id from the ACTIVE engine's init only (a background
+      // engine's init must not train the resolver against the foreground's alias).
+      if (ev.type === EventType.CAPABILITIES && ev.model && key === activeKey && this.session.currentModel) {
         this.modelResolver.observe(this.session.currentModel, ev.model);
       }
       if (ev.type === EventType.USAGE) {
-        this.usage.record({ inTok: ev.inTok, outTok: ev.outTok, cost: ev.cost, profile: this.session.activeProfileId });
+        const profile = this.session.meta.get(key)?.profileId || this.session.activeProfileId;
+        this.usage.record({ inTok: ev.inTok, outTok: ev.outTok, cost: ev.cost, profile });
       }
       if (ev.type === EventType.RESULT) {
-        this._checkNativeChange();
-        this._emitTurnChanges();
-        // Self-healing: run the verify command after the turn (no-op if disabled).
-        const active = this.projects.getActive();
-        if (active) this.autoverify.onTurnComplete(active.dir);
+        const proj = this._projectForKey(key);
+        if (proj) {
+          this._checkNativeChange(proj);
+          this._emitTurnChanges(key, proj);
+          // Self-healing verify runs for the foreground session only (Phase 1).
+          if (key === activeKey) this.autoverify.onTurnComplete(proj.dir);
+        }
       }
     } catch {
       /* never let bookkeeping break the stream */
     }
-    this.broadcast(ev);
+    // Suppress a background session's full stream from the foreground UI.
+    if (ev.sessionKey == null || ev.sessionKey === activeKey) this.broadcast(ev);
   }
 
-  _emitTurnChanges() {
-    const active = this.projects.getActive();
-    if (!active || !this._turnCheckpoint || !this.checkpoints.isRepo(active.dir)) return;
-    const ch = this.checkpoints.changesSince(active.id, active.dir, this._turnCheckpoint);
+  _projectForKey(key) {
+    return key && key !== '__main__' ? this.projects.get(key) : null;
+  }
+
+  /** Bring a session to the foreground WITHOUT stopping the previous one (it keeps
+   *  running in the background). Replays that session's transcript + state. */
+  async _switchView(key) {
+    this.transcript.setProject(key);
+    await this.session.setActiveKey(key); // ensures an engine for `key`, keeps siblings alive
+    this.broadcast(event(EventType.TRANSCRIPT, { events: this.transcript.replay(), reset: true }));
+    this.broadcast(event(EventType.ENGINE_STATE, { state: this.session.engine?.state || 'stopped', ...this.session.snapshot }));
+    this.broadcast(event(EventType.PERMISSION_MODE, { mode: this.session.permissionMode }));
+    if (this.session.lastCapabilities) this.broadcast(this.session.lastCapabilities);
+    const p = this.projects.getActive();
+    if (p) this.broadcast(event(EventType.CHECKPOINTS, this.checkpoints.list(p.id, p.dir)));
+    this.broadcast(event(EventType.SESSIONS, { items: this.session.liveSessions(), activeKey: this.session.activeKey }));
+  }
+
+  _emitTurnChanges(key, proj) {
+    const cpId = this._turnCheckpoints && this._turnCheckpoints[key];
+    if (!proj || !cpId || !this.checkpoints.isRepo(proj.dir)) return;
+    const ch = this.checkpoints.changesSince(proj.id, proj.dir, cpId);
     if (ch && ch.files && ch.files.length) {
-      this.broadcast(event(EventType.TURN_CHANGES, { checkpointId: this._turnCheckpoint, files: ch.files, stat: ch.stat }));
+      this.broadcast(event(EventType.TURN_CHANGES, { checkpointId: cpId, files: ch.files, stat: ch.stat, sessionKey: key }));
     }
   }
 
-  _checkNativeChange() {
-    const active = this.projects.getActive();
+  _checkNativeChange(proj) {
+    const active = proj || this.projects.getActive();
     if (!active) return;
     const fp = this.devtools.nativeFingerprint(active.id);
     if (!fp) return;
@@ -216,6 +243,8 @@ export class BrokerServer {
       ...this.session.snapshot,
     }));
     this._send(ws, event(EventType.PERMISSION_MODE, { mode: this.session.permissionMode }));
+    // Live sessions (so a reconnecting client restores the background busy badges).
+    this._send(ws, event(EventType.SESSIONS, { items: this.session.liveSessions(), activeKey: this.session.activeKey }));
     if (this.session.lastCapabilities) this._send(ws, this.session.lastCapabilities);
     // Replay the recorded conversation so reloads/reconnects don't lose history.
     // reset:true makes it idempotent — the server greets with a snapshot AND the
@@ -305,7 +334,8 @@ export class BrokerServer {
         if (proj && this.checkpoints.isRepo(proj.dir)) {
           const cp = this.checkpoints.snapshot(proj.id, proj.dir, (cmd.text || 'turn').slice(0, 60));
           if (cp) {
-            this._turnCheckpoint = cp.id; // baseline for "what changed this turn"
+            this._turnCheckpoints = this._turnCheckpoints || {};
+            this._turnCheckpoints[this.session.activeKey] = cp.id; // per-session baseline
             checkpointId = cp.id;
             this.broadcast(event(EventType.CHECKPOINTS, this.checkpoints.list(proj.id, proj.dir)));
           }
@@ -348,10 +378,25 @@ export class BrokerServer {
         this.broadcast(event(EventType.TRANSCRIPT, { events: seeded, reset: true }));
         return this.session.resume(cmd.sessionId);
       }
-      case CommandType.LIST_SESSIONS:
+      case CommandType.LIST_SESSIONS: {
+        const items = cmd.scope === 'all' ? this.claudeConfig.listAllSessions() : this.claudeConfig.list('sessions');
+        const liveBusy = {};
+        for (const s of this.session.liveSessions()) if (s.sessionId) liveBusy[s.sessionId] = s.busy;
         return this._send(ws, event(EventType.CONFIG, {
-          kind: 'sessions', items: this.claudeConfig.list('sessions'),
+          kind: 'sessions', scope: cmd.scope || 'project', items, liveBusy,
+          activeSessionId: this.session.engine?.sessionId || null,
         }));
+      }
+      case CommandType.LIST_LIVE_SESSIONS:
+        return this._send(ws, event(EventType.SESSIONS, { items: this.session.liveSessions(), activeKey: this.session.activeKey }));
+      case CommandType.SWITCH_SESSION: {
+        if (cmd.key && cmd.key !== '__main__') {
+          this.projects.setActive(cmd.key);
+          this.broadcast(event(EventType.PROJECTS, this.projects.snapshot()));
+        }
+        await this._switchView(cmd.key);
+        return;
+      }
       case CommandType.SWITCH_ENGINE:
         await this.session.switchEngine(cmd.profileId);
         return this.broadcast(event(EventType.PROFILES, {
@@ -547,15 +592,9 @@ export class BrokerServer {
         return this.broadcast(event(EventType.PROJECTS, this.projects.snapshot()));
       case CommandType.OPEN_PROJECT: {
         this.projects.setActive(cmd.projectId);
-        this.transcript.setProject(cmd.projectId);
         this._nativeFingerprint = null;
         this.broadcast(event(EventType.PROJECTS, this.projects.snapshot()));
-        const replay = this.transcript.replay();
-        this._send(ws, event(EventType.TRANSCRIPT, { events: replay, reset: true }));
-        const p = this.projects.getActive();
-        if (p) this._send(ws, event(EventType.CHECKPOINTS, this.checkpoints.list(p.id, p.dir)));
-        // Re-point the engine at the new project (resume its session if any).
-        await this.session.startEngine(this.session.activeProfileId, {});
+        await this._switchView(cmd.projectId);
         return;
       }
       case CommandType.CREATE_PROJECT: {
@@ -569,13 +608,9 @@ export class BrokerServer {
       case CommandType.OPEN_PATH: {
         const res = this.projects.openPath(cmd.path);
         if (res.error) { this.broadcast(event(EventType.ERROR, { message: res.error })); return; }
-        this.transcript.setProject(this.projects.activeId);
         this._nativeFingerprint = null;
         this.broadcast(event(EventType.PROJECTS, this.projects.snapshot()));
-        this._send(ws, event(EventType.TRANSCRIPT, { events: this.transcript.replay(), reset: true }));
-        const p = this.projects.getActive();
-        if (p) this._send(ws, event(EventType.CHECKPOINTS, this.checkpoints.list(p.id, p.dir)));
-        await this.session.startEngine(this.session.activeProfileId, {});
+        await this._switchView(this.projects.activeId);
         return;
       }
 

@@ -82,6 +82,8 @@ try {
 try { await page.click('#menuBtn'); await sleep(700); await shot('04-sheet');
   const skills = page.locator('.mgr-tab', { hasText: 'Skills' });
   if (await skills.count()) { await skills.first().click(); await sleep(500); await shot('05-sheet-skills'); }
+  const sess = page.locator('.mgr-tab', { hasText: 'Sessions' });
+  if (await sess.count()) { await sess.first().click(); await sleep(700); await shot('05d-sessions'); }
   const upd = page.locator('.mgr-tab', { hasText: 'Update' });
   if (await upd.count()) {
     await upd.first().click(); await sleep(700); await shot('05b-update');

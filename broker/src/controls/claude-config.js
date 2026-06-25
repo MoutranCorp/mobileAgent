@@ -268,6 +268,35 @@ export class ClaudeConfig {
   }
 
   /**
+   * Sessions across ALL projects (for the management screen). Enumerates
+   * ~/.claude/projects/<encoded-cwd>/*.jsonl, derives a readable project name
+   * from the encoded directory (best-effort; the encoding is lossy), and returns
+   * them newest-first with the project name attached so the UI can group them.
+   */
+  listAllSessions({ max = 120 } = {}) {
+    const root = path.join(os.homedir(), '.claude', 'projects');
+    if (!fs.existsSync(root)) return [];
+    const out = [];
+    for (const enc of safeReaddir(root)) {
+      const dir = path.join(root, enc);
+      let isDir = false;
+      try { isDir = fs.statSync(dir).isDirectory(); } catch { /* ignore */ }
+      if (!isDir) continue;
+      // The encoded dir is the cwd with path separators turned into '-'; the last
+      // segment is a decent project label.
+      const project = enc.split('-').filter(Boolean).pop() || enc;
+      for (const n of safeReaddir(dir)) {
+        if (!n.endsWith('.jsonl')) continue;
+        const full = path.join(dir, n);
+        let stat;
+        try { stat = fs.statSync(full); } catch { continue; }
+        out.push({ id: n.replace(/\.jsonl$/, ''), summary: firstUserText(full), mtime: stat.mtimeMs, size: stat.size, project, projectDir: enc });
+      }
+    }
+    return out.sort((a, b) => b.mtime - a.mtime).slice(0, max);
+  }
+
+  /**
    * Parse a stored session .jsonl into canonical transcript records (the same
    * shapes TranscriptStore persists), so resuming a session can REPLAY history.
    * Claude's `--resume` restores context for the model but does NOT re-emit past

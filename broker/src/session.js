@@ -3,25 +3,21 @@ import path from 'node:path';
 import { createEngine } from './engines/index.js';
 import { EventType, StatusState, event } from './protocol.js';
 
+const MAIN_KEY = '__main__'; // session key when no project is open
+
 /**
- * SessionManager — owns exactly one active engine at a time and brokers the
- * canonical event stream out to the UI.
+ * SessionManager — owns one engine PER PROJECT (the session key) so background
+ * sessions keep running when you switch away. Exactly one key is "active" (the
+ * one the UI is viewing); the rest keep generating in the background. Every event
+ * an engine emits is stamped with its `sessionKey` so the server can record it to
+ * the right transcript and only surface the active session's full stream (plus a
+ * lightweight busy indicator for the others).
  *
- * "Seamless" engine/model switching lives here (Section 3): Claude Code fixes
- * the model at session start, so switching = stop the current engine, respawn
- * with the new profile/model, optionally `--resume`-ing the session id to keep
- * context. A fresh task feels instant; an in-flight conversation resets unless
- * resumed.
+ * Switching the active model/effort/permission/session replaces ONLY the active
+ * key's engine (a fresh/resumed session). Opening another project switches the
+ * active key without stopping the previous engine.
  */
 export class SessionManager {
-  /**
-   * @param {object} deps
-   * @param {import('./config.js')} deps.config
-   * @param {import('./profiles.js').ProfileStore} deps.profiles
-   * @param {import('./secrets.js').SecretStore} deps.secrets
-   * @param {() => {id:string, dir:string}|null} deps.getActiveProject
-   * @param {(event:object) => void} deps.emit  send a canonical event to the UI
-   */
   constructor({ config, profiles, secrets, getActiveProject, emit }) {
     this.config = config;
     this.profiles = profiles;
@@ -29,64 +25,61 @@ export class SessionManager {
     this.getActiveProject = getActiveProject;
     this.emit = emit;
 
-    this.engine = null;
+    this.engines = new Map(); // key -> engine (one live session per project)
+    this.meta = new Map(); // key -> { busy, lastStatus, profileId, model, sessionId, projectId }
+    this.activeKey = this._keyFor(getActiveProject());
     this.activeProfileId = config.defaultProfile;
-    this.permissionMode = config.permissionMode || 'default';
-    this.effort = config.effort || 'high'; // low|medium|high|xhigh|max
-    this.currentModel = null; // the alias/id last requested (for resolver labelling)
+    this.permissionMode = config.permissionMode || 'default'; // global default for new engines
+    this.effort = config.effort || 'high'; // low|medium|high|xhigh|max|ultracode (global pref)
+    this.currentModel = null; // active session's requested model alias (for resolver labelling)
     this.sessionsFile = path.join(config.stateDir, 'sessions.json');
     this._sessionByProject = this._loadSessions();
-    this._lastStatus = StatusState.IDLE;
-    this.lastCapabilities = null;
+    this._lastStatus = StatusState.IDLE; // mirror of the ACTIVE session
+    this.lastCapabilities = null; // mirror of the ACTIVE session
   }
+
+  _keyFor(project) { return project?.id || MAIN_KEY; }
+
+  /** The engine the UI is currently viewing (back-compat for `session.engine`). */
+  get engine() { return this.engines.get(this.activeKey) || null; }
 
   // --- public API -------------------------------------------------------------
 
-  async ensureEngine() {
-    if (this.engine && this.engine.state !== 'stopped') return this.engine;
+  async ensureEngine(key = this.activeKey) {
+    const e = this.engines.get(key);
+    if (e && e.state !== 'stopped') return e;
     return this.startEngine(this.activeProfileId, {});
   }
 
   async startEngine(profileId, { resumeId, model } = {}) {
     const profile = this.profiles.get(profileId);
-    if (!profile) {
-      this._emitError(`No such profile: ${profileId}`);
-      return null;
-    }
+    if (!profile) { this._emitError(`No such profile: ${profileId}`); return null; }
     if (!this.secrets.isReady(profile)) {
       this._emitError(
-        `Profile '${profile.label}' is missing its auth token (${profile.authRef}). ` +
-          `Add it in Settings before switching.`
+        `Profile '${profile.label}' is missing its auth token (${profile.authRef}). Add it in Settings before switching.`
       );
       return null;
     }
 
-    await this.stopEngine();
-
     const project = this.getActiveProject();
+    const key = this._keyFor(project);
+    this.activeKey = key;
+    // Replace only THIS key's engine (a fresh/resumed session for the active view).
+    await this.stopEngine(key);
+
     const cwd = project?.dir || this.config.projectsDir;
     const env = this.secrets.envForProfile(profile);
+    const resolvedResume = resumeId ?? (project ? this._sessionByProject[project.id] : null) ?? null;
 
-    // Resume the project's last session if we have one and none was requested.
-    const resolvedResume =
-      resumeId ?? (project ? this._sessionByProject[project.id] : null) ?? null;
-
-    // Keep the user's chosen model across restarts that DON'T pass one (effort,
-    // permission-mode, resume, new-session, open-project) — otherwise those
-    // silently revert to the profile default. But a profile CHANGE must drop the
-    // old alias: model namespaces are disjoint (Claude opus/sonnet vs GLM glm-5.2),
-    // so carrying 'opus' into the GLM engine would spawn an unknown model.
+    // Keep the chosen model across non-model restarts; drop it on a profile change.
     const profileChanged = profileId !== this.activeProfileId;
     const chosen = model || (profileChanged ? null : this.currentModel) || profile.model;
     this.activeProfileId = profileId;
     this.currentModel = chosen;
-    // "ultracode" is a pseudo-effort the user picks: it maps to xhigh + the
-    // ultracode setting. Keep the raw choice on this.effort (so the UI shows it).
-    const isUltra = this.effort === 'ultracode';
+    const isUltra = this.effort === 'ultracode'; // maps to xhigh + the ultracode setting
+
     const engine = createEngine(profile, {
-      cwd,
-      env,
-      model: chosen,
+      cwd, env, model: chosen,
       resumeId: resolvedResume,
       claudeBin: this.config.claudeBin,
       permissionMode: this.permissionMode,
@@ -94,11 +87,12 @@ export class SessionManager {
       ultracode: isUltra,
       log: (m) => this._log(m),
     });
-    this.engine = engine;
+    this.engines.set(key, engine);
+    this.meta.set(key, { busy: false, lastStatus: StatusState.IDLE, profileId, model: chosen, sessionId: null, projectId: project?.id || null });
 
-    engine.on('event', (ev) => this._onEngineEvent(ev, project));
+    engine.on('event', (ev) => this._onEngineEvent(ev, project, key));
     engine.on('engine_state', (state) => {
-      this.emit(event(EventType.ENGINE_STATE, { state, profileId, model: engine.model }));
+      this.emit(event(EventType.ENGINE_STATE, { state, profileId, model: engine.model, sessionKey: key }));
     });
 
     try {
@@ -107,18 +101,44 @@ export class SessionManager {
       this._emitError(`Failed to start engine: ${e.message}`);
       return null;
     }
+    this._emitSessions();
     return engine;
   }
 
-  async stopEngine() {
-    if (!this.engine) return;
-    const e = this.engine;
-    this.engine = null;
-    try {
-      await e.stop();
-    } catch {
-      /* ignore */
+  async stopEngine(key = this.activeKey) {
+    const e = this.engines.get(key);
+    if (!e) return;
+    this.engines.delete(key);
+    try { await e.stop(); } catch { /* ignore */ }
+  }
+
+  async stopAll() {
+    const all = [...this.engines.values()];
+    this.engines.clear();
+    await Promise.all(all.map((e) => e.stop().catch(() => {})));
+  }
+
+  /** Switch which session the UI is viewing WITHOUT stopping the others. */
+  async setActiveKey(key) {
+    this.activeKey = key;
+    const m = this.meta.get(key);
+    this._lastStatus = m?.lastStatus || StatusState.IDLE;
+    this.currentModel = m?.model || this.currentModel;
+    this.lastCapabilities = this.engines.get(key)?._lastCaps || null;
+    const e = await this.ensureEngine(key);
+    this._emitSessions();
+    return e;
+  }
+
+  /** Live sessions (one per project with an engine), for the sessions screen. */
+  liveSessions() {
+    const out = [];
+    for (const [key, m] of this.meta) {
+      if (!this.engines.has(key)) continue;
+      out.push({ key, projectId: m.projectId, profileId: m.profileId, model: m.model,
+        sessionId: m.sessionId, busy: !!m.busy, lastStatus: m.lastStatus, active: key === this.activeKey });
     }
+    return out;
   }
 
   async sendUserMessage(text, images) {
@@ -127,23 +147,12 @@ export class SessionManager {
     await engine.send({ type: 'user_message', text, images });
   }
 
-  respondPermission(id, decision, extra) {
-    if (this.engine) this.engine.respondPermission(id, decision, extra);
-  }
+  respondPermission(id, decision, extra) { if (this.engine) this.engine.respondPermission(id, decision, extra); }
+  interrupt() { if (this.engine) this.engine.interrupt(); }
 
-  interrupt() {
-    if (this.engine) this.engine.interrupt();
-  }
-
-  async switchEngine(profileId) {
-    this._log(`switching engine -> ${profileId}`);
-    return this.startEngine(profileId, {});
-  }
+  async switchEngine(profileId) { this._log(`switching engine -> ${profileId}`); return this.startEngine(profileId, {}); }
 
   async switchModel(model) {
-    // Claude Code fixes the model at session start and --resume restores the
-    // original session's model, so resuming with a new model no-ops. Start a
-    // FRESH session at the new model instead (context resets — surfaced to UI).
     this._log(`switching model -> ${model} (fresh session)`);
     const project = this.getActiveProject();
     if (project) delete this._sessionByProject[project.id];
@@ -153,7 +162,6 @@ export class SessionManager {
 
   async setPermissionMode(mode) {
     this.permissionMode = mode;
-    // Permission mode is fixed at CLI start, so restart resuming the session.
     const project = this.getActiveProject();
     const resumeId = this.engine?.sessionId || (project ? this._sessionByProject[project.id] : null);
     this._log(`set permission mode -> ${mode} (resume ${resumeId || 'none'})`);
@@ -162,24 +170,15 @@ export class SessionManager {
 
   async setEffort(level) {
     this.effort = level;
-    // --effort is fixed at CLI start; restart resuming the session to keep context.
     const project = this.getActiveProject();
     const resumeId = this.engine?.sessionId || (project ? this._sessionByProject[project.id] : null);
     this._log(`set effort -> ${level} (resume ${resumeId || 'none'})`);
     return this.startEngine(this.activeProfileId, { resumeId });
   }
 
-  /**
-   * Re-spawn the engine resuming the current session so the CLI re-scans
-   * `.claude` (skills/commands/agents/output-styles/MCP are read only at
-   * system/init). Context is preserved via --resume. No-op if nothing is live
-   * (a fresh start will scan anyway) or a turn is in flight (don't interrupt it).
-   */
   async refreshCapabilities() {
     if (!this.engine || this.engine.state === 'stopped') return null;
-    if (this._lastStatus && this._lastStatus !== StatusState.IDLE && this._lastStatus !== StatusState.ERROR) {
-      return null; // a turn is running — restarting would kill it; it'll scan on next restart
-    }
+    if (this._lastStatus && this._lastStatus !== StatusState.IDLE && this._lastStatus !== StatusState.ERROR) return null;
     const project = this.getActiveProject();
     const resumeId = this.engine?.sessionId || (project ? this._sessionByProject[project.id] : null);
     this._log(`refreshing capabilities (resume ${resumeId || 'none'})`);
@@ -193,9 +192,7 @@ export class SessionManager {
     return this.startEngine(this.activeProfileId, { resumeId: null });
   }
 
-  async resume(sessionId) {
-    return this.startEngine(this.activeProfileId, { resumeId: sessionId });
-  }
+  async resume(sessionId) { return this.startEngine(this.activeProfileId, { resumeId: sessionId }); }
 
   get snapshot() {
     return {
@@ -207,52 +204,48 @@ export class SessionManager {
       lastStatus: this._lastStatus,
       permissionMode: this.permissionMode,
       effort: this.effort,
+      activeKey: this.activeKey,
     };
   }
 
   // --- internals --------------------------------------------------------------
 
-  _onEngineEvent(ev, project) {
-    if (ev.type === EventType.SESSION_META && ev.sessionId && project) {
-      this._sessionByProject[project.id] = ev.sessionId;
-      this._saveSessions();
+  _onEngineEvent(ev, project, key) {
+    ev.sessionKey = key; // every engine event is tagged with its owning session
+    const m = this.meta.get(key);
+    if (ev.type === EventType.SESSION_META && ev.sessionId) {
+      if (project) { this._sessionByProject[project.id] = ev.sessionId; this._saveSessions(); }
+      if (m) m.sessionId = ev.sessionId;
     }
     if (ev.type === EventType.STATUS && ev.state) {
-      this._lastStatus = ev.state;
+      const busy = ev.state !== StatusState.IDLE && ev.state !== StatusState.ERROR;
+      if (m) { m.lastStatus = ev.state; m.busy = busy; }
+      if (key === this.activeKey) this._lastStatus = ev.state;
+      // Background session status -> a compact signal; the server turns it into
+      // a SESSION_STATUS for the UI badge.
+      if (key !== this.activeKey) this._emitSessions();
     }
     if (ev.type === EventType.CAPABILITIES) {
-      this.lastCapabilities = ev; // cache so reconnecting clients get it via snapshot
+      const e = this.engines.get(key); if (e) e._lastCaps = ev;
+      if (key === this.activeKey) this.lastCapabilities = ev;
     }
-    if (ev.type === EventType.PERMISSION_MODE && ev.mode) {
-      this.permissionMode = ev.mode;
-    }
+    if (ev.type === EventType.PERMISSION_MODE && ev.mode && key === this.activeKey) this.permissionMode = ev.mode;
+    if (ev.type === EventType.RESULT && m) { m.busy = false; if (key !== this.activeKey) this._emitSessions(); }
     this.emit(ev);
   }
 
-  _emitError(message) {
-    this.emit(event(EventType.ERROR, { message }));
-  }
+  _emitSessions() { this.emit(event(EventType.SESSIONS, { items: this.liveSessions(), activeKey: this.activeKey })); }
 
+  _emitError(message) { this.emit(event(EventType.ERROR, { message })); }
   _log(message) {
     if (this.config.verbose) process.stderr.write(`[session] ${message}\n`);
     this.emit(event(EventType.LOG, { level: 'debug', message }));
   }
-
   _loadSessions() {
-    try {
-      if (fs.existsSync(this.sessionsFile))
-        return JSON.parse(fs.readFileSync(this.sessionsFile, 'utf8'));
-    } catch {
-      /* ignore */
-    }
+    try { if (fs.existsSync(this.sessionsFile)) return JSON.parse(fs.readFileSync(this.sessionsFile, 'utf8')); } catch { /* ignore */ }
     return {};
   }
-
   _saveSessions() {
-    try {
-      fs.writeFileSync(this.sessionsFile, JSON.stringify(this._sessionByProject, null, 2));
-    } catch {
-      /* ignore */
-    }
+    try { fs.writeFileSync(this.sessionsFile, JSON.stringify(this._sessionByProject, null, 2)); } catch { /* ignore */ }
   }
 }

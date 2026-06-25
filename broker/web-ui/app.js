@@ -29,6 +29,8 @@
     reconnectTimer: null,
     activity: 'idle', // 'idle' | 'working' | 'waiting' — drives the live indicator
     activityLabel: 'Thinking…',
+    sessions: [], // live sessions [{ key, busy, active, ... }]
+    activeKey: null,
   };
   // exposed for managers.js (toast attached after its definition below)
   window.Agent = { send, state, esc };
@@ -222,6 +224,7 @@
       case 'projects': onProjects(ev); break;
       case 'profiles': onProfiles(ev); break;
       case 'engine_state': onEngineState(ev); break;
+      case 'sessions': onSessions(ev); break;
       case 'config': if (window.Managers) window.Managers.onConfig(ev); break;
       case 'transcript': applyTranscript(ev); break;
       case 'checkpoints': if (window.Managers) window.Managers.onCheckpoints(ev); onCheckpoints(ev); break;
@@ -258,6 +261,22 @@
     // <select> value (it isn't an option), or the picker goes blank. Stash it and
     // re-render so the option labels can show the resolved version.
     if (ev.model) { state.resolvedModel = ev.model; renderModelOptions(); }
+  }
+
+  function onSessions(ev) {
+    state.sessions = ev.items || [];
+    if (ev.activeKey) state.activeKey = ev.activeKey;
+    updateSessionsBadge();
+    if (window.Managers) window.Managers.onSessions(ev);
+  }
+  // Show a "background sessions working" indicator in the nav when another session
+  // (not the one you're viewing) has a turn in progress.
+  function updateSessionsBadge() {
+    const badge = $('bgSessions');
+    if (!badge) return;
+    const busyBg = state.sessions.filter((s) => s.busy && !s.active).length;
+    badge.classList.toggle('hidden', busyBg === 0);
+    const c = badge.querySelector('.bg-count'); if (c) c.textContent = String(busyBg);
   }
 
   function onEngineState(ev) {
@@ -1494,6 +1513,7 @@
     });
 
     $('menuBtn').onclick = () => window.Managers && window.Managers.open();
+    $('bgSessions') && ($('bgSessions').onclick = () => window.Managers && window.Managers.openTab('sessions'));
 
     // Command palette button (touch entry point — Ctrl-K has no key on a phone)
     $('paletteBtn').onclick = openPalette;

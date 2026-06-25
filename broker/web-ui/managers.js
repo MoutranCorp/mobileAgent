@@ -115,7 +115,8 @@
     if (t.kind && ['skills', 'agents', 'commands', 'output-styles', 'memory', 'settings'].includes(t.kind)) {
       send({ type: 'config_list', kind: t.kind, scope: m.scope });
     } else if (m.tab === 'sessions') {
-      send({ type: 'list_sessions' });
+      send({ type: 'list_sessions', scope: 'all' });
+      send({ type: 'list_live_sessions' });
     } else if (m.tab === 'projects') {
       send({ type: 'list_projects' });
     } else if (m.tab === 'files') {
@@ -399,26 +400,77 @@
 
   // ---- sessions ------------------------------------------------------------
 
+  function relTime(ms) {
+    const s = Math.max(1, Math.round((nowMs() - ms) / 1000));
+    if (s < 60) return s + 's ago';
+    const mn = Math.round(s / 60); if (mn < 60) return mn + 'm ago';
+    const h = Math.round(mn / 60); if (h < 24) return h + 'h ago';
+    return Math.round(h / 24) + 'd ago';
+  }
+  function nowMs() { return new Date().getTime(); }
+  function workingDots() { const s = el('span', 'sess-dots'); s.innerHTML = '<i></i><i></i><i></i>'; return s; }
+
   function renderSessions(pane) {
-    const items = m.items.sessions || [];
-    pane.appendChild(el('p', 'mgr-hint', 'Past sessions for this project. Resume restores the conversation context.'));
-    const nb = el('button', 'ghost small', '+ New session');
+    const live = m.liveSessions || [];
+    const nb = el('button', 'accent small', '+ New session');
     nb.onclick = () => { send({ type: 'new_session' }); close(); };
     pane.appendChild(nb);
-    const list = el('div', 'mgr-list');
-    if (!items.length) list.appendChild(el('div', 'mgr-empty', 'No saved sessions found.'));
-    for (const s of items) {
-      const row = el('div', 'mgr-row');
+
+    // ---- Running now (live engines) ----
+    const liveOrdered = live.slice().sort((a, b) => (b.busy ? 1 : 0) - (a.busy ? 1 : 0));
+    pane.appendChild(el('div', 'perm-bucket-title', 'RUNNING NOW'));
+    const liveList = el('div', 'mgr-list');
+    if (!liveOrdered.length) liveList.appendChild(el('div', 'mgr-empty', 'No live sessions.'));
+    for (const s of liveOrdered) {
+      const row = el('div', 'mgr-row' + (s.active ? ' active' : ''));
       const info = el('div', 'mgr-row-info');
-      info.appendChild(el('div', 'mgr-row-name', s.summary || s.id));
-      info.appendChild(el('div', 'mgr-row-desc', new Date(s.mtime).toLocaleString() + ' · ' + s.id.slice(0, 8)));
+      const name = el('div', 'mgr-row-name');
+      if (s.busy) name.appendChild(workingDots());
+      name.appendChild(document.createTextNode((s.projectId || 'main') + (s.active ? ' · viewing' : '')));
+      info.appendChild(name);
+      info.appendChild(el('div', 'mgr-row-desc', `${s.profileId || ''}${s.model ? ' · ' + s.model : ''} · ${s.busy ? 'working…' : 'idle'}`));
       row.appendChild(info);
-      const resume = el('button', 'ghost small', 'Resume');
-      resume.onclick = () => { send({ type: 'resume', sessionId: s.id }); close(); };
-      row.appendChild(resume);
-      list.appendChild(row);
+      if (!s.active) {
+        const view = el('button', 'ghost small', 'View');
+        view.onclick = () => { send({ type: 'switch_session', key: s.key }); close(); };
+        row.appendChild(view);
+      } else {
+        row.appendChild(el('span', 'badge flat', 'active'));
+      }
+      liveList.appendChild(row);
     }
-    pane.appendChild(list);
+    pane.appendChild(liveList);
+
+    // ---- History (all projects, recency, grouped by project) ----
+    const items = m.items.sessions || [];
+    pane.appendChild(el('div', 'perm-bucket-title', 'HISTORY · ALL PROJECTS'));
+    if (!items.length) { pane.appendChild(el('div', 'mgr-empty', 'No saved sessions found.')); return; }
+    const groups = new Map();
+    for (const s of items) { const k = s.project || 'project'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(s); }
+    // groups are already recency-ordered within; order groups by their newest session
+    const groupOrder = [...groups.entries()].sort((a, b) => (b[1][0]?.mtime || 0) - (a[1][0]?.mtime || 0));
+    const liveBusy = m.sessionsLiveBusy || {};
+    for (const [project, sess] of groupOrder) {
+      pane.appendChild(el('div', 'mgr-label', '📁 ' + project));
+      const list = el('div', 'mgr-list');
+      for (const s of sess) {
+        const inProgress = !!liveBusy[s.id];
+        const isActive = s.id === m.activeSessionId;
+        const row = el('div', 'mgr-row' + (isActive ? ' active' : ''));
+        const info = el('div', 'mgr-row-info');
+        const name = el('div', 'mgr-row-name');
+        if (inProgress) name.appendChild(workingDots());
+        name.appendChild(document.createTextNode(s.summary || s.id));
+        info.appendChild(name);
+        info.appendChild(el('div', 'mgr-row-desc', relTime(s.mtime) + ' · ' + s.id.slice(0, 8) + (inProgress ? ' · working…' : '')));
+        row.appendChild(info);
+        const resume = el('button', 'ghost small', isActive ? 'Active' : 'Resume');
+        if (!isActive) resume.onclick = () => { send({ type: 'resume', sessionId: s.id }); close(); };
+        row.appendChild(resume);
+        list.appendChild(row);
+      }
+      pane.appendChild(list);
+    }
   }
 
   // ---- projects ------------------------------------------------------------
@@ -1007,8 +1059,14 @@
       return;
     }
     if (ev.kind === 'settings') { m.items.settings = ev; if (m.tab === 'permissions') renderPane(); return; }
+    if (ev.kind === 'sessions') { m.sessionsLiveBusy = ev.liveBusy || {}; m.activeSessionId = ev.activeSessionId || null; }
     m.items[ev.kind] = ev.items || [];
     if ((m.tab === ev.kind) || (ev.kind === 'sessions' && m.tab === 'sessions')) renderPane();
+  }
+  function onSessions(ev) {
+    m.liveSessions = ev.items || [];
+    m.activeKey = ev.activeKey || null;
+    if (m.tab === 'sessions' && !root.classList.contains('hidden')) renderPane();
   }
   function onCapabilities(ev) { m.caps = ev; if (m.tab === 'mcp') renderPane(); }
   function onContext(ev) { m.lastContext = ev; if (m.tab === 'context') renderPane(); }
@@ -1067,6 +1125,6 @@
     open, openTab, close, onConfig, onCapabilities, onContext, onProjects, onProfiles,
     onCheckpoints, onFiles, onFile, onFileDiff, onFileGrep, onPrompts, onScripts,
     onAutoVerify, onUsageStats, onCheckpointDiff, onWorkspaceBrowse,
-    onAppVersion, onAppUpdate,
+    onAppVersion, onAppUpdate, onSessions,
   };
 })();

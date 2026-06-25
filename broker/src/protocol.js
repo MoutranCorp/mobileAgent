@@ -46,6 +46,7 @@ export const EventType = Object.freeze({
   WORKSPACE_BROWSE: 'workspace_browse', // { path, parent, dirs: [{name, isProject}] }
   PROFILES: 'profiles', // { profiles: [...], activeProfileId }
   ENGINE_STATE: 'engine_state', // { state: 'stopped'|'starting'|'ready'|'stopping' }
+  SESSIONS: 'sessions', // { items: [{ key, projectId, profileId, model, busy, lastStatus, active }], activeKey } live sessions
   // Harness config surfaces (skills/agents/commands/memory/settings/sessions)
   CONFIG: 'config', // { kind: 'skills'|'agents'|'commands'|'memory'|'settings'|'sessions', scope?, items|content }
   // Durability / power features
@@ -92,7 +93,9 @@ export const CommandType = Object.freeze({
   SWITCH_MODEL: 'switch_model', // { model }
   MODELS_LIST: 'models_list', // { refresh? } resolve alias -> version
   SET_EFFORT: 'set_effort', // { level } low|medium|high|xhigh|max
-  LIST_SESSIONS: 'list_sessions', // {}
+  LIST_SESSIONS: 'list_sessions', // { scope?: 'all' } on-disk session list
+  LIST_LIVE_SESSIONS: 'list_live_sessions', // {} currently-running engines
+  SWITCH_SESSION: 'switch_session', // { key } bring a live session to the foreground (no engine stop)
   COMPACT: 'compact', // { focus? }
   CLEAR: 'clear', // {}
   // Projects

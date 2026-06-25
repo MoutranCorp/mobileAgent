@@ -173,6 +173,16 @@ svg { display: block; }
 
 .usage { font-size: 11px; color: var(--label-3); font-family: var(--mono); white-space: nowrap; }
 
+/* background-sessions-working indicator */
+.bg-sessions { display: inline-flex; align-items: center; gap: 5px; border: none; cursor: pointer;
+  background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent);
+  border-radius: var(--r-pill); padding: 5px 10px; }
+.bg-sessions .bg-dots { display: inline-flex; gap: 3px; }
+.bg-sessions .bg-dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; animation: dot 1.4s var(--ease) infinite; }
+.bg-sessions .bg-dots i:nth-child(2) { animation-delay: .2s; }
+.bg-sessions .bg-dots i:nth-child(3) { animation-delay: .4s; }
+.bg-sessions .bg-count { font-size: 12px; font-weight: 700; }
+
 /* =========================== context chip bar =========================== */
 .context-bar {
   display: flex; align-items: center; gap: 8px; padding: 8px 12px;
@@ -597,7 +607,12 @@ mark.find-hit.current { background: var(--orange); color: #000; }
 .perm-rule { display: flex; justify-content: space-between; align-items: center; background: var(--sys-bg-2);
   border: .5px solid var(--separator-2); border-radius: var(--r-xs); padding: 8px 11px; }
 .perm-rule code { font-size: 12.5px; font-family: var(--mono); }
-.mgr-label { font-size: 13px; color: var(--label-2); }
+.mgr-label { font-size: 13px; color: var(--label-2); margin: 6px 0 4px; font-weight: 600; }
+/* live "working" dots inside session rows */
+.sess-dots { display: inline-flex; gap: 3px; margin-right: 7px; vertical-align: middle; }
+.sess-dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); display: inline-block; animation: dot 1.4s var(--ease) infinite; }
+.sess-dots i:nth-child(2) { animation-delay: .2s; }
+.sess-dots i:nth-child(3) { animation-delay: .4s; }
 .ctx-box { background: var(--sys-bg-2); border: .5px solid var(--separator); border-radius: var(--r-md);
   padding: 16px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 9px; }
 .ctx-big { font-size: 17px; color: var(--label); font-weight: 600; }

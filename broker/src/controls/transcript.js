@@ -2,13 +2,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /**
- * TranscriptStore — records a curated, replayable copy of the canonical event
- * stream per project, so a conversation survives a page reload, a reconnect, or
- * a broker restart. Streamed assistant text/thinking deltas are COALESCED into
- * one record each so replay rebuilds clean bubbles instead of thousands of
- * fragments.
+ * TranscriptStore — a curated, replayable copy of the canonical event stream,
+ * one buffer PER SESSION (project key), so concurrent background sessions each
+ * record into their own `transcripts/<key>.jsonl` and never bleed into the
+ * foreground. record() routes by the event's `sessionKey`; replay/search/clear/
+ * replace/truncate operate on the currently-active (viewed) session.
  *
- * Persisted as newline-delimited JSON at <stateDir>/transcripts/<projectId>.jsonl.
+ * Streamed assistant text/thinking deltas are COALESCED per buffer so replay
+ * rebuilds clean bubbles instead of thousands of fragments.
  */
 const KEEP = new Set([
   'user_echo', 'assistant_text', 'assistant_thinking', 'tool_call', 'tool_result',
@@ -20,122 +21,120 @@ export class TranscriptStore {
   constructor(stateDir) {
     this.dir = path.join(stateDir, 'transcripts');
     try { fs.mkdirSync(this.dir, { recursive: true }); } catch { /* ignore */ }
-    this.projectId = null;
-    this._events = [];
-    this._pendText = null; // { delta, parentToolUseId }
-    this._pendThink = null;
+    this.activeKey = null;
+    this.buffers = new Map(); // key -> { events, pendText, pendThink }
   }
 
-  _file() {
-    return this.projectId ? path.join(this.dir, `${safe(this.projectId)}.jsonl`) : null;
-  }
+  _file(key) { return key != null ? path.join(this.dir, `${safe(key)}.jsonl`) : null; }
 
-  setProject(projectId) {
-    if (projectId === this.projectId) return;
-    this._flush(false);
-    this.projectId = projectId;
-    this._events = this._load();
-  }
-
-  _load() {
-    const f = this._file();
+  _load(key) {
+    const f = this._file(key);
     if (!f || !fs.existsSync(f)) return [];
     try {
       const lines = fs.readFileSync(f, 'utf8').split('\n').filter(Boolean);
       return lines.slice(-MAX_RECORDS).map((l) => JSON.parse(l));
-    } catch {
-      return [];
-    }
+    } catch { return []; }
   }
 
-  /** Record one canonical event (coalescing text). */
+  _bufFor(key) {
+    if (key == null) key = this.activeKey;
+    if (key == null) return null;
+    let b = this.buffers.get(key);
+    if (!b) { b = { key, events: this._load(key), pendText: null, pendThink: null }; this.buffers.set(key, b); }
+    return b;
+  }
+
+  /** Set which session the UI is viewing (its buffer is what replay() returns). */
+  setProject(key) {
+    if (key === this.activeKey) return;
+    const cur = this.activeKey != null ? this.buffers.get(this.activeKey) : null;
+    if (cur) this._flush(cur);
+    this.activeKey = key;
+    this._bufFor(key); // lazy-load
+  }
+
+  /** Record one canonical event into ITS session's buffer (coalescing text). */
   record(ev) {
-    if (!this.projectId || !ev || !ev.type) return;
+    if (!ev || !ev.type) return;
+    const key = ev.sessionKey != null ? ev.sessionKey : this.activeKey;
+    const b = this._bufFor(key);
+    if (!b) return;
     if (ev.type === 'assistant_text') {
-      if (this._pendText && this._pendText.parentToolUseId === (ev.parentToolUseId || null)) {
-        this._pendText.delta += ev.delta || '';
+      if (b.pendText && b.pendText.parentToolUseId === (ev.parentToolUseId || null)) {
+        b.pendText.delta += ev.delta || '';
       } else {
-        this._flushText();
-        this._pendText = { type: 'assistant_text', delta: ev.delta || '', parentToolUseId: ev.parentToolUseId || null };
+        this._flushText(b);
+        b.pendText = { type: 'assistant_text', delta: ev.delta || '', parentToolUseId: ev.parentToolUseId || null };
       }
       return;
     }
     if (ev.type === 'assistant_thinking') {
-      if (this._pendThink) this._pendThink.delta += ev.delta || '';
-      else this._pendThink = { type: 'assistant_thinking', delta: ev.delta || '', parentToolUseId: ev.parentToolUseId || null };
+      if (b.pendThink) b.pendThink.delta += ev.delta || '';
+      else b.pendThink = { type: 'assistant_thinking', delta: ev.delta || '', parentToolUseId: ev.parentToolUseId || null };
       return;
     }
-    // Any other event commits pending text/thinking first.
-    this._flushText();
-    this._flushThink();
-    if (KEEP.has(ev.type)) this._commit(ev);
+    this._flushText(b);
+    this._flushThink(b);
+    if (KEEP.has(ev.type)) this._commit(b, ev);
   }
 
-  _flushText() {
-    if (this._pendText && this._pendText.delta) this._commit(this._pendText);
-    this._pendText = null;
-  }
-  _flushThink() {
-    if (this._pendThink && this._pendThink.delta) this._commit(this._pendThink);
-    this._pendThink = null;
-  }
-  _flush() { this._flushText(); this._flushThink(); }
+  _flushText(b) { if (b.pendText && b.pendText.delta) this._commit(b, b.pendText); b.pendText = null; }
+  _flushThink(b) { if (b.pendThink && b.pendThink.delta) this._commit(b, b.pendThink); b.pendThink = null; }
+  _flush(b) { this._flushText(b); this._flushThink(b); }
 
-  _commit(rec) {
-    this._events.push(rec);
-    if (this._events.length > MAX_RECORDS) this._events = this._events.slice(-MAX_RECORDS);
-    const f = this._file();
-    if (f) {
-      try { fs.appendFileSync(f, JSON.stringify(rec) + '\n'); } catch { /* ignore */ }
-    }
+  _commit(b, rec) {
+    b.events.push(rec);
+    if (b.events.length > MAX_RECORDS) b.events = b.events.slice(-MAX_RECORDS);
+    const f = this._file(b.key);
+    if (f) { try { fs.appendFileSync(f, JSON.stringify(rec) + '\n'); } catch { /* ignore */ } }
   }
 
-  /** Replayable array for the current project (commits any pending text first). */
+  /** Replayable array for the ACTIVE session (commits pending text first). */
   replay() {
-    this._flush();
-    return this._events.slice();
+    const b = this._bufFor(this.activeKey);
+    if (!b) return [];
+    this._flush(b);
+    return b.events.slice();
   }
 
   clear() {
-    this._events = [];
-    this._pendText = null;
-    this._pendThink = null;
-    const f = this._file();
+    const b = this._bufFor(this.activeKey);
+    if (!b) return;
+    b.events = []; b.pendText = null; b.pendThink = null;
+    const f = this._file(b.key);
     if (f) { try { fs.writeFileSync(f, ''); } catch { /* ignore */ } }
   }
 
-  /** Replace the recorded transcript wholesale (used when resuming a session
-   *  whose history we parsed from Claude's own .jsonl). */
+  /** Replace the active session's transcript wholesale (resume from .jsonl). */
   replace(events) {
-    this._pendText = null;
-    this._pendThink = null;
-    this._events = (events || []).filter((e) => e && KEEP.has(e.type)).slice(-MAX_RECORDS);
-    const f = this._file();
-    if (f) {
-      try { fs.writeFileSync(f, this._events.map((e) => JSON.stringify(e)).join('\n') + (this._events.length ? '\n' : '')); } catch { /* ignore */ }
-    }
-    return this._events.slice();
+    const b = this._bufFor(this.activeKey);
+    if (!b) return [];
+    b.pendText = null; b.pendThink = null;
+    b.events = (events || []).filter((e) => e && KEEP.has(e.type)).slice(-MAX_RECORDS);
+    this._rewrite(b);
+    return b.events.slice();
   }
 
-  /**
-   * Drop the user_echo with this turnId and everything after it (a revert).
-   * Rewrites the .jsonl so a restart/replay doesn't resurrect dropped turns.
-   * Returns the number of records removed, or null if the turn isn't in the buffer.
-   */
+  /** Drop the active session's user_echo with this turnId and everything after
+   *  (a revert). Rewrites the .jsonl. Returns records removed, or null if absent. */
   truncateBefore(turnId) {
-    this._flush();
-    const idx = this._events.findIndex((e) => e.type === 'user_echo' && e.turnId === turnId);
+    const b = this._bufFor(this.activeKey);
+    if (!b) return null;
+    this._flush(b);
+    const idx = b.events.findIndex((e) => e.type === 'user_echo' && e.turnId === turnId);
     if (idx === -1) return null;
-    const removed = this._events.length - idx;
-    this._events = this._events.slice(0, idx);
-    const f = this._file();
-    if (f) {
-      try { fs.writeFileSync(f, this._events.map((e) => JSON.stringify(e)).join('\n') + (this._events.length ? '\n' : '')); } catch { /* ignore */ }
-    }
+    const removed = b.events.length - idx;
+    b.events = b.events.slice(0, idx);
+    this._rewrite(b);
     return removed;
   }
 
-  /** Search the recorded conversation for text (case-insensitive). */
+  _rewrite(b) {
+    const f = this._file(b.key);
+    if (f) { try { fs.writeFileSync(f, b.events.map((e) => JSON.stringify(e)).join('\n') + (b.events.length ? '\n' : '')); } catch { /* ignore */ } }
+  }
+
+  /** Search the active session's conversation (case-insensitive). */
   search(query, limit = 60) {
     if (!query) return [];
     const q = String(query).toLowerCase();
@@ -157,6 +156,4 @@ export class TranscriptStore {
   }
 }
 
-function safe(s) {
-  return String(s).replace(/[^a-zA-Z0-9_-]/g, '_');
-}
+function safe(s) { return String(s).replace(/[^a-zA-Z0-9_-]/g, '_'); }
