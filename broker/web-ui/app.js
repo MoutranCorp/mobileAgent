@@ -45,7 +45,31 @@
     notify: (title, body) => NB().notify(title, body),
     startVoice: () => NB().startVoice(),
     openExternal: (url) => NB().openExternal(url),
+    copyText: (text) => NB().copyText(text),
   };
+
+  // Copy text to the clipboard with a WebView-safe fallback chain:
+  // navigator.clipboard (secure-context) -> native Android bridge -> execCommand.
+  function copyToClipboard(text) {
+    const ok = () => toast('Copied', 'info');
+    const fallback = () => {
+      if (native.has('copyText')) { try { native.copyText(text); return ok(); } catch { /* next */ } }
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed'; ta.style.top = '-1000px'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.focus(); ta.select();
+        const done = document.execCommand('copy'); ta.remove();
+        done ? ok() : toast('Copy not supported here', 'error');
+      } catch { toast('Copy failed', 'error'); }
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(ok, fallback);
+    } else {
+      fallback();
+    }
+  }
+  window.Agent.copy = copyToClipboard;
   // Callbacks the native side invokes (via evaluateJavascript):
   window.onPickedImage = (base64, mime) => {
     if (!base64) return;
@@ -1019,6 +1043,23 @@
       if (alias === selected) o.selected = true;
       sel.appendChild(o);
     }
+    updateEffortOptions();
+  }
+
+  // Ultracode only does anything on Opus/Fable — hide the option otherwise, and
+  // if it was selected on a now-unsupported model, fall back to xhigh.
+  function updateEffortOptions() {
+    const opt = $('ultracodeOpt');
+    if (!opt) return;
+    const fam = familyOf(state.selectedModel) || familyOf(state.resolvedModel);
+    const supported = fam === 'opus' || fam === 'fable';
+    opt.hidden = !supported;
+    opt.disabled = !supported;
+    if (!supported && state.effort === 'ultracode') {
+      state.effort = 'xhigh';
+      const sel = $('effortSelect'); if (sel) sel.value = 'xhigh';
+      send({ type: 'set_effort', level: 'xhigh' });
+    }
   }
 
   function onModels(ev) {
@@ -1283,7 +1324,9 @@
     };
     $('sendBtn').onclick = sendOrStop;
     $('input').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); requestNotify(); doSend(); }
+      // Enter inserts a newline (phone keyboards have no Shift+Enter). Send is the
+      // button; Ctrl/Cmd+Enter also sends for desktop keyboards.
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); requestNotify(); doSend(); }
       if (e.key === 'Escape') { hideSlashPalette(); hideMentionPalette(); }
     });
     $('input').addEventListener('input', () => { autoGrow(); updateSlashPalette(); updateMentionPalette(); });
@@ -1308,6 +1351,16 @@
     dz.addEventListener('drop', (e) => {
       e.preventDefault();
       for (const f of e.dataTransfer?.files || []) addImageFile(f);
+    });
+
+    // Delegated copy for code blocks (survives the per-frame markdown re-render).
+    $('transcript').addEventListener('click', (e) => {
+      const btn = e.target.closest && e.target.closest('.code-copy');
+      if (!btn) return;
+      e.stopPropagation();
+      copyToClipboard(btn.dataset.copy || '');
+      const prev = btn.textContent; btn.textContent = 'Copied'; btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = prev; btn.classList.remove('copied'); }, 1200);
     });
 
     $('undoBtn').onclick = () => {
@@ -1374,7 +1427,7 @@
       else if (v) send({ type: 'open_project', projectId: v });
     };
     $('engineSelect').onchange = (e) => send({ type: 'switch_engine', profileId: e.target.value });
-    $('modelSelect').onchange = (e) => { state.selectedModel = e.target.value; send({ type: 'switch_model', model: e.target.value }); };
+    $('modelSelect').onchange = (e) => { state.selectedModel = e.target.value; updateEffortOptions(); send({ type: 'switch_model', model: e.target.value }); };
     // Resolve alias -> version labels lazily the first time the user opens the picker.
     $('modelSelect').addEventListener('mousedown', resolveModelsOnce);
     $('modelSelect').addEventListener('focus', resolveModelsOnce);

@@ -18,6 +18,12 @@
   function escapeHtml(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
+  // Escape for an HTML attribute value; encode newlines so the raw text round-trips
+  // exactly through dataset (used by code-block copy buttons).
+  function escapeAttr(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/\r/g, '').replace(/\n/g, '&#10;');
+  }
   function safeUrl(u) {
     // Allow http(s), mailto and relative/anchor links; block javascript: etc.
     return /^(https?:\/\/|mailto:|\/|#)/i.test(u) ? u : '#';
@@ -97,7 +103,9 @@
       var m;
 
       if ((m = line.match(fenceRe))) {
-        html += '<pre><code>' + escapeHtml(blocks[+m[1]]) + '</code></pre>'; i++; continue;
+        var raw = blocks[+m[1]];
+        html += '<div class="code-block"><button class="code-copy" type="button" data-copy="' + escapeAttr(raw) + '">Copy</button>' +
+          '<pre><code>' + escapeHtml(raw) + '</code></pre></div>'; i++; continue;
       }
       if (/^\s*$/.test(line)) { i++; continue; }
       if (/^\s*([-*_])\1\1+\s*$/.test(line)) { html += '<hr>'; i++; continue; }
@@ -120,5 +128,5 @@
     return html;
   }
 
-  window.MD = { render: render, escapeHtml: escapeHtml };
+  window.MD = { render: render, escapeHtml: escapeHtml, escapeAttr: escapeAttr };
 })();

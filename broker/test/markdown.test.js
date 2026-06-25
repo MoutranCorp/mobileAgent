@@ -47,6 +47,19 @@ test('is XSS-safe: HTML is escaped and dangerous URLs are neutralized', () => {
   assert.ok(!/javascript:/.test(link), 'javascript: URLs must be dropped');
 });
 
+test('fenced code blocks get a copy button whose data-copy round-trips the raw text', () => {
+  const code = 'npm run build && echo "done"\nrm -rf <dir> & sleep 1';
+  const h = MD.render('```sh\n' + code + '\n```');
+  assert.match(h, /<button class="code-copy"[^>]*data-copy="/);
+  // Extract the data-copy attribute and decode the entities escapeAttr produced.
+  const m = h.match(/data-copy="([^"]*)"/);
+  assert.ok(m, 'data-copy present and quote-safe');
+  const decoded = m[1]
+    .replace(/&#10;/g, '\n').replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  assert.equal(decoded, code, 'copy text equals the original including quotes, &, <> and newlines');
+});
+
 test('partial input mid-stream does not throw (unterminated fence)', () => {
   assert.doesNotThrow(() => MD.render('intro\n\n```js\nconst a ='));
   const h = MD.render('intro\n\n```js\nconst a =');

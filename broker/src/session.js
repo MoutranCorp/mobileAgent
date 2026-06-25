@@ -80,6 +80,9 @@ export class SessionManager {
     const chosen = model || (profileChanged ? null : this.currentModel) || profile.model;
     this.activeProfileId = profileId;
     this.currentModel = chosen;
+    // "ultracode" is a pseudo-effort the user picks: it maps to xhigh + the
+    // ultracode setting. Keep the raw choice on this.effort (so the UI shows it).
+    const isUltra = this.effort === 'ultracode';
     const engine = createEngine(profile, {
       cwd,
       env,
@@ -87,7 +90,8 @@ export class SessionManager {
       resumeId: resolvedResume,
       claudeBin: this.config.claudeBin,
       permissionMode: this.permissionMode,
-      effort: this.effort,
+      effort: isUltra ? 'xhigh' : this.effort,
+      ultracode: isUltra,
       log: (m) => this._log(m),
     });
     this.engine = engine;

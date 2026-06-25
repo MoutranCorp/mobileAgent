@@ -53,6 +53,10 @@ await page.evaluate(() => { const t = document.getElementById('transcript'); if 
 await sleep(300);
 await shot('03-convo');
 
+// resolve any pending approval so the next message can send (send is blocked while busy/waiting)
+const approve = page.locator('.approval-actions button.accent');
+if (await approve.count()) { await approve.first().click(); await sleep(1500); }
+
 // markdown rendering check (mock emits a rich-markdown reply for this prompt)
 await page.fill('#input', 'explain how markdown formatting renders');
 await page.dispatchEvent('#input', 'input');

@@ -34,6 +34,7 @@ export class ClaudeCodeEngine extends EngineAdapter {
     this.bin = opts.claudeBin || 'claude';
     this.permissionMode = opts.permissionMode || this.profile?.permissionMode || 'default';
     this.effort = opts.effort || null; // low|medium|high|xhigh|max
+    this.ultracode = opts.ultracode || false; // opus/fable orchestration mode (xhigh + setting)
     this.resumeId = opts.resumeId || null;
     this.proc = null;
     this.buffer = new JsonLineBuffer();
@@ -67,6 +68,9 @@ export class ClaudeCodeEngine extends EngineAdapter {
 
     if (this.model) args.push('--model', this.model);
     if (this.effort) args.push('--effort', this.effort);
+    // Ultracode = xhigh effort + autonomous workflow orchestration (Opus/Fable).
+    // Additive --settings; a CLI that doesn't know the key ignores it (degrades to xhigh).
+    if (this.ultracode) args.push('--settings', '{"ultracode":true}');
     if (this.resumeId) args.push('--resume', this.resumeId);
 
     if (gated) {
