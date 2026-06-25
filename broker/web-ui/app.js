@@ -940,10 +940,16 @@
   let _findHits = [];
   let _findIdx = -1;
   function clearFindMarks() {
+    const parents = new Set();
     document.querySelectorAll('#transcript mark.find-hit').forEach((mk) => {
-      const t = document.createTextNode(mk.textContent);
-      mk.parentNode.replaceChild(t, mk);
+      const p = mk.parentNode;
+      parents.add(p);
+      p.replaceChild(document.createTextNode(mk.textContent), mk);
     });
+    // Merge the now-adjacent text nodes back into whole nodes — otherwise a node
+    // like "hello" stays split as "he","l","lo" and multi-char searches (which
+    // would span those fragments) stop matching after the first single-char hit.
+    parents.forEach((p) => p && p.normalize());
     _findHits = []; _findIdx = -1;
   }
   function runFind(q) {
