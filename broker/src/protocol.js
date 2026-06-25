@@ -69,6 +69,8 @@ export const EventType = Object.freeze({
   NATIVE_CHANGE: 'native_change', // { deps } native deps changed — offer rebuild
   LOG: 'log', // { level, message }  broker diagnostics
   TOAST: 'toast', // { message, level? }  transient user-facing notice
+  APP_VERSION: 'app_version', // { sha, subject, when, branch, dirty }  current app build
+  APP_UPDATE: 'app_update', // { state?: 'updating', ok, upToDate?, fromSha, toSha, needsReload, needsRestart, ... }
   ack: 'ack', // { ofType, ok, message? }  acknowledges a received command
 });
 
@@ -142,6 +144,9 @@ export const CommandType = Object.freeze({
   GIT: 'git', // { op: 'status'|'commit'|'push'|'log'|'diff'|'init', ...args }
   EAS_BUILD: 'eas_build', // { profile?, platform? }
   RUN: 'run', // { command, cwd? }  arbitrary command, streamed
+  // Self-update (git pull the app's own repo)
+  APP_VERSION: 'app_version', // {} — request current build info
+  APP_UPDATE: 'app_update', // {} — git pull --ff-only the app repo
   // Meta
   PING: 'ping', // {}
   HELLO: 'hello', // {} — client requests a full state snapshot

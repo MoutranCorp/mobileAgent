@@ -11,6 +11,7 @@ import { ProjectManager } from './controls/projects.js';
 import { DevTools } from './controls/devtools.js';
 import { ClaudeConfig } from './controls/claude-config.js';
 import { ModelResolver, labelFor } from './controls/model-resolver.js';
+import { Updater } from './controls/updater.js';
 import { TranscriptStore } from './controls/transcript.js';
 import { Checkpoints } from './controls/checkpoints.js';
 import { Files } from './controls/files.js';
@@ -53,6 +54,7 @@ export class BrokerServer {
     this.devtools = new DevTools({ config, runner: this.runner, projects: this.projects, emit });
     this.claudeConfig = new ClaudeConfig({ getProjectDir });
     this.modelResolver = new ModelResolver({ stateDir: config.stateDir, claudeBin: config.claudeBin });
+    this.updater = new Updater();
     this.session = new SessionManager({
       config,
       profiles: this.profiles,
@@ -350,6 +352,13 @@ export class BrokerServer {
       case CommandType.SET_EFFORT:
         await this.session.setEffort(cmd.level);
         return this.broadcast(event(EventType.EFFORT, { level: cmd.level }));
+      case CommandType.APP_VERSION:
+        return this._send(ws, event(EventType.APP_VERSION, await this.updater.version()));
+      case CommandType.APP_UPDATE: {
+        this.broadcast(event(EventType.APP_UPDATE, { state: 'updating' }));
+        const res = await this.updater.update();
+        return this.broadcast(event(EventType.APP_UPDATE, res));
+      }
 
       // harness config: skills / agents / commands / memory / settings
       case CommandType.CONFIG_LIST:

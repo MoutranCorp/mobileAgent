@@ -158,6 +158,8 @@
       case 'workspace_browse': if (window.Managers) window.Managers.onWorkspaceBrowse(ev); break;
       case 'log': break;
       case 'toast': if (ev.message) toast(ev.message, ev.level || 'info'); break;
+      case 'app_version': if (window.Managers) window.Managers.onAppVersion(ev); break;
+      case 'app_update': onAppUpdate(ev); if (window.Managers) window.Managers.onAppUpdate(ev); break;
       case 'ack': if (!ev.ok && ev.message) toast(ev.message, 'error'); break;
       case 'pong': break;
       default: break;
@@ -659,6 +661,7 @@
 
   function paletteActions() {
     const a = [
+      { label: 'Update app (git pull)', run: () => { send({ type: 'app_update' }); toast('Checking for updates…', 'info'); } },
       { label: 'New session', run: () => { send({ type: 'new_session' }); resetConversation(); } },
       { label: 'Interrupt current turn', run: () => send({ type: 'interrupt' }) },
       { label: 'Test (Metro + dev client)', run: onTest },
@@ -1000,12 +1003,34 @@
     return d;
   }
   function scrollDown() { const t = $('transcript'); t.scrollTop = t.scrollHeight; }
-  function toast(msg, kind) {
-    const t = el('div', 'toast ' + (kind || 'info'), msg);
+  function toast(msg, kind, action) {
+    const t = el('div', 'toast ' + (kind || 'info'));
+    t.appendChild(el('span', '', msg));
+    if (action && action.label) {
+      const b = el('button', 'toast-action', action.label);
+      b.onclick = () => { t.remove(); action.fn && action.fn(); };
+      t.appendChild(b);
+    }
     $('toasts').appendChild(t);
-    setTimeout(() => t.remove(), 4000);
+    setTimeout(() => t.remove(), action ? 15000 : 4000); // give actions time to be tapped
   }
   window.Agent.toast = toast;
+
+  // Result of an in-app self-update (git pull). Web-UI changes apply on reload;
+  // broker-code changes need a broker restart (we can't restart ourselves).
+  function onAppUpdate(ev) {
+    if (ev.state === 'updating' && ev.ok === undefined) return; // progress ping
+    if (!ev.ok) { toast(ev.message || 'Update failed', 'error'); return; }
+    if (ev.upToDate) { toast('You’re on the latest version', 'info'); return; }
+    const ver = ev.toSha ? ` (${ev.toSha})` : '';
+    if (ev.needsRestart) {
+      toast(`Updated${ver} — restart the broker (Ctrl-C, then re-run) to apply`, 'info');
+    } else if (ev.needsReload) {
+      toast(`Update ready${ver}`, 'info', { label: 'Reload', fn: () => location.reload() });
+    } else {
+      toast(`Updated${ver}`, 'info');
+    }
+  }
 
   // ---- composer & controls -------------------------------------------------
 

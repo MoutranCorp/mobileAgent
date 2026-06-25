@@ -550,8 +550,10 @@ mark.find-hit.current { background: var(--orange); color: #000; }
   border: .5px solid var(--separator); border-radius: var(--r-pill); padding: 11px 18px; font-size: 14px;
   max-width: 90vw; box-shadow: var(--sh-2); animation: toast-in .42s var(--spring); font-weight: 540; }
 @keyframes toast-in { from { transform: translateY(-18px); opacity: 0; } to { transform: none; opacity: 1; } }
+.toast { display: flex; align-items: center; gap: 14px; }
 .toast.error { color: var(--red); }
 .toast.info { color: var(--label); }
+.toast-action { background: none; border: none; color: var(--accent); font-weight: 680; font-size: 14px; cursor: pointer; padding: 0; }
 
 /* ============================ command palette ======================== */
 .palette { position: fixed; inset: 0; background: var(--scrim); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);

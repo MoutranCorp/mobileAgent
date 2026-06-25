@@ -13,6 +13,7 @@
   const root = document.getElementById('managerModal');
 
   const TABS = [
+    { id: 'update', label: '↻ Update' },
     { id: 'files', label: 'Files' },
     { id: 'scripts', label: 'Scripts' },
     { id: 'git', label: 'Git' },
@@ -55,6 +56,9 @@
     autoverify: { enabled: false, command: 'npm test', maxIterations: 3 },
     usageStats: null,
     browse: null, // { path, parent, dirs } folder picker
+    appVersion: null, // { sha, subject, when, branch, dirty }
+    appUpdate: null, // last update result
+    updating: false,
   };
 
   function el(tag, cls, text) {
@@ -131,6 +135,8 @@
       send({ type: 'config_list', kind: 'mcp', scope: m.scope });
     } else if (m.tab === 'hooks') {
       send({ type: 'config_list', kind: 'hooks', scope: m.scope });
+    } else if (m.tab === 'update') {
+      send({ type: 'app_version' });
     }
   }
 
@@ -139,6 +145,7 @@
     if (!pane) return;
     pane.innerHTML = '';
     switch (m.tab) {
+      case 'update': return renderUpdate(pane);
       case 'files': return renderFiles(pane);
       case 'scripts': return renderScripts(pane);
       case 'git': return renderGit(pane);
@@ -572,6 +579,57 @@
     pane.appendChild(reload);
   }
 
+  // ---- software update (git pull the app's own repo) -----------------------
+
+  function renderUpdate(pane) {
+    pane.appendChild(el('p', 'mgr-hint', 'Pull the latest build of the app from its git repo. UI changes apply on reload; broker changes need a broker restart.'));
+
+    // Current version box.
+    const v = m.appVersion;
+    const box = el('div', 'ctx-box');
+    box.appendChild(el('div', 'ctx-big', 'On-Device Agent'));
+    if (v && v.ok) {
+      box.appendChild(el('div', 'mgr-row-desc', `${v.subject || ''}`));
+      box.appendChild(el('div', 'mgr-row-desc', `${v.sha} · ${v.branch}${v.when ? ' · ' + v.when : ''}${v.dirty ? ' · local changes' : ''}`));
+    } else {
+      box.appendChild(el('div', 'mgr-row-desc', v ? 'Not a git checkout — update unavailable.' : 'Reading current version…'));
+    }
+    pane.appendChild(box);
+
+    // Update button.
+    const btn = el('button', 'primary', m.updating ? 'Updating…' : 'Check for updates & install');
+    btn.disabled = m.updating || (v && v.ok === false);
+    btn.onclick = () => { m.updating = true; m.appUpdate = null; send({ type: 'app_update' }); renderPane(); };
+    pane.appendChild(btn);
+
+    // Last result.
+    const r = m.appUpdate;
+    if (r) {
+      const res = el('div', 'ctx-box');
+      res.style.marginTop = '14px';
+      if (!r.ok) {
+        res.appendChild(el('div', 'mgr-row-name', '⚠ Update failed'));
+        res.appendChild(el('div', 'mgr-row-desc', r.message || 'git pull failed'));
+      } else if (r.upToDate) {
+        res.appendChild(el('div', 'mgr-row-name', '✓ Already up to date'));
+      } else {
+        res.appendChild(el('div', 'mgr-row-name', `✓ Updated to ${r.toSha}`));
+        if (r.subject) res.appendChild(el('div', 'mgr-row-desc', r.subject));
+        res.appendChild(el('div', 'mgr-row-desc', `${r.count} file${r.count === 1 ? '' : 's'} changed`));
+        if (r.needsRestart) {
+          res.appendChild(el('div', 'mgr-row-desc', 'Broker code changed — restart the broker (Ctrl-C, then re-run) to apply.'));
+        } else if (r.needsReload) {
+          const rl = el('button', 'accent small', 'Reload to apply');
+          rl.style.marginTop = '8px';
+          rl.onclick = () => location.reload();
+          res.appendChild(rl);
+        }
+      }
+      if (r.log) { const pre = el('pre', 'file-view'); pre.textContent = r.log; res.appendChild(pre); }
+      pane.appendChild(res);
+    }
+  }
+
   // ---- files ---------------------------------------------------------------
 
   function renderFiles(pane) {
@@ -992,6 +1050,13 @@
     if (!root.classList.contains('hidden') && m.tab === 'scripts') renderPane();
   }
   function onUsageStats(ev) { m.usageStats = ev.summary; if (!root.classList.contains('hidden') && m.tab === 'usage') renderPane(); }
+  function onAppVersion(ev) { m.appVersion = ev; if (!root.classList.contains('hidden') && m.tab === 'update') renderPane(); }
+  function onAppUpdate(ev) {
+    if (ev.state === 'updating' && ev.ok === undefined) return; // progress ping; keep "Updating…"
+    m.updating = false; m.appUpdate = ev;
+    if (ev.ok && !ev.upToDate) send({ type: 'app_version' }); // refresh the version box
+    if (!root.classList.contains('hidden') && m.tab === 'update') renderPane();
+  }
   function onCheckpointDiff(ev) {
     m.checkpointDiff = { id: ev.id, label: ev.label, files: ev.files || [], stat: ev.stat || '' };
     if (root.classList.contains('hidden')) return;
@@ -1002,5 +1067,6 @@
     open, openTab, close, onConfig, onCapabilities, onContext, onProjects, onProfiles,
     onCheckpoints, onFiles, onFile, onFileDiff, onFileGrep, onPrompts, onScripts,
     onAutoVerify, onUsageStats, onCheckpointDiff, onWorkspaceBrowse,
+    onAppVersion, onAppUpdate,
   };
 })();

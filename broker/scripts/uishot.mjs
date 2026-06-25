@@ -50,6 +50,13 @@ await shot('03-convo');
 try { await page.click('#menuBtn'); await sleep(700); await shot('04-sheet');
   const skills = page.locator('.mgr-tab', { hasText: 'Skills' });
   if (await skills.count()) { await skills.first().click(); await sleep(500); await shot('05-sheet-skills'); }
+  const upd = page.locator('.mgr-tab', { hasText: 'Update' });
+  if (await upd.count()) {
+    await upd.first().click(); await sleep(700); await shot('05b-update');
+    if (process.env.UISHOT_UPDATE === '1') { // runs a real `git pull` — opt-in only
+      await page.locator('.mgr-pane button.primary').click(); await sleep(2500); await shot('05c-update-result');
+    }
+  }
   await page.evaluate(() => document.getElementById('managerModal')?.classList.add('hidden'));
 } catch (e) { console.log('sheet err', e.message); }
 
