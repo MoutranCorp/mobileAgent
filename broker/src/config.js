@@ -56,8 +56,9 @@ export function loadConfig(argv = process.argv.slice(2)) {
     metroBasePort: Number(process.env.METRO_BASE_PORT || 8081),
     // Path to the claude binary (overridable for odd installs).
     claudeBin: process.env.CLAUDE_BIN || 'claude',
-    // Default permission mode for the claude-code engine.
-    permissionMode: process.env.PERMISSION_MODE || 'default',
+    // Default permission mode for the claude-code engine. Bypass-all by default
+    // (on-device the whole proot IS the sandbox; IS_SANDBOX=1 lifts the root guard).
+    permissionMode: process.env.PERMISSION_MODE || 'bypassPermissions',
     // Default reasoning effort: low|medium|high|xhigh|max (CLI default is high).
     effort: process.env.EFFORT || 'high',
     // Verbose broker logging to stderr.

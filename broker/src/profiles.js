@@ -23,8 +23,8 @@ export const DEFAULT_PROFILES = [
     harness: 'claude-code',
     baseUrl: null,
     authRef: null, // OAuth via `claude /login` — no key
-    model: 'sonnet',
-    models: ['sonnet', 'opus', 'haiku'],
+    model: 'opus',
+    models: ['opus', 'sonnet', 'haiku'],
     billing: 'flat',
     permissionMode: 'default',
   },
