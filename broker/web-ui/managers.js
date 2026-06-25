@@ -519,6 +519,7 @@
     // Editable .mcp.json servers (CRUD) at the top…
     pane.appendChild(el('div', 'perm-bucket-title', 'CONFIGURED SERVERS (.mcp.json)'));
     renderResourceList(pane, 'mcp', 'MCP server');
+    renderPluginInstall(pane);
     // …then the LIVE status from the running engine's capabilities.
     const caps = m.caps;
     if (!caps) { pane.appendChild(el('div', 'mgr-hint', 'Start a Claude engine to see live MCP status, tools and agents.')); return; }
@@ -537,6 +538,38 @@
     if (!lines.length) box.appendChild(el('div', 'mgr-empty', empty));
     lines.forEach((l) => { const d = el('div', 'mgr-row'); d.innerHTML = `<code>${l}</code>`; box.appendChild(d); });
     pane.appendChild(box);
+  }
+
+  // Install Claude Code plugins via the CLI's own /plugin commands. Plugins are
+  // read at session start, so after installing we reload (/reload-plugins, or a
+  // session restart) to make them live. We only drive supported slash commands.
+  function renderPluginInstall(pane) {
+    pane.appendChild(el('div', 'perm-bucket-title', 'INSTALL A PLUGIN'));
+    pane.appendChild(el('p', 'mgr-hint',
+      '1) Add a marketplace (a git URL or owner/repo), 2) install a plugin from it, 3) reload. ' +
+      'Installed plugins appear under LIVE below once reloaded.'));
+
+    const mkRow = (placeholder, btnLabel, build) => {
+      const row = el('div', 'mgr-row');
+      const input = el('input', 'mgr-input');
+      input.placeholder = placeholder;
+      const btn = el('button', 'accent small', btnLabel);
+      btn.onclick = () => {
+        const v = input.value.trim();
+        if (!v) return;
+        send({ type: 'slash_command', name: 'plugin', args: build(v) });
+        input.value = '';
+        close(); // surface the turn so the user sees the result
+      };
+      row.appendChild(input); row.appendChild(btn);
+      pane.appendChild(row);
+    };
+    mkRow('marketplace  e.g. anthropics/claude-code-plugins', 'Add marketplace', (v) => `marketplace add ${v}`);
+    mkRow('plugin  e.g. my-plugin@marketplace', 'Install', (v) => `install ${v}`);
+
+    const reload = el('button', 'ghost small', '↻ Reload plugins');
+    reload.onclick = () => { send({ type: 'slash_command', name: 'reload-plugins' }); close(); };
+    pane.appendChild(reload);
   }
 
   // ---- files ---------------------------------------------------------------

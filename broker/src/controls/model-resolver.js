@@ -32,7 +32,8 @@ export class ModelResolver {
 
   /** Record a resolved id observed from a live engine's init (free). */
   observe(alias, id) {
-    if (alias && id && this.cache[alias] !== id) { this.cache[alias] = id; this._save(); }
+    if (!alias || !id || !familyMatches(alias, id)) return; // reject cross-family (e.g. opus -> sonnet id)
+    if (this.cache[alias] !== id) { this.cache[alias] = id; this._save(); }
   }
 
   /** Return [{alias, id, label}] for the given aliases, resolving misses. */
@@ -51,7 +52,10 @@ export class ModelResolver {
   async _resolveAll(aliases, opts) {
     for (const a of aliases) {
       const id = await this._resolveOne(a, opts);
-      if (id) { this.cache[a] = id; this._save(); }
+      // Only cache when the resolved id's family matches the requested alias.
+      // An account without (e.g.) Opus access reports a Sonnet id for `--model
+      // opus`; caching that would label opus "Sonnet 4.6" and duplicate sonnet.
+      if (id && familyMatches(a, id)) { this.cache[a] = id; this._save(); }
     }
   }
 
@@ -86,10 +90,28 @@ export class ModelResolver {
 
 /** "claude-opus-4-8" -> "Opus 4.8"; "claude-haiku-4-5-20251001" -> "Haiku 4.5". */
 export function labelFor(alias, id) {
-  if (id) {
+  // Only trust an id-derived version label when its family matches the alias.
+  // Otherwise (e.g. alias 'opus' resolved to a sonnet id on a non-Opus account)
+  // fall back to the capitalized alias so the picker shows a distinct "Opus".
+  if (id && familyMatches(alias, id)) {
     const m = id.match(/(opus|sonnet|haiku|fable)-(\d+)-(\d+)/i);
     if (m) return `${cap(m[1])} ${m[2]}.${m[3]}`;
   }
   return cap(alias);
 }
+
+/** The model family token in a string, or null (glm-5.2, mock-1 -> null). */
+export function familyOf(s) {
+  const m = String(s || '').match(/opus|sonnet|haiku|fable/i);
+  return m ? m[0].toLowerCase() : null;
+}
+
+/** Aliases with no family token (glm-5.2, mock-1) resolve verbatim. A known
+ *  family alias (opus/sonnet/haiku/fable) must resolve to the SAME family. */
+export function familyMatches(alias, id) {
+  const fa = familyOf(alias);
+  if (!fa) return true;
+  return fa === familyOf(id);
+}
+
 function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }

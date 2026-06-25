@@ -233,6 +233,23 @@ export class BrokerServer {
     return event(EventType.MODELS, { items, resolvedModel: this.session.engine?.model || null });
   }
 
+  // Kinds the CLI reads ONLY at system/init — editing them needs a re-scan.
+  static RESCAN_KINDS = new Set(['skills', 'commands', 'agents', 'output-styles', 'mcp']);
+
+  /** After writing/deleting a harness resource, re-spawn the engine (resuming
+   *  the session) so the new slash command / agent / MCP becomes live, and tell
+   *  the user. The capabilities re-broadcast happens via the restarted init. */
+  async _rescanIfHarness(kind, name, verbed) {
+    if (!BrokerServer.RESCAN_KINDS.has(kind)) return;
+    const restarted = await this.session.refreshCapabilities();
+    const noun = kind.replace(/s$/, '');
+    this.broadcast(event(EventType.TOAST, {
+      message: restarted
+        ? `${noun} "${name}" ${verbed} — reloaded the session.`
+        : `${noun} "${name}" ${verbed} on next session start.`,
+    }));
+  }
+
   /** Resolve any unknown model aliases (free init-probe) then broadcast MODELS. */
   async _sendModels(ws, refresh) {
     const profile = this.profiles.get(this.session.activeProfileId);
@@ -348,17 +365,21 @@ export class BrokerServer {
       case CommandType.CONFIG_WRITE: {
         const res = this.claudeConfig.write(cmd.kind, cmd.name, cmd.scope || 'project', cmd);
         if (res.error) this.broadcast(event(EventType.ERROR, { message: res.error }));
-        return this._send(ws, event(EventType.CONFIG, {
+        this._send(ws, event(EventType.CONFIG, {
           kind: cmd.kind, scope: cmd.scope || 'project',
           items: this.claudeConfig.list(cmd.kind, cmd.scope || 'project'),
         }));
+        if (!res.error) await this._rescanIfHarness(cmd.kind, cmd.name, 'is now available');
+        return;
       }
       case CommandType.CONFIG_DELETE: {
         this.claudeConfig.delete(cmd.kind, cmd.name, cmd.scope || 'project');
-        return this._send(ws, event(EventType.CONFIG, {
+        this._send(ws, event(EventType.CONFIG, {
           kind: cmd.kind, scope: cmd.scope || 'project',
           items: this.claudeConfig.list(cmd.kind, cmd.scope || 'project'),
         }));
+        await this._rescanIfHarness(cmd.kind, cmd.name, 'was removed');
+        return;
       }
 
       // checkpoints / rewind

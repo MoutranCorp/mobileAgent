@@ -23,16 +23,19 @@ export class EngineAdapter extends EventEmitter {
    * @param {import('../profiles.js').Profile} opts.profile
    * @param {string} opts.cwd        working directory (project dir)
    * @param {object} opts.env        environment to inject at spawn
+   * @param {string} [opts.model]    requested model alias (overrides profile default)
    * @param {(msg:string)=>void} [opts.log]
    */
-  constructor({ profile, cwd, env, log }) {
+  constructor({ profile, cwd, env, log, model }) {
     super();
     this.profile = profile;
     this.cwd = cwd;
     this.env = env || {};
     this.log = log || (() => {});
     this.sessionId = null;
-    this.model = profile?.model || null;
+    // Honor the per-call model override — without this, switching models only
+    // relabeled the UI while the CLI kept spawning with the profile default.
+    this.model = model || profile?.model || null;
     this.state = 'stopped'; // stopped | starting | ready | stopping
   }
 

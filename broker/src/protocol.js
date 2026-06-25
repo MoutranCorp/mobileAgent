@@ -68,6 +68,7 @@ export const EventType = Object.freeze({
   TURN_CHANGES: 'turn_changes', // { checkpointId, files: [{status, path}], stat } what the agent changed this turn
   NATIVE_CHANGE: 'native_change', // { deps } native deps changed — offer rebuild
   LOG: 'log', // { level, message }  broker diagnostics
+  TOAST: 'toast', // { message, level? }  transient user-facing notice
   ack: 'ack', // { ofType, ok, message? }  acknowledges a received command
 });
 

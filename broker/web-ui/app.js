@@ -157,6 +157,7 @@
       case 'turn_changes': onTurnChanges(ev); break;
       case 'workspace_browse': if (window.Managers) window.Managers.onWorkspaceBrowse(ev); break;
       case 'log': break;
+      case 'toast': if (ev.message) toast(ev.message, ev.level || 'info'); break;
       case 'ack': if (!ev.ok && ev.message) toast(ev.message, 'error'); break;
       case 'pong': break;
       default: break;
@@ -896,14 +897,21 @@
     const resolved = new Map(state.models.map((m) => [m.alias, m]));
     const selected = state.selectedModel || (active && active.model) || aliases[0];
     sel.innerHTML = '';
+    const seen = new Map(); // label -> count, to disambiguate any collisions
     for (const alias of aliases) {
       const o = document.createElement('option');
       o.value = alias;
       const r = resolved.get(alias);
       let label = (r && r.label) || labelFromAlias(alias);
-      // If the broker hasn't resolved this alias yet but it's the live one, use
-      // the resolved id from session_meta so the active model still shows a version.
-      if ((!r || !r.id) && alias === selected && state.resolvedModel) label = labelFromId(state.resolvedModel) || label;
+      // Fallback: if this alias isn't resolved yet but it's the live one, borrow
+      // the resolved id from session_meta — but only when its family matches the
+      // alias, so 'opus' never shows a Sonnet version on a non-Opus account.
+      if ((!r || !r.id) && alias === selected && state.resolvedModel && familyMatches(alias, state.resolvedModel)) {
+        label = labelFromId(state.resolvedModel) || label;
+      }
+      // Safety net: never render two identical labels — disambiguate by alias.
+      if (seen.has(label)) label = `${label} (${alias})`;
+      seen.set(label, true);
       o.textContent = label;
       if (alias === selected) o.selected = true;
       sel.appendChild(o);
@@ -940,6 +948,9 @@
   }
   function labelFromAlias(a) { return cap(String(a || '')); }
   function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+  function familyOf(s) { const m = String(s || '').match(/opus|sonnet|haiku|fable/i); return m ? m[0].toLowerCase() : null; }
+  // A known-family alias must match the id's family; family-less aliases (glm) pass.
+  function familyMatches(alias, id) { const fa = familyOf(alias); return !fa || fa === familyOf(id); }
 
   // ---- helpers -------------------------------------------------------------
 

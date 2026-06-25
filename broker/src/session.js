@@ -71,12 +71,19 @@ export class SessionManager {
     const resolvedResume =
       resumeId ?? (project ? this._sessionByProject[project.id] : null) ?? null;
 
+    // Keep the user's chosen model across restarts that DON'T pass one (effort,
+    // permission-mode, resume, new-session, open-project) — otherwise those
+    // silently revert to the profile default. But a profile CHANGE must drop the
+    // old alias: model namespaces are disjoint (Claude opus/sonnet vs GLM glm-5.2),
+    // so carrying 'opus' into the GLM engine would spawn an unknown model.
+    const profileChanged = profileId !== this.activeProfileId;
+    const chosen = model || (profileChanged ? null : this.currentModel) || profile.model;
     this.activeProfileId = profileId;
-    this.currentModel = model || profile.model;
+    this.currentModel = chosen;
     const engine = createEngine(profile, {
       cwd,
       env,
-      model: model || profile.model,
+      model: chosen,
       resumeId: resolvedResume,
       claudeBin: this.config.claudeBin,
       permissionMode: this.permissionMode,
@@ -155,6 +162,23 @@ export class SessionManager {
     const project = this.getActiveProject();
     const resumeId = this.engine?.sessionId || (project ? this._sessionByProject[project.id] : null);
     this._log(`set effort -> ${level} (resume ${resumeId || 'none'})`);
+    return this.startEngine(this.activeProfileId, { resumeId });
+  }
+
+  /**
+   * Re-spawn the engine resuming the current session so the CLI re-scans
+   * `.claude` (skills/commands/agents/output-styles/MCP are read only at
+   * system/init). Context is preserved via --resume. No-op if nothing is live
+   * (a fresh start will scan anyway) or a turn is in flight (don't interrupt it).
+   */
+  async refreshCapabilities() {
+    if (!this.engine || this.engine.state === 'stopped') return null;
+    if (this._lastStatus && this._lastStatus !== StatusState.IDLE && this._lastStatus !== StatusState.ERROR) {
+      return null; // a turn is running — restarting would kill it; it'll scan on next restart
+    }
+    const project = this.getActiveProject();
+    const resumeId = this.engine?.sessionId || (project ? this._sessionByProject[project.id] : null);
+    this._log(`refreshing capabilities (resume ${resumeId || 'none'})`);
     return this.startEngine(this.activeProfileId, { resumeId });
   }
 

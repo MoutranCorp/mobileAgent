@@ -9,7 +9,8 @@ import { loadConfig } from '../src/config.js';
 import { BrokerServer } from '../src/server.js';
 import { ClaudeConfig } from '../src/controls/claude-config.js';
 import { TranscriptStore } from '../src/controls/transcript.js';
-import { labelFor } from '../src/controls/model-resolver.js';
+import { labelFor, familyMatches, ModelResolver } from '../src/controls/model-resolver.js';
+import { MockEngine } from '../src/engines/mock.js';
 
 async function tmpDir(p) { return fs.mkdtemp(path.join(os.tmpdir(), p)); }
 
@@ -21,6 +22,34 @@ test('labelFor derives a friendly version from the resolved id (never hardcoded)
   // Unknown id -> fall back to a capitalized alias, no crash.
   assert.equal(labelFor('opus', null), 'Opus');
   assert.equal(labelFor('glm-5.2', 'glm-5.2'), 'Glm-5.2');
+});
+
+test('family validation: a non-Opus account reporting a Sonnet id for opus never mislabels', () => {
+  // The exact screenshot bug: opus resolved to a sonnet id -> must NOT become "Sonnet 4.6".
+  assert.equal(labelFor('opus', 'claude-sonnet-4-6'), 'Opus');
+  assert.equal(labelFor('opus', 'claude-opus-4-8'), 'Opus 4.8');
+  assert.equal(familyMatches('opus', 'claude-sonnet-4-6'), false);
+  assert.equal(familyMatches('sonnet', 'claude-sonnet-4-6'), true);
+  // Family-less aliases (GLM, mock) resolve verbatim.
+  assert.equal(familyMatches('glm-5.2', 'glm-5.2'), true);
+  assert.equal(labelFor('glm-5.2', 'glm-5.2'), 'Glm-5.2');
+});
+
+test('ModelResolver.observe rejects a cross-family id (no cache poisoning)', () => {
+  const r = new ModelResolver({ stateDir: os.tmpdir(), claudeBin: 'claude' });
+  r.cache = {};
+  r.observe('opus', 'claude-sonnet-4-6'); // wrong family -> ignored
+  assert.equal(r.cache.opus, undefined);
+  r.observe('opus', 'claude-opus-4-8'); // correct family -> cached
+  assert.equal(r.cache.opus, 'claude-opus-4-8');
+});
+
+test('engine honors the per-call model override (base.js no longer ignores opts.model)', () => {
+  const profile = { id: 'mock', harness: 'mock', model: 'mock-1' };
+  const eng = new MockEngine({ profile, cwd: os.tmpdir(), env: {}, model: 'mock-override', log() {} });
+  assert.equal(eng.model, 'mock-override', 'switchModel must actually change the spawned model');
+  const dflt = new MockEngine({ profile, cwd: os.tmpdir(), env: {}, log() {} });
+  assert.equal(dflt.model, 'mock-1', 'falls back to profile default when no override');
 });
 
 // --- Bug 5: resume replays the conversation from Claude's own .jsonl --------
@@ -112,6 +141,38 @@ test('e2e: effort + models flow over WebSocket', async () => {
   const eff2 = await waitFor((e) => e.type === 'effort' && e.level === 'max');
   assert.equal(eff2.level, 'max');
   assert.equal(server.session.effort, 'max');
+  // ...and it does NOT silently revert the model (currentModel persists).
+  assert.equal(server.session.currentModel, 'mock-1');
+
+  ws.close();
+  await server.stop();
+});
+
+test('e2e: creating a skill via the UI triggers a hot-reload toast', async () => {
+  const projects = await tmpDir('sk-proj-');
+  const state = await tmpDir('sk-state-');
+  const config = loadConfig(['--profile', 'mock', '--port', '0', '--projects', projects, '--state', state]);
+  const server = new BrokerServer(config);
+  await server.start();
+  const port = server.httpServer.address().port;
+
+  const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+  const events = [];
+  const listeners = new Set();
+  ws.on('message', (raw) => { const ev = JSON.parse(raw.toString()); events.push(ev); for (const l of [...listeners]) l(ev); });
+  await new Promise((res, rej) => { ws.on('open', res); ws.on('error', rej); });
+  const waitFor = (pred, ms = 8000) => new Promise((resolve, reject) => {
+    const ex = events.find(pred); if (ex) return resolve(ex);
+    const l = (ev) => { if (pred(ev)) { clearTimeout(t); listeners.delete(l); resolve(ev); } };
+    const t = setTimeout(() => { listeners.delete(l); reject(new Error('timeout')); }, ms);
+    listeners.add(l);
+  });
+
+  ws.send(JSON.stringify({ type: 'config_write', kind: 'skills', name: 'greet', scope: 'project', fields: { description: 'say hi' }, body: 'Say hello.' }));
+  const toast = await waitFor((e) => e.type === 'toast');
+  assert.match(toast.message, /greet/);
+  // The skill file landed in the project's .claude (where the CLI scans).
+  assert.ok(fssync.existsSync(path.join(projects, '.claude', 'skills', 'greet', 'SKILL.md')));
 
   ws.close();
   await server.stop();
