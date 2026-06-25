@@ -44,6 +44,13 @@ fun AgentWebView(
                 settings.domStorageEnabled = true
                 settings.mediaPlaybackRequiresUserGesture = false
                 settings.cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
+                // Honor the page's <meta viewport width=device-width> and fit to the
+                // screen width — without this the WebView can lay the page out wider
+                // than the device and let it pan sideways.
+                settings.useWideViewPort = true
+                settings.loadWithOverviewMode = true
+                settings.builtInZoomControls = false
+                settings.displayZoomControls = false
                 // Bridge the WebView to native capabilities.
                 addJavascriptInterface(WebAppBridge(host, this), "AndroidAgent")
 

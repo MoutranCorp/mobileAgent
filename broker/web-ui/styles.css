@@ -17,7 +17,7 @@
 }
 
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; }
+html, body { margin: 0; height: 100%; overflow-x: hidden; max-width: 100%; }
 body {
   background: var(--bg);
   color: var(--text);
@@ -30,20 +30,22 @@ body {
 /* ---- top bar ---- */
 .topbar {
   display: flex; align-items: center; justify-content: space-between;
-  gap: 10px; padding: 8px 12px;
+  gap: 8px; padding: 8px 12px; flex-wrap: nowrap;
   background: var(--bg-elev); border-bottom: 1px solid var(--border);
   padding-top: max(8px, env(safe-area-inset-top));
 }
-.topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.selectors { display: flex; gap: 8px; flex-wrap: wrap; min-width: 0; }
-.sel { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.topbar-left { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto; }
+/* the dropdown strip scrolls sideways within its space, never widening the page */
+.selectors { display: flex; gap: 8px; min-width: 0; flex: 1 1 auto; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
+.selectors::-webkit-scrollbar { display: none; }
+.sel { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 0 0 auto; }
 .sel-label { font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; }
 .sel select {
   background: var(--bg-elev2); color: var(--text);
   border: 1px solid var(--border); border-radius: 8px;
-  padding: 5px 8px; font-size: 13px; max-width: 42vw;
+  padding: 5px 8px; font-size: 13px; max-width: 38vw;
 }
-.topbar-right { display: flex; align-items: center; gap: 10px; }
+.topbar-right { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .usage { font-size: 11px; color: var(--text-faint); font-family: var(--mono); white-space: nowrap; }
 
 .icon-btn {
@@ -157,11 +159,11 @@ button { font-family: inherit; }
 .composer { border-top: 1px solid var(--border); background: var(--bg-elev); padding: 10px 12px; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
 .composer-row { display: flex; gap: 8px; align-items: flex-end; }
 .composer textarea {
-  flex: 1; background: var(--bg-elev2); color: var(--text); border: 1px solid var(--border);
-  border-radius: 12px; padding: 11px 12px; font-family: inherit; font-size: 15px; resize: none; max-height: 160px; line-height: 1.4;
+  flex: 1; min-width: 0; background: var(--bg-elev2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 12px; padding: 11px 12px; font-family: inherit; font-size: 16px; resize: none; max-height: 160px; line-height: 1.4;
 }
 .composer textarea:focus { outline: none; border-color: var(--accent); }
-.composer-actions { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.composer-actions { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
 .spacer { flex: 1; }
 .metro-badge { font-size: 11px; font-family: var(--mono); color: var(--green); border: 1px solid var(--green); border-radius: 999px; padding: 2px 8px; }
 
@@ -351,10 +353,40 @@ mark.find-hit.current { background: var(--amber); color: #000; }
 .chg-M { color: var(--amber); } .chg-A, .chg-\? { color: var(--green); } .chg-D { color: var(--red); }
 .mgr-row code { padding: 1px 5px; }
 
-@media (max-width: 540px) {
+/* ===== mobile / phone (the app runs in a narrow WebView) ===== */
+@media (max-width: 720px) {
+  body { font-size: 15px; }
+
+  /* top bar: compact; labels off; dropdown strip scrolls; hide space-hungry chrome */
+  .topbar { padding: 6px 10px; padding-top: max(6px, env(safe-area-inset-top)); gap: 6px; }
   .sel-label { display: none; }
-  .sel select { max-width: 30vw; }
-  .ctx-meter { display: none; }
-  .mgr-layout { flex-direction: column; }
-  .mgr-tabs { flex-direction: row; flex-wrap: wrap; border-right: none; border-bottom: 1px solid var(--border); min-width: 0; }
+  .sel select { max-width: 44vw; padding: 7px 8px; font-size: 13px; }
+  .ctx-meter, .usage { display: none; }       /* context + tokens live in the Usage tab */
+  .icon-btn { font-size: 20px; padding: 6px 7px; }
+  .status-pill { font-size: 11px; padding: 3px 8px; }
+
+  /* composer: keep only the essentials in the bar — everything else is in ⌘ / ☰ */
+  #newBtn, #previewBtn, #exportBtn { display: none; }
+  .composer { padding: 8px 10px; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+  .composer-actions { gap: 6px; }
+  .composer-actions button { padding: 9px 14px; font-size: 14px; min-height: 40px; }
+  .composer-row .icon-btn { padding: 8px 8px; }
+  .primary { padding: 11px 16px; }
+  .spacer { display: none; }                   /* no need to push Terminal right when wrapping */
+
+  /* roomier touch targets in transcript + managers */
+  .suggestion { padding: 12px 14px; }
+  .approval-actions button, .ghost.small, .primary.small, .accent.small, .danger.small { padding: 8px 12px; min-height: 38px; }
+  .tool-head { padding: 12px; }
+
+  /* managers modal: full-screen sheet, tabs scroll across the top */
+  .modal { padding: 0; align-items: stretch; }
+  .modal-card.mgr { width: 100%; max-height: 100dvh; height: 100dvh; border-radius: 0; }
+  .mgr-layout { flex-direction: column; min-height: 0; }
+  .mgr-tabs { flex-direction: row; flex-wrap: nowrap; overflow-x: auto; border-right: none; border-bottom: 1px solid var(--border); min-width: 0; scrollbar-width: none; }
+  .mgr-tabs::-webkit-scrollbar { display: none; }
+  .mgr-tab { flex: 0 0 auto; }
+
+  /* drawers a touch taller for thumbs */
+  .terminal { height: 55dvh; }
 }
