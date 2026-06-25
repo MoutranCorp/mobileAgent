@@ -28,10 +28,21 @@ async function main() {
     });
   }
 
+  let shuttingDown = false;
   const shutdown = async (sig) => {
+    if (shuttingDown) { process.exit(0); return; } // a second Ctrl-C exits now
+    shuttingDown = true;
     process.stderr.write(`\n[broker] ${sig} received, shutting down…\n`);
+    // Hard backstop: exit even if something refuses to close cleanly.
+    const force = setTimeout(() => {
+      process.stderr.write('[broker] forced exit\n');
+      process.exit(0);
+    }, 3000);
+    force.unref();
     try {
       await server.stop();
+    } catch {
+      /* ignore */
     } finally {
       process.exit(0);
     }

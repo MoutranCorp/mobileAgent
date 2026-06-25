@@ -94,16 +94,23 @@ export class BrokerServer {
   async stop() {
     this.transcript.replay(); // flush any pending text record to disk
     this.runner.stopAll();
-    await this.session.stopAll();
-    for (const ws of this.clients) {
-      try {
-        ws.close();
-      } catch {
-        /* ignore */
-      }
-    }
-    await new Promise((r) => this.wss.close(r));
-    await new Promise((r) => this.httpServer.close(r));
+    // Force-close client sockets (don't wait on a polite close handshake) and
+    // destroy any lingering keep-alive HTTP/WebSocket sockets — otherwise
+    // httpServer.close() blocks until the browser's connection drains, which can
+    // take a long time. closeAllConnections is Node 18.2+; the index.js timer is
+    // the final backstop on older runtimes.
+    for (const ws of this.clients) { try { ws.terminate(); } catch { /* ignore */ } }
+    this.clients.clear();
+    try { this.wss.close(); } catch { /* ignore */ }
+    try { this.httpServer.closeAllConnections?.(); } catch { /* ignore */ }
+    // Close the HTTP server + stop all engines, but never block shutdown forever.
+    await Promise.race([
+      (async () => {
+        await new Promise((r) => this.httpServer.close(() => r()));
+        await this.session.stopAll();
+      })(),
+      new Promise((r) => setTimeout(r, 2000)),
+    ]);
   }
 
   // --- websocket --------------------------------------------------------------
