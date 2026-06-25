@@ -1279,14 +1279,17 @@
     const images = state.attachments.map((a) => ({ mime: a.mime, dataBase64: a.dataBase64 }));
     if (!text && !images.length) return;
     if (text) state.pendingSent.push(text); // only dedupe non-empty echoes
+    // Paint the feedback FIRST — button -> Stop, typing dots — before serializing
+    // and sending the (possibly large) payload, so big prompts still feel instant.
     addUserMessage(text + (images.length ? `\n📎 ${images.length} image${images.length === 1 ? '' : 's'}` : ''));
-    send({ type: 'user_message', text, images: images.length ? images : undefined });
     input.value = '';
     clearAttachments();
     autoGrow();
     hideSlashPalette();
     hideMentionPalette();
-    setActivity('working', 'Thinking…'); // instant feedback before the first token
+    setActivity('working', 'Thinking…');
+    const payload = { type: 'user_message', text, images: images.length ? images : undefined };
+    requestAnimationFrame(() => send(payload)); // send after the UI has painted
   }
 
   // ---- image attachments ----------------------------------------------------
@@ -1493,7 +1496,9 @@
       }
     };
 
-    $('interruptBtn').onclick = () => { send({ type: 'interrupt' }); setActivity('idle'); };
+    // (The dedicated Stop button was removed — the Send button becomes Stop while
+    //  the agent is working. The command palette still offers "Interrupt".)
+    $('interruptBtn') && ($('interruptBtn').onclick = () => { send({ type: 'interrupt' }); setActivity('idle'); });
     $('newBtn').onclick = () => { send({ type: 'new_session' }); resetConversation(); };
     $('testBtn').onclick = onTest;
     $('previewBtn').onclick = togglePreview;

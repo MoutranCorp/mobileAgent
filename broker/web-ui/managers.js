@@ -411,62 +411,56 @@
   function workingDots() { const s = el('span', 'sess-dots'); s.innerHTML = '<i></i><i></i><i></i>'; return s; }
 
   function renderSessions(pane) {
-    const live = m.liveSessions || [];
+    pane.appendChild(el('p', 'mgr-hint', 'Your sessions, newest first, grouped by project. A pulsing dot means the agent is working there. Tap to open.'));
     const nb = el('button', 'accent small', '+ New session');
     nb.onclick = () => { send({ type: 'new_session' }); close(); };
     pane.appendChild(nb);
 
-    // ---- Running now (live engines) ----
-    const liveOrdered = live.slice().sort((a, b) => (b.busy ? 1 : 0) - (a.busy ? 1 : 0));
-    pane.appendChild(el('div', 'perm-bucket-title', 'RUNNING NOW'));
-    const liveList = el('div', 'mgr-list');
-    if (!liveOrdered.length) liveList.appendChild(el('div', 'mgr-empty', 'No live sessions.'));
-    for (const s of liveOrdered) {
-      const row = el('div', 'mgr-row' + (s.active ? ' active' : ''));
-      const info = el('div', 'mgr-row-info');
-      const name = el('div', 'mgr-row-name');
-      if (s.busy) name.appendChild(workingDots());
-      name.appendChild(document.createTextNode((s.projectId || 'main') + (s.active ? ' · viewing' : '')));
-      info.appendChild(name);
-      info.appendChild(el('div', 'mgr-row-desc', `${s.profileId || ''}${s.model ? ' · ' + s.model : ''} · ${s.busy ? 'working…' : 'idle'}`));
-      row.appendChild(info);
-      if (!s.active) {
-        const view = el('button', 'ghost small', 'View');
-        view.onclick = () => { send({ type: 'switch_session', key: s.key }); close(); };
-        row.appendChild(view);
-      } else {
-        row.appendChild(el('span', 'badge flat', 'active'));
-      }
-      liveList.appendChild(row);
-    }
-    pane.appendChild(liveList);
+    // Overlay live state onto the history list, matched by session id (reliable —
+    // unlike the lossy project-name grouping). Updated live via onSessions().
+    const live = m.liveSessions || [];
+    const busyById = new Map(); // sessionId -> busy
+    const keyById = new Map();  // sessionId -> project key (to switch to a live bg session)
+    for (const s of live) if (s.sessionId) { busyById.set(s.sessionId, s.busy); keyById.set(s.sessionId, s.key); }
+    const activeId = (live.find((s) => s.active) || {}).sessionId || m.activeSessionId || null;
 
-    // ---- History (all projects, recency, grouped by project) ----
     const items = m.items.sessions || [];
-    pane.appendChild(el('div', 'perm-bucket-title', 'HISTORY · ALL PROJECTS'));
-    if (!items.length) { pane.appendChild(el('div', 'mgr-empty', 'No saved sessions found.')); return; }
+    if (!items.length) { pane.appendChild(el('div', 'mgr-empty', 'No sessions yet.')); return; }
+
     const groups = new Map();
     for (const s of items) { const k = s.project || 'project'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(s); }
-    // groups are already recency-ordered within; order groups by their newest session
-    const groupOrder = [...groups.entries()].sort((a, b) => (b[1][0]?.mtime || 0) - (a[1][0]?.mtime || 0));
-    const liveBusy = m.sessionsLiveBusy || {};
-    for (const [project, sess] of groupOrder) {
-      pane.appendChild(el('div', 'mgr-label', '📁 ' + project));
+    const order = [...groups.entries()].sort((a, b) => (b[1][0]?.mtime || 0) - (a[1][0]?.mtime || 0));
+
+    for (const [project, sess] of order) {
+      const head = el('div', 'mgr-label');
+      if (sess.some((s) => busyById.get(s.id))) head.appendChild(workingDots());
+      head.appendChild(document.createTextNode('📁 ' + project));
+      pane.appendChild(head);
       const list = el('div', 'mgr-list');
       for (const s of sess) {
-        const inProgress = !!liveBusy[s.id];
-        const isActive = s.id === m.activeSessionId;
+        const busy = !!busyById.get(s.id);
+        const isActive = s.id === activeId;
+        const isLive = busyById.has(s.id); // a running engine owns this session
         const row = el('div', 'mgr-row' + (isActive ? ' active' : ''));
         const info = el('div', 'mgr-row-info');
         const name = el('div', 'mgr-row-name');
-        if (inProgress) name.appendChild(workingDots());
+        if (busy) name.appendChild(workingDots());
         name.appendChild(document.createTextNode(s.summary || s.id));
         info.appendChild(name);
-        info.appendChild(el('div', 'mgr-row-desc', relTime(s.mtime) + ' · ' + s.id.slice(0, 8) + (inProgress ? ' · working…' : '')));
+        const tag = isActive ? ' · viewing' : busy ? ' · working…' : isLive ? ' · live' : '';
+        info.appendChild(el('div', 'mgr-row-desc', relTime(s.mtime) + ' · ' + s.id.slice(0, 8) + tag));
         row.appendChild(info);
-        const resume = el('button', 'ghost small', isActive ? 'Active' : 'Resume');
-        if (!isActive) resume.onclick = () => { send({ type: 'resume', sessionId: s.id }); close(); };
-        row.appendChild(resume);
+        if (isActive) {
+          row.appendChild(el('span', 'badge flat', 'viewing'));
+        } else {
+          const btn = el('button', 'ghost small', isLive ? 'Open' : 'Resume');
+          btn.onclick = () => {
+            if (isLive && keyById.has(s.id)) send({ type: 'switch_session', key: keyById.get(s.id) });
+            else send({ type: 'resume', sessionId: s.id });
+            close();
+          };
+          row.appendChild(btn);
+        }
         list.appendChild(row);
       }
       pane.appendChild(list);

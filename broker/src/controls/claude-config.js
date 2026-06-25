@@ -567,7 +567,10 @@ function firstUserText(file) {
         const text = typeof content === 'string'
           ? content
           : (content.find?.((b) => b.type === 'text')?.text || '');
-        if (text) return String(text).slice(0, 80);
+        // Strip Claude's slash-command XML wrappers (<command-name>…) so the
+        // session summary reads cleanly instead of showing raw markup.
+        const clean = String(text).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        if (clean) return clean.slice(0, 80);
       }
     }
   } catch {

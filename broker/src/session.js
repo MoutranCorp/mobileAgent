@@ -219,18 +219,20 @@ export class SessionManager {
     }
     if (ev.type === EventType.STATUS && ev.state) {
       const busy = ev.state !== StatusState.IDLE && ev.state !== StatusState.ERROR;
+      const changed = !m || m.busy !== busy || m.lastStatus !== ev.state;
       if (m) { m.lastStatus = ev.state; m.busy = busy; }
       if (key === this.activeKey) this._lastStatus = ev.state;
-      // Background session status -> a compact signal; the server turns it into
-      // a SESSION_STATUS for the UI badge.
-      if (key !== this.activeKey) this._emitSessions();
+      // Keep the sessions screen + nav badge live for EVERY session (active too),
+      // so a working session always shows its indicator.
+      if (changed) this._emitSessions();
     }
     if (ev.type === EventType.CAPABILITIES) {
       const e = this.engines.get(key); if (e) e._lastCaps = ev;
       if (key === this.activeKey) this.lastCapabilities = ev;
     }
     if (ev.type === EventType.PERMISSION_MODE && ev.mode && key === this.activeKey) this.permissionMode = ev.mode;
-    if (ev.type === EventType.RESULT && m) { m.busy = false; if (key !== this.activeKey) this._emitSessions(); }
+    if (ev.type === EventType.SESSION_META && ev.sessionId) this._emitSessions(); // sessionId now known
+    if (ev.type === EventType.RESULT && m && m.busy) { m.busy = false; this._emitSessions(); }
     this.emit(ev);
   }
 
