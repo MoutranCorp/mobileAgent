@@ -42,7 +42,13 @@ console.log('CHECK has-text:', await page.evaluate(() => document.querySelector(
 await shot('02-composer');
 
 await page.click('#sendBtn');
-await sleep(3200);
+await sleep(120);
+console.log('CHECK activity row present in gap:', await page.evaluate(() => !!document.getElementById('activityRow')));
+await shot('02a-dots'); // typing dots fill the pre-response gap
+await sleep(500);
+console.log('CHECK busy after send:', await page.evaluate(() => document.querySelector('.composer')?.classList.contains('busy')));
+await shot('02b-working'); // thinking trace + Stop button
+await sleep(2800);
 await page.evaluate(() => { const t = document.getElementById('transcript'); if (t) t.scrollTop = t.scrollHeight; });
 await sleep(300);
 await shot('03-convo');

@@ -91,6 +91,13 @@ export class MockEngine extends EngineAdapter {
     this.emitStatus(StatusState.THINKING);
     await delay(200);
 
+    // A short reasoning trace so the UI's thinking panel + live indicator show.
+    for (const chunk of ['Let me think about what they need. ', 'I should read the relevant context first, ', 'then make the change cleanly and verify it.']) {
+      if (this._interrupted) return this._finish(true);
+      this.emitEvent(EventType.ASSISTANT_THINKING, { delta: chunk });
+      await delay(120);
+    }
+
     if (images && images.length) {
       await this._streamText(`I can see the ${images.length === 1 ? 'image' : images.length + ' images'} you attached. `);
     }

@@ -27,6 +27,8 @@
     attachments: [], // [{ mime, dataBase64, url, name }]
     checkpoints: [],
     reconnectTimer: null,
+    activity: 'idle', // 'idle' | 'working' | 'waiting' — drives the live indicator
+    activityLabel: 'Thinking…',
   };
   // exposed for managers.js (toast attached after its definition below)
   window.Agent = { send, state, esc };
@@ -190,6 +192,7 @@
   }
 
   function resetConversation() {
+    state.activity = 'idle';
     $('transcript').innerHTML = '';
     $('transcript').appendChild(buildEmptyState());
     finalizeAssistant();
@@ -197,6 +200,7 @@
     state.toolCards.clear();
     state.approvals.clear();
     state.pendingSent = [];
+    applyActivity();
   }
 
   // ---- transcript: assistant text ------------------------------------------
@@ -237,6 +241,7 @@
       msg.appendChild(bubble);
       $('transcript').appendChild(msg);
       state.activeAssistant = bubble;
+      applyActivity(); // streaming text replaces the typing dots
     }
     state.activeAssistant._md += delta;
     scheduleMd(state.activeAssistant);
@@ -265,24 +270,88 @@
     if (parentId) return appendAssistant('💭 ' + delta, parentId);
     if (!state.activeThinking) {
       const det = document.createElement('details');
-      det.className = 'thinking';
+      det.className = 'thinking live';
+      det.open = true; // visible live; collapsible afterward
       const sum = document.createElement('summary');
-      sum.textContent = 'Thinking…';
+      sum.innerHTML = '<span class="think-dot"></span><span class="think-title">Thinking…</span>';
       det.appendChild(sum);
-      const body = el('div');
+      const body = el('div', 'think-body md');
+      body._md = '';
       det.appendChild(body);
       $('transcript').appendChild(det);
-      state.activeThinking = body;
+      det._body = body;
+      state.activeThinking = det;
+      applyActivity(); // the thinking card replaces the typing dots
     }
-    state.activeThinking.textContent += delta;
+    state.activeThinking._body._md += delta;
+    scheduleMd(state.activeThinking._body);
     scrollDown();
   }
 
   function finalizeAssistant() {
     if (state.activeAssistant) { flushMd(state.activeAssistant); state.activeAssistant.classList.remove('cursor'); }
     state.activeAssistant = null;
+    if (state.activeThinking) {
+      const det = state.activeThinking;
+      if (det._body) flushMd(det._body);
+      det.classList.remove('live');
+      const title = det.querySelector('.think-title');
+      if (title) title.textContent = 'Thought process';
+    }
     state.activeThinking = null;
     document.querySelectorAll('.nested-text:not([data-done])').forEach((n) => { flushMd(n); n.dataset.done = '1'; });
+    applyActivity();
+  }
+
+  // ---- live activity indicator ---------------------------------------------
+  // The single source of truth for "is the agent working", so the user always
+  // gets instant, visible feedback — a typing indicator the moment they send,
+  // a labelled activity row during tool use, and a Stop affordance.
+
+  function setActivity(kind, label) {
+    state.activity = kind;
+    if (label) state.activityLabel = label;
+    applyActivity();
+  }
+  function applyActivity() {
+    const working = state.activity === 'working';
+    const composer = document.querySelector('.composer');
+    if (composer) composer.classList.toggle('busy', working); // Stop button only while actively working
+    // The typing dots only fill the pure gap — once a thinking trace or assistant
+    // text is streaming, those are the "alive" cue and the dots would be redundant.
+    const showRow = working && !state.activeAssistant && !state.activeThinking;
+    let row = $('activityRow');
+    if (showRow) {
+      if (!row) row = buildActivityRow();
+      $('transcript').appendChild(row); // keep pinned at the bottom
+      const l = row.querySelector('.activity-label');
+      if (l) l.textContent = state.activityLabel;
+      scrollDown();
+    } else if (row) {
+      row.remove();
+    }
+  }
+  function buildActivityRow() {
+    const msg = el('div', 'msg assistant');
+    msg.id = 'activityRow';
+    const a = el('div', 'activity');
+    a.innerHTML = '<span class="dots"><i></i><i></i><i></i></span><span class="activity-label"></span>';
+    msg.appendChild(a);
+    return msg;
+  }
+  function toolActivityLabel(ev) {
+    const verbs = { Read: 'Reading', Write: 'Writing', Edit: 'Editing', MultiEdit: 'Editing', Bash: 'Running',
+      Glob: 'Searching', Grep: 'Searching', WebFetch: 'Fetching', WebSearch: 'Searching', Task: 'Delegating', Agent: 'Delegating' };
+    const verb = verbs[ev.name] || (/^mcp__/.test(ev.name || '') ? 'Calling' : 'Working');
+    const t = targetOf(ev.input);
+    const tail = t ? ' ' + String(t).split(/[\\/]/).pop().slice(0, 40) : '';
+    return verb + tail + '…';
+  }
+
+  // Minimize/expand every thinking trace and tool card at once.
+  function setAllCollapsed(collapsed) {
+    document.querySelectorAll('.thinking').forEach((d) => { d.open = !collapsed; });
+    document.querySelectorAll('.tool-card .tool-body').forEach((b) => { b.classList.toggle('collapsed', collapsed); });
   }
 
   function onUserEcho(text) {
@@ -323,6 +392,7 @@
     }
     hideEmpty();
     if (!ev.parentToolUseId) finalizeAssistant();
+    setActivity('working', toolActivityLabel(ev)); // show what the agent is doing
     const card = el('div', 'tool-card' + (ev.kind === 'subagent' ? ' subagent' : ''));
     const isDiff = /^(Write|Edit|MultiEdit)$/.test(ev.name);
 
@@ -384,6 +454,7 @@
   function onPermissionRequest(ev) {
     hideEmpty();
     finalizeAssistant();
+    setActivity('waiting'); // paused on the user — the approval card is the cue
     notifyIfHidden('Approval needed', ev.detail || ev.toolName || '');
     // Plan mode: ExitPlanMode presents the plan for approval before proceeding.
     if (ev.toolName === 'ExitPlanMode' || ev.toolName === 'exit_plan_mode') {
@@ -395,8 +466,8 @@
       const actions = el('div', 'approval-actions');
       const go = el('button', 'accent', 'Approve plan & proceed');
       const keep = el('button', 'ghost', 'Keep planning');
-      go.onclick = () => send({ type: 'approve', id: ev.id });
-      keep.onclick = () => send({ type: 'deny', id: ev.id, reason: 'Keep planning' });
+      go.onclick = () => { setActivity('working', 'Working…'); send({ type: 'approve', id: ev.id }); };
+      keep.onclick = () => { setActivity('working', 'Working…'); send({ type: 'deny', id: ev.id, reason: 'Keep planning' }); };
       actions.appendChild(go); actions.appendChild(keep);
       card.appendChild(actions);
       $('transcript').appendChild(card);
@@ -415,8 +486,8 @@
     const actions = el('div', 'approval-actions');
     const allow = el('button', 'accent', 'Approve');
     const deny = el('button', 'danger', 'Deny');
-    allow.onclick = () => send({ type: 'approve', id: ev.id });
-    deny.onclick = () => send({ type: 'deny', id: ev.id });
+    allow.onclick = () => { setActivity('working', 'Working…'); send({ type: 'approve', id: ev.id }); };
+    deny.onclick = () => { setActivity('working', 'Working…'); send({ type: 'deny', id: ev.id }); };
     actions.appendChild(allow); actions.appendChild(deny);
     card.appendChild(actions);
     $('transcript').appendChild(card);
@@ -458,6 +529,11 @@
     pill.className = 'status-pill ' + (stateName || 'idle');
     pill.textContent = stateName || 'idle';
     pill.title = detail || '';
+    // Drive the live activity indicator off the engine's own status.
+    if (stateName === 'thinking') setActivity('working', 'Thinking…');
+    else if (stateName === 'running') setActivity('working', detail || 'Working…');
+    else if (stateName === 'waiting') setActivity('waiting');
+    else if (stateName === 'idle' || stateName === 'error') setActivity('idle');
   }
 
   function onUsage(ev) {
@@ -488,6 +564,7 @@
   }
 
   function onResult(ev) {
+    setActivity('idle');
     finalizeAssistant();
     if (ev.isError) toast('Turn ended with an error', 'error');
     notifyIfHidden(ev.isError ? 'Agent hit an error' : 'Agent finished', 'Tap to return to the conversation');
@@ -682,6 +759,8 @@
 
   function paletteActions() {
     const a = [
+      { label: 'Collapse all thinking & actions', run: () => setAllCollapsed(true) },
+      { label: 'Expand all thinking & actions', run: () => setAllCollapsed(false) },
       { label: 'Update app (git pull)', run: () => { send({ type: 'app_update' }); toast('Checking for updates…', 'info'); } },
       { label: 'New session', run: () => { send({ type: 'new_session' }); resetConversation(); } },
       { label: 'Interrupt current turn', run: () => send({ type: 'interrupt' }) },
@@ -1056,6 +1135,7 @@
   // ---- composer & controls -------------------------------------------------
 
   function doSend() {
+    if (state.activity !== 'idle') return; // a turn is in flight or awaiting approval
     const input = $('input');
     const text = input.value.trim();
     const images = state.attachments.map((a) => ({ mime: a.mime, dataBase64: a.dataBase64 }));
@@ -1068,6 +1148,7 @@
     autoGrow();
     hideSlashPalette();
     hideMentionPalette();
+    setActivity('working', 'Thinking…'); // instant feedback before the first token
   }
 
   // ---- image attachments ----------------------------------------------------
@@ -1195,7 +1276,12 @@
   function init() {
     $('brokerUrl') && ($('brokerUrl').value = state.url);
 
-    $('sendBtn').onclick = () => { requestNotify(); doSend(); };
+    // While the agent is working the send button becomes a Stop button.
+    const sendOrStop = () => {
+      if (state.activity === 'working') { send({ type: 'interrupt' }); setActivity('idle'); return; }
+      requestNotify(); doSend();
+    };
+    $('sendBtn').onclick = sendOrStop;
     $('input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); requestNotify(); doSend(); }
       if (e.key === 'Escape') { hideSlashPalette(); hideMentionPalette(); }
@@ -1231,7 +1317,7 @@
       }
     };
 
-    $('interruptBtn').onclick = () => send({ type: 'interrupt' });
+    $('interruptBtn').onclick = () => { send({ type: 'interrupt' }); setActivity('idle'); };
     $('newBtn').onclick = () => { send({ type: 'new_session' }); resetConversation(); };
     $('testBtn').onclick = onTest;
     $('previewBtn').onclick = togglePreview;
