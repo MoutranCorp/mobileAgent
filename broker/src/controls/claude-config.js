@@ -267,6 +267,57 @@ export class ClaudeConfig {
       .slice(0, 50);
   }
 
+  /**
+   * Parse a stored session .jsonl into canonical transcript records (the same
+   * shapes TranscriptStore persists), so resuming a session can REPLAY history.
+   * Claude's `--resume` restores context for the model but does NOT re-emit past
+   * turns to the stream, so without this a resumed session shows up blank.
+   */
+  readSessionTranscript(sessionId, { max = 1500 } = {}) {
+    const file = path.join(this._sessionsDir(), `${sessionId}.jsonl`);
+    let lines;
+    try {
+      lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
+    } catch {
+      return [];
+    }
+    const out = [];
+    for (const line of lines) {
+      let obj;
+      try { obj = JSON.parse(line); } catch { continue; }
+      const msg = obj?.message;
+      if (!msg) continue;
+      const parent = obj.parentToolUseId || obj.parent_tool_use_id || null;
+      if (obj.type === 'user') {
+        const content = msg.content;
+        if (typeof content === 'string') {
+          if (content.trim()) out.push({ type: 'user_echo', text: content });
+        } else if (Array.isArray(content)) {
+          for (const b of content) {
+            if (b.type === 'text' && b.text?.trim()) out.push({ type: 'user_echo', text: b.text });
+            else if (b.type === 'tool_result') {
+              out.push({
+                type: 'tool_result',
+                id: b.tool_use_id,
+                status: b.is_error ? 'error' : 'ok',
+                output: blockText(b.content),
+                parentToolUseId: parent,
+              });
+            }
+          }
+        }
+      } else if (obj.type === 'assistant') {
+        const content = Array.isArray(msg.content) ? msg.content : [];
+        for (const b of content) {
+          if (b.type === 'text' && b.text) out.push({ type: 'assistant_text', delta: b.text, parentToolUseId: parent });
+          else if (b.type === 'thinking' && b.thinking) out.push({ type: 'assistant_thinking', delta: b.thinking, parentToolUseId: parent });
+          else if (b.type === 'tool_use') out.push({ type: 'tool_call', id: b.id, name: b.name, input: b.input || {}, parentToolUseId: parent });
+        }
+      }
+    }
+    return out.slice(-max);
+  }
+
   // --- read -------------------------------------------------------------------
 
   read(kind, name, scope = 'project') {
@@ -464,6 +515,17 @@ function compact(obj) {
   const out = {};
   for (const [k, v] of Object.entries(obj)) if (v != null && v !== '') out[k] = v;
   return out;
+}
+/** Flatten a Claude content value (string | block[]) to plain text. */
+function blockText(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((b) => (typeof b === 'string' ? b : b?.type === 'text' ? b.text || '' : b?.text || ''))
+      .filter(Boolean)
+      .join('\n');
+  }
+  return content == null ? '' : String(content);
 }
 function firstUserText(file) {
   try {

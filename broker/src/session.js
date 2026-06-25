@@ -32,6 +32,8 @@ export class SessionManager {
     this.engine = null;
     this.activeProfileId = config.defaultProfile;
     this.permissionMode = config.permissionMode || 'default';
+    this.effort = config.effort || 'high'; // low|medium|high|xhigh|max
+    this.currentModel = null; // the alias/id last requested (for resolver labelling)
     this.sessionsFile = path.join(config.stateDir, 'sessions.json');
     this._sessionByProject = this._loadSessions();
     this._lastStatus = StatusState.IDLE;
@@ -70,6 +72,7 @@ export class SessionManager {
       resumeId ?? (project ? this._sessionByProject[project.id] : null) ?? null;
 
     this.activeProfileId = profileId;
+    this.currentModel = model || profile.model;
     const engine = createEngine(profile, {
       cwd,
       env,
@@ -77,6 +80,7 @@ export class SessionManager {
       resumeId: resolvedResume,
       claudeBin: this.config.claudeBin,
       permissionMode: this.permissionMode,
+      effort: this.effort,
       log: (m) => this._log(m),
     });
     this.engine = engine;
@@ -145,6 +149,15 @@ export class SessionManager {
     return this.startEngine(this.activeProfileId, { resumeId });
   }
 
+  async setEffort(level) {
+    this.effort = level;
+    // --effort is fixed at CLI start; restart resuming the session to keep context.
+    const project = this.getActiveProject();
+    const resumeId = this.engine?.sessionId || (project ? this._sessionByProject[project.id] : null);
+    this._log(`set effort -> ${level} (resume ${resumeId || 'none'})`);
+    return this.startEngine(this.activeProfileId, { resumeId });
+  }
+
   async newSession() {
     const project = this.getActiveProject();
     if (project) delete this._sessionByProject[project.id];
@@ -161,9 +174,11 @@ export class SessionManager {
       activeProfileId: this.activeProfileId,
       engineState: this.engine?.state || 'stopped',
       model: this.engine?.model || null,
+      requestedModel: this.currentModel,
       sessionId: this.engine?.sessionId || null,
       lastStatus: this._lastStatus,
       permissionMode: this.permissionMode,
+      effort: this.effort,
     };
   }
 

@@ -1,0 +1,118 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import os from 'node:os';
+import fs from 'node:fs/promises';
+import fssync from 'node:fs';
+import path from 'node:path';
+import { WebSocket } from 'ws';
+import { loadConfig } from '../src/config.js';
+import { BrokerServer } from '../src/server.js';
+import { ClaudeConfig } from '../src/controls/claude-config.js';
+import { TranscriptStore } from '../src/controls/transcript.js';
+import { labelFor } from '../src/controls/model-resolver.js';
+
+async function tmpDir(p) { return fs.mkdtemp(path.join(os.tmpdir(), p)); }
+
+// --- Bug 1: dynamic model version labels ------------------------------------
+test('labelFor derives a friendly version from the resolved id (never hardcoded)', () => {
+  assert.equal(labelFor('opus', 'claude-opus-4-8'), 'Opus 4.8');
+  assert.equal(labelFor('haiku', 'claude-haiku-4-5-20251001'), 'Haiku 4.5');
+  assert.equal(labelFor('sonnet', 'claude-sonnet-4-6'), 'Sonnet 4.6');
+  // Unknown id -> fall back to a capitalized alias, no crash.
+  assert.equal(labelFor('opus', null), 'Opus');
+  assert.equal(labelFor('glm-5.2', 'glm-5.2'), 'Glm-5.2');
+});
+
+// --- Bug 5: resume replays the conversation from Claude's own .jsonl --------
+test('readSessionTranscript parses a Claude .jsonl into canonical records', async () => {
+  const proj = await tmpDir('rt-proj-');
+  // Claude stores transcripts under ~/.claude/projects/<encoded cwd>/<id>.jsonl.
+  const home = os.homedir();
+  const encoded = proj.replace(/[/\\:]+/g, '-').replace(/^-+/, '-');
+  const dir = path.join(home, '.claude', 'projects', encoded);
+  await fs.mkdir(dir, { recursive: true });
+  const id = 'sess-test-1234';
+  const lines = [
+    { type: 'user', message: { role: 'user', content: 'hello there' } },
+    { type: 'assistant', message: { role: 'assistant', content: [
+      { type: 'thinking', thinking: 'pondering' },
+      { type: 'text', text: 'Hi! Reading a file.' },
+      { type: 'tool_use', id: 'tu_1', name: 'Read', input: { file_path: '/x' } },
+    ] } },
+    { type: 'user', message: { role: 'user', content: [
+      { type: 'tool_result', tool_use_id: 'tu_1', is_error: false, content: 'file body' },
+    ] } },
+  ];
+  await fs.writeFile(path.join(dir, `${id}.jsonl`), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+
+  const cc = new ClaudeConfig({ getProjectDir: () => proj });
+  const recs = cc.readSessionTranscript(id);
+  try {
+    const types = recs.map((r) => r.type);
+    assert.deepEqual(types, ['user_echo', 'assistant_thinking', 'assistant_text', 'tool_call', 'tool_result']);
+    assert.equal(recs[0].text, 'hello there');
+    assert.equal(recs[3].name, 'Read');
+    assert.equal(recs[4].id, 'tu_1');
+    assert.equal(recs[4].status, 'ok');
+    assert.equal(recs[4].output, 'file body');
+    // unknown session -> empty, no throw
+    assert.deepEqual(cc.readSessionTranscript('nope'), []);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('TranscriptStore.replace persists and is replayed verbatim', async () => {
+  const state = await tmpDir('ts-state-');
+  const store = new TranscriptStore(state);
+  store.setProject('proj-1');
+  const recs = [
+    { type: 'user_echo', text: 'hi' },
+    { type: 'assistant_text', delta: 'hello', parentToolUseId: null },
+    { type: 'session_meta', sessionId: 'x' }, // not in KEEP -> dropped
+  ];
+  const seeded = store.replace(recs);
+  assert.equal(seeded.length, 2, 'non-conversation events filtered out');
+  // A fresh store reading the same project file sees the same two records.
+  const reopened = new TranscriptStore(state);
+  reopened.setProject('proj-1');
+  assert.deepEqual(reopened.replay().map((r) => r.type), ['user_echo', 'assistant_text']);
+});
+
+// --- Bug 2 + snapshot: effort + models surface over the wire ----------------
+test('e2e: effort + models flow over WebSocket', async () => {
+  const projects = await tmpDir('bf-proj-');
+  const state = await tmpDir('bf-state-');
+  const config = loadConfig(['--profile', 'mock', '--port', '0', '--projects', projects, '--state', state]);
+  const server = new BrokerServer(config);
+  await server.start();
+  const port = server.httpServer.address().port;
+
+  const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+  const events = [];
+  const listeners = new Set();
+  ws.on('message', (raw) => { const ev = JSON.parse(raw.toString()); events.push(ev); for (const l of [...listeners]) l(ev); });
+  await new Promise((res, rej) => { ws.on('open', res); ws.on('error', rej); });
+  const waitFor = (pred, ms = 8000) => new Promise((resolve, reject) => {
+    const ex = events.find(pred); if (ex) return resolve(ex);
+    const l = (ev) => { if (pred(ev)) { clearTimeout(t); listeners.delete(l); resolve(ev); } };
+    const t = setTimeout(() => { listeners.delete(l); reject(new Error('timeout')); }, ms);
+    listeners.add(l);
+  });
+
+  // Snapshot includes an EFFORT event (default high) and a MODELS event.
+  const eff = await waitFor((e) => e.type === 'effort');
+  assert.equal(eff.level, 'high');
+  const models = await waitFor((e) => e.type === 'models');
+  assert.ok(Array.isArray(models.items));
+  assert.ok(models.items.some((m) => m.alias === 'mock-1'));
+
+  // Changing effort is acknowledged and echoed back.
+  ws.send(JSON.stringify({ type: 'set_effort', level: 'max' }));
+  const eff2 = await waitFor((e) => e.type === 'effort' && e.level === 'max');
+  assert.equal(eff2.level, 'max');
+  assert.equal(server.session.effort, 'max');
+
+  ws.close();
+  await server.stop();
+});

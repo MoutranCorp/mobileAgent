@@ -58,6 +58,8 @@ export function loadConfig(argv = process.argv.slice(2)) {
     claudeBin: process.env.CLAUDE_BIN || 'claude',
     // Default permission mode for the claude-code engine.
     permissionMode: process.env.PERMISSION_MODE || 'default',
+    // Default reasoning effort: low|medium|high|xhigh|max (CLI default is high).
+    effort: process.env.EFFORT || 'high',
     // Verbose broker logging to stderr.
     verbose: !!(args.verbose || process.env.BROKER_VERBOSE),
   };

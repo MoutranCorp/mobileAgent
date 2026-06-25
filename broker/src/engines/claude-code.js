@@ -33,6 +33,7 @@ export class ClaudeCodeEngine extends EngineAdapter {
     super(opts);
     this.bin = opts.claudeBin || 'claude';
     this.permissionMode = opts.permissionMode || this.profile?.permissionMode || 'default';
+    this.effort = opts.effort || null; // low|medium|high|xhigh|max
     this.resumeId = opts.resumeId || null;
     this.proc = null;
     this.buffer = new JsonLineBuffer();
@@ -65,6 +66,7 @@ export class ClaudeCodeEngine extends EngineAdapter {
     ];
 
     if (this.model) args.push('--model', this.model);
+    if (this.effort) args.push('--effort', this.effort);
     if (this.resumeId) args.push('--resume', this.resumeId);
 
     if (gated) {
@@ -105,6 +107,11 @@ export class ClaudeCodeEngine extends EngineAdapter {
       ...this.env,
       WATCHMAN_DISABLE: process.env.WATCHMAN_DISABLE ?? '1',
     };
+    // On Termux/proot the CLI runs as root, and `--permission-mode
+    // bypassPermissions` refuses to start as root/sudo "for security reasons".
+    // IS_SANDBOX=1 tells the CLI it's already in a sandbox, lifting that guard —
+    // exactly the on-device case the user wants (the whole proot IS the sandbox).
+    if (this.permissionMode === 'bypassPermissions') env.IS_SANDBOX = '1';
 
     this.log(`spawning: ${this.bin} ${args.join(' ')}`);
     this.proc = spawn(this.bin, args, {

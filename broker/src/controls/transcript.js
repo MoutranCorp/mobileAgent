@@ -104,6 +104,19 @@ export class TranscriptStore {
     if (f) { try { fs.writeFileSync(f, ''); } catch { /* ignore */ } }
   }
 
+  /** Replace the recorded transcript wholesale (used when resuming a session
+   *  whose history we parsed from Claude's own .jsonl). */
+  replace(events) {
+    this._pendText = null;
+    this._pendThink = null;
+    this._events = (events || []).filter((e) => e && KEEP.has(e.type)).slice(-MAX_RECORDS);
+    const f = this._file();
+    if (f) {
+      try { fs.writeFileSync(f, this._events.map((e) => JSON.stringify(e)).join('\n') + (this._events.length ? '\n' : '')); } catch { /* ignore */ }
+    }
+    return this._events.slice();
+  }
+
   /** Search the recorded conversation for text (case-insensitive). */
   search(query, limit = 60) {
     if (!query) return [];

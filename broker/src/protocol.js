@@ -27,6 +27,8 @@ export const EventType = Object.freeze({
   PERMISSION_RESOLVED: 'permission_resolved', // { id, decision }
   PERMISSION_DENIED: 'permission_denied', // { toolName, reason } from result.permission_denials
   PERMISSION_MODE: 'permission_mode', // { mode } effective permission mode
+  MODELS: 'models', // { items: [{ alias, id, label }], resolvedModel }
+  EFFORT: 'effort', // { level } current reasoning effort
   // Accounting / context
   USAGE: 'usage', // { inTok, outTok, cacheReadTok?, cacheWriteTok?, cost? }
   CONTEXT: 'context', // { usedTokens, windowTokens, model } live context-window meter
@@ -84,6 +86,8 @@ export const CommandType = Object.freeze({
   NEW_SESSION: 'new_session', // {}
   SWITCH_ENGINE: 'switch_engine', // { profileId }
   SWITCH_MODEL: 'switch_model', // { model }
+  MODELS_LIST: 'models_list', // { refresh? } resolve alias -> version
+  SET_EFFORT: 'set_effort', // { level } low|medium|high|xhigh|max
   LIST_SESSIONS: 'list_sessions', // {}
   COMPACT: 'compact', // { focus? }
   CLEAR: 'clear', // {}

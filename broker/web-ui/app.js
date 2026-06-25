@@ -20,6 +20,10 @@
     metro: null,
     capabilities: null,
     permissionMode: 'default',
+    resolvedModel: null, // resolved id of the active model (e.g. claude-opus-4-8)
+    models: [], // [{ alias, id, label }] resolved model list
+    selectedModel: null, // alias currently active in the picker
+    effort: 'high',
     attachments: [], // [{ mime, dataBase64, url, name }]
     checkpoints: [],
     reconnectTimer: null,
@@ -118,6 +122,8 @@
       case 'permission_resolved': onPermissionResolved(ev); break;
       case 'permission_denied': onPermissionDenied(ev); break;
       case 'permission_mode': onPermissionMode(ev); break;
+      case 'models': onModels(ev); break;
+      case 'effort': onEffort(ev); break;
       case 'usage': onUsage(ev); break;
       case 'context': onContext(ev); break;
       case 'compact': onCompact(ev); break;
@@ -159,12 +165,19 @@
 
   function onSessionMeta(ev) {
     finalizeAssistant();
-    if (ev.model) $('modelSelect').value = ev.model;
+    // ev.model is the RESOLVED id (e.g. claude-opus-4-8); don't set it as the
+    // <select> value (it isn't an option), or the picker goes blank. Stash it and
+    // re-render so the option labels can show the resolved version.
+    if (ev.model) { state.resolvedModel = ev.model; renderModelOptions(); }
   }
 
   function onEngineState(ev) {
     if (ev.profileId) state.activeProfileId = ev.profileId;
+    if (ev.requestedModel) state.selectedModel = ev.requestedModel;
+    if (ev.model) state.resolvedModel = ev.model;
+    if (ev.effort) { state.effort = ev.effort; const s = $('effortSelect'); if (s) s.value = ev.effort; }
     if (ev.permissionMode) onPermissionMode({ mode: ev.permissionMode });
+    renderModelOptions();
   }
 
   function onCapabilities(ev) {
@@ -877,15 +890,56 @@
   function renderModelOptions() {
     const active = state.profiles.find((p) => p.id === state.activeProfileId);
     const sel = $('modelSelect');
+    if (!sel) return;
+    const aliases = (active && active.models) || (active && active.model ? [active.model] : []);
+    // Prefer the broker's resolved list ([{alias,id,label}]); fall back to raw aliases.
+    const resolved = new Map(state.models.map((m) => [m.alias, m]));
+    const selected = state.selectedModel || (active && active.model) || aliases[0];
     sel.innerHTML = '';
-    const models = (active && active.models) || (active && active.model ? [active.model] : []);
-    for (const m of models) {
+    for (const alias of aliases) {
       const o = document.createElement('option');
-      o.value = m; o.textContent = m;
-      if (active && m === active.model) o.selected = true;
+      o.value = alias;
+      const r = resolved.get(alias);
+      let label = (r && r.label) || labelFromAlias(alias);
+      // If the broker hasn't resolved this alias yet but it's the live one, use
+      // the resolved id from session_meta so the active model still shows a version.
+      if ((!r || !r.id) && alias === selected && state.resolvedModel) label = labelFromId(state.resolvedModel) || label;
+      o.textContent = label;
+      if (alias === selected) o.selected = true;
       sel.appendChild(o);
     }
   }
+
+  function onModels(ev) {
+    state.models = Array.isArray(ev.items) ? ev.items : [];
+    if (ev.resolvedModel) state.resolvedModel = ev.resolvedModel;
+    renderModelOptions();
+  }
+
+  let _modelsRequested = false;
+  function resolveModelsOnce() {
+    // If any alias is still unresolved, ask the broker to probe (free init spawn).
+    if (_modelsRequested) return;
+    const unresolved = !state.models.length || state.models.some((m) => !m.id);
+    if (!unresolved) return;
+    _modelsRequested = true;
+    send({ type: 'models_list' });
+  }
+
+  function onEffort(ev) {
+    if (!ev.level) return;
+    state.effort = ev.level;
+    const sel = $('effortSelect');
+    if (sel) sel.value = ev.level;
+  }
+
+  // "claude-opus-4-8" -> "Opus 4.8"; falls back to null when unparseable.
+  function labelFromId(id) {
+    const m = String(id || '').match(/(opus|sonnet|haiku|fable)-(\d+)-(\d+)/i);
+    return m ? `${cap(m[1])} ${m[2]}.${m[3]}` : null;
+  }
+  function labelFromAlias(a) { return cap(String(a || '')); }
+  function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
   // ---- helpers -------------------------------------------------------------
 
@@ -1156,7 +1210,12 @@
       else if (v) send({ type: 'open_project', projectId: v });
     };
     $('engineSelect').onchange = (e) => send({ type: 'switch_engine', profileId: e.target.value });
-    $('modelSelect').onchange = (e) => send({ type: 'switch_model', model: e.target.value });
+    $('modelSelect').onchange = (e) => { state.selectedModel = e.target.value; send({ type: 'switch_model', model: e.target.value }); };
+    // Resolve alias -> version labels lazily the first time the user opens the picker.
+    $('modelSelect').addEventListener('mousedown', resolveModelsOnce);
+    $('modelSelect').addEventListener('focus', resolveModelsOnce);
+    const effortSel = $('effortSelect');
+    if (effortSel) effortSel.onchange = (e) => { state.effort = e.target.value; send({ type: 'set_effort', level: e.target.value }); };
     $('permModeSelect').onchange = (e) => {
       const mode = e.target.value;
       if (mode === 'bypassPermissions' &&

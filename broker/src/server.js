@@ -10,6 +10,7 @@ import { ProcessRunner } from './controls/process-runner.js';
 import { ProjectManager } from './controls/projects.js';
 import { DevTools } from './controls/devtools.js';
 import { ClaudeConfig } from './controls/claude-config.js';
+import { ModelResolver, labelFor } from './controls/model-resolver.js';
 import { TranscriptStore } from './controls/transcript.js';
 import { Checkpoints } from './controls/checkpoints.js';
 import { Files } from './controls/files.js';
@@ -51,6 +52,7 @@ export class BrokerServer {
     this.files = new Files({ getProjectDir });
     this.devtools = new DevTools({ config, runner: this.runner, projects: this.projects, emit });
     this.claudeConfig = new ClaudeConfig({ getProjectDir });
+    this.modelResolver = new ModelResolver({ stateDir: config.stateDir, claudeBin: config.claudeBin });
     this.session = new SessionManager({
       config,
       profiles: this.profiles,
@@ -121,6 +123,11 @@ export class BrokerServer {
   _emitEvent(ev) {
     try {
       this.transcript.record(ev);
+      // Learn alias -> versioned id for FREE from the live engine's init, so the
+      // model picker can show "Opus 4.8" without an extra probe spawn.
+      if (ev.type === EventType.CAPABILITIES && ev.model && this.session.currentModel) {
+        this.modelResolver.observe(this.session.currentModel, ev.model);
+      }
       if (ev.type === EventType.USAGE) {
         this.usage.record({ inTok: ev.inTok, outTok: ev.outTok, cost: ev.cost, profile: this.session.activeProfileId });
       }
@@ -202,14 +209,41 @@ export class BrokerServer {
     this._send(ws, event(EventType.PERMISSION_MODE, { mode: this.session.permissionMode }));
     if (this.session.lastCapabilities) this._send(ws, this.session.lastCapabilities);
     // Replay the recorded conversation so reloads/reconnects don't lose history.
+    // reset:true makes it idempotent — the server greets with a snapshot AND the
+    // client sends `hello`, so two replays could otherwise double the transcript.
     const replay = this.transcript.replay();
-    if (replay.length) this._send(ws, event(EventType.TRANSCRIPT, { events: replay }));
+    if (replay.length) this._send(ws, event(EventType.TRANSCRIPT, { events: replay, reset: true }));
     if (active) this._send(ws, event(EventType.CHECKPOINTS, this.checkpoints.list(active.id, active.dir)));
     this._send(ws, event(EventType.PROMPTS, { items: this.prompts.list() }));
     this._send(ws, event(EventType.AUTOVERIFY, {
       enabled: this.autoverify.enabled, command: this.autoverify.command,
       maxIterations: this.autoverify.maxIterations, iteration: this.autoverify.iteration,
     }));
+    // Current effort + whatever model labels we already know (no probe spawn here).
+    this._send(ws, event(EventType.EFFORT, { level: this.session.effort }));
+    this._send(ws, this._modelsEvent());
+  }
+
+  /** Build a MODELS event from the active profile + cached alias->id (no spawn). */
+  _modelsEvent() {
+    const profile = this.profiles.get(this.session.activeProfileId);
+    const aliases = profile?.models?.length ? profile.models : profile?.model ? [profile.model] : [];
+    const cache = this.modelResolver.cache;
+    const items = aliases.map((alias) => ({ alias, id: cache[alias] || null, label: labelFor(alias, cache[alias]) }));
+    return event(EventType.MODELS, { items, resolvedModel: this.session.engine?.model || null });
+  }
+
+  /** Resolve any unknown model aliases (free init-probe) then broadcast MODELS. */
+  async _sendModels(ws, refresh) {
+    const profile = this.profiles.get(this.session.activeProfileId);
+    const aliases = profile?.models?.length ? profile.models : profile?.model ? [profile.model] : [];
+    // Only claude-code profiles emit a resolvable system/init id; others stay as-is.
+    if (profile?.harness === 'claude-code' && aliases.length) {
+      const env = this.secrets.envForProfile(profile);
+      const cwd = this.projects.getActive()?.dir || this.config.projectsDir;
+      try { await this.modelResolver.list(aliases, { cwd, env, refresh }); } catch { /* keep labels */ }
+    }
+    return this.broadcast(this._modelsEvent());
   }
 
   async _onMessage(ws, raw) {
@@ -273,8 +307,15 @@ export class BrokerServer {
       case CommandType.NEW_SESSION:
         this.transcript.clear();
         return this.session.newSession();
-      case CommandType.RESUME:
+      case CommandType.RESUME: {
+        // Claude's --resume restores model context but does NOT re-stream past
+        // turns, so the UI would stay blank. Parse the session's own .jsonl into
+        // canonical records, seed the transcript store, and replay to clients.
+        const past = this.claudeConfig.readSessionTranscript(cmd.sessionId);
+        const seeded = this.transcript.replace(past);
+        this.broadcast(event(EventType.TRANSCRIPT, { events: seeded, reset: true }));
         return this.session.resume(cmd.sessionId);
+      }
       case CommandType.LIST_SESSIONS:
         return this._send(ws, event(EventType.CONFIG, {
           kind: 'sessions', items: this.claudeConfig.list('sessions'),
@@ -287,6 +328,11 @@ export class BrokerServer {
         }));
       case CommandType.SWITCH_MODEL:
         return this.session.switchModel(cmd.model);
+      case CommandType.MODELS_LIST:
+        return this._sendModels(ws, !!cmd.refresh);
+      case CommandType.SET_EFFORT:
+        await this.session.setEffort(cmd.level);
+        return this.broadcast(event(EventType.EFFORT, { level: cmd.level }));
 
       // harness config: skills / agents / commands / memory / settings
       case CommandType.CONFIG_LIST:
