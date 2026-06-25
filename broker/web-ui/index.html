@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>On-Device Agent</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- Top bar -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <button id="menuBtn" class="icon-btn" title="Skills, agents, memory, settings">☰</button>
+          <div class="selectors">
+            <label class="sel">
+              <span class="sel-label">Project</span>
+              <select id="projectSelect"></select>
+            </label>
+            <label class="sel">
+              <span class="sel-label">Engine</span>
+              <select id="engineSelect"></select>
+            </label>
+            <label class="sel">
+              <span class="sel-label">Model</span>
+              <select id="modelSelect"></select>
+            </label>
+            <label class="sel">
+              <span class="sel-label">Permissions</span>
+              <select id="permModeSelect" title="Permission mode">
+                <option value="default">default (ask)</option>
+                <option value="acceptEdits">acceptEdits</option>
+                <option value="plan">plan (read-only)</option>
+                <option value="bypassPermissions">⚠ bypass all</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div class="topbar-right">
+          <button id="paletteBtn" class="icon-btn" title="Command palette (Ctrl-K)">⌘</button>
+          <button id="findBtn" class="icon-btn" title="Find in conversation (Ctrl-F)">🔍</button>
+          <div id="ctxMeter" class="ctx-meter hidden" title="Context window usage">
+            <div class="ctx-track"><div id="ctxBar" class="ctx-bar"></div></div>
+            <span id="ctxLabel" class="ctx-label"></span>
+          </div>
+          <span id="usage" class="usage" title="Token usage"></span>
+          <span id="statusPill" class="status-pill idle">idle</span>
+          <span id="connDot" class="conn-dot" title="Broker connection"></span>
+        </div>
+      </header>
+
+      <!-- Find-in-conversation bar -->
+      <div id="findBar" class="find-bar hidden">
+        <input id="findInput" type="text" placeholder="Find in conversation…" />
+        <span id="findCount" class="find-count"></span>
+        <button id="findPrev" class="ghost small" title="Previous">↑</button>
+        <button id="findNext" class="ghost small" title="Next">↓</button>
+        <button id="findClose" class="ghost small" title="Close">✕</button>
+      </div>
+
+      <!-- Pinned live plan/todo checklist -->
+      <div id="todoPanel" class="todo-panel hidden"></div>
+
+      <!-- Conversation -->
+      <main id="transcript" class="transcript">
+        <div class="empty-state">
+          <h1>On-Device Agent</h1>
+          <p>Ask the agent to build something. It reads, edits, runs — and you tap
+            <strong>Test</strong> to see your app live on this phone.</p>
+          <div class="suggestions">
+            <button class="suggestion">Build a counter screen with a + button</button>
+            <button class="suggestion">Research how the navigation is set up</button>
+            <button class="suggestion">Create a to-do list with add and delete</button>
+          </div>
+        </div>
+      </main>
+
+      <!-- Composer -->
+      <footer class="composer">
+        <div id="mentionPalette" class="slash-palette hidden"></div>
+        <div id="slashPalette" class="slash-palette hidden"></div>
+        <div id="attachTray" class="attach-tray hidden"></div>
+        <div class="composer-row">
+          <button id="attachBtn" class="icon-btn" title="Attach image / screenshot">📎</button>
+          <button id="voiceBtn" class="icon-btn" title="Voice input">🎤</button>
+          <textarea id="input" rows="1" placeholder="Message the agent…  (/ commands · @ files · 📎 image · Enter to send)"></textarea>
+          <button id="sendBtn" class="primary" title="Send">Send</button>
+          <input id="imageInput" type="file" accept="image/*" multiple style="display:none" />
+        </div>
+        <div class="composer-actions">
+          <button id="interruptBtn" class="ghost" title="Interrupt the current turn">Stop</button>
+          <button id="newBtn" class="ghost" title="New session">New</button>
+          <button id="undoBtn" class="ghost hidden" title="Rewind the project to before the last turn">↶ Undo</button>
+          <button id="testBtn" class="accent" title="Start Metro & open in dev client">▶ Test</button>
+          <button id="previewBtn" class="ghost" title="Preview the project (static/web) in an iframe">Preview</button>
+          <button id="exportBtn" class="ghost" title="Export conversation to Markdown">Export</button>
+          <span id="metroBadge" class="metro-badge hidden"></span>
+          <span id="permModeBadge" class="perm-badge default">default</span>
+          <span class="spacer"></span>
+          <button id="termBtn" class="ghost" title="Toggle terminal drawer">Terminal</button>
+        </div>
+      </footer>
+
+      <!-- Web preview drawer -->
+      <section id="preview" class="preview hidden">
+        <div class="preview-head">
+          <input id="previewUrl" type="text" value="/preview/index.html" />
+          <button id="previewReload" class="ghost small">Reload</button>
+          <button id="previewClose" class="ghost small">Close</button>
+        </div>
+        <iframe id="previewFrame" class="preview-frame" src="about:blank"></iframe>
+      </section>
+
+      <!-- Terminal drawer -->
+      <section id="terminal" class="terminal hidden">
+        <div class="terminal-head">
+          <span>Terminal / logs</span>
+          <div>
+            <button id="termClear" class="ghost small">Clear</button>
+            <button id="termClose" class="ghost small">Close</button>
+          </div>
+        </div>
+        <pre id="termBody" class="terminal-body"></pre>
+        <div class="terminal-input-row">
+          <span class="prompt">$</span>
+          <input id="termInput" type="text" placeholder="run a command in the project…" />
+        </div>
+      </section>
+
+      <!-- Command palette (Ctrl-K) -->
+      <div id="palette" class="palette hidden">
+        <div class="palette-card">
+          <input id="paletteInput" type="text" placeholder="Type a command… (↑↓ to navigate, Enter to run)" />
+          <div id="paletteList" class="palette-list"></div>
+        </div>
+      </div>
+
+      <!-- Managers modal (populated by managers.js) -->
+      <div id="managerModal" class="modal hidden"></div>
+
+      <!-- Toasts -->
+      <div id="toasts" class="toasts"></div>
+    </div>
+
+    <script src="diff.js"></script>
+    <script src="app.js"></script>
+    <script src="managers.js"></script>
+  </body>
+</html>

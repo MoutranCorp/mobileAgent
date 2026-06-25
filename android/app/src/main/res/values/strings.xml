@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">On-Device Agent</string>
+    <string name="service_channel_name">Agent runtime</string>
+    <string name="service_channel_desc">Keeps the agent broker and Metro alive in the background.</string>
+    <string name="service_running">Agent runtime is running</string>
+    <string name="service_running_sub">Broker + Metro stay alive while you test</string>
+</resources>

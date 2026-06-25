@@ -1,0 +1,932 @@
+/*
+ * managers.js — the management surface that makes this more than a chat client:
+ * first-class editors for Skills, Agents, Commands, Memory, Permissions, plus a
+ * Sessions browser, Projects, a live Context inspector, and an MCP/Plugins view.
+ * Talks to the broker via window.Agent.send and renders 'config'/'capabilities'
+ * events relayed from app.js.
+ */
+(function () {
+  'use strict';
+  const A = window.Agent;
+  const send = (c) => A.send(c);
+  const esc = A.esc;
+  const root = document.getElementById('managerModal');
+
+  const TABS = [
+    { id: 'files', label: 'Files' },
+    { id: 'scripts', label: 'Scripts' },
+    { id: 'git', label: 'Git' },
+    { id: 'checkpoints', label: 'Checkpoints' },
+    { id: 'prompts', label: 'Prompts' },
+    { id: 'skills', label: 'Skills', kind: 'skills' },
+    { id: 'agents', label: 'Agents', kind: 'agents' },
+    { id: 'commands', label: 'Commands', kind: 'commands' },
+    { id: 'output-styles', label: 'Output styles', kind: 'output-styles' },
+    { id: 'memory', label: 'Memory', kind: 'memory' },
+    { id: 'permissions', label: 'Permissions', kind: 'settings' },
+    { id: 'hooks', label: 'Hooks' },
+    { id: 'sessions', label: 'Sessions', kind: 'sessions' },
+    { id: 'projects', label: 'Projects' },
+    { id: 'context', label: 'Context' },
+    { id: 'usage', label: 'Usage' },
+    { id: 'mcp', label: 'MCP / Plugins' },
+  ];
+
+  const m = {
+    tab: 'files',
+    scope: 'project',
+    items: {}, // kind -> items
+    caps: null,
+    projects: [],
+    profiles: [],
+    lastContext: null,
+    editing: null, // { kind, name, fields, body }
+    filePath: '.',
+    fileEntries: null,
+    changed: [],
+    openFile: null, // { path, content }
+    editingFile: false,
+    diffView: null, // { path, before, after, status }
+    grep: null, // { query, matches }
+    checkpoints: { items: [], enabled: false },
+    checkpointDiff: null, // { id, files, stat }
+    prompts: [],
+    scripts: { items: [], running: [] },
+    autoverify: { enabled: false, command: 'npm test', maxIterations: 3 },
+    usageStats: null,
+  };
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+
+  // ---- shell ---------------------------------------------------------------
+
+  function open() {
+    root.classList.remove('hidden');
+    render();
+    requestTabData();
+  }
+  function openTab(tabId) {
+    if (TABS.some((t) => t.id === tabId)) { m.tab = tabId; m.editing = null; }
+    open();
+  }
+  function close() { root.classList.add('hidden'); }
+
+  function render() {
+    root.innerHTML = '';
+    const card = el('div', 'modal-card mgr');
+    const head = el('div', 'modal-head');
+    head.appendChild(el('h2', '', 'Manage'));
+    const x = el('button', 'icon-btn', '✕'); x.onclick = close;
+    head.appendChild(x);
+    card.appendChild(head);
+
+    const layout = el('div', 'mgr-layout');
+    const tabs = el('div', 'mgr-tabs');
+    for (const t of TABS) {
+      const b = el('button', 'mgr-tab' + (t.id === m.tab ? ' active' : ''), t.label);
+      b.onclick = () => { m.tab = t.id; m.editing = null; render(); requestTabData(); };
+      tabs.appendChild(b);
+    }
+    layout.appendChild(tabs);
+
+    const pane = el('div', 'mgr-pane');
+    pane.id = 'mgrPane';
+    layout.appendChild(pane);
+    card.appendChild(layout);
+    root.appendChild(card);
+    root.onclick = (e) => { if (e.target === root) close(); };
+
+    renderPane();
+  }
+
+  function requestTabData() {
+    const t = TABS.find((x) => x.id === m.tab);
+    if (!t) return;
+    if (t.kind && ['skills', 'agents', 'commands', 'output-styles', 'memory', 'settings'].includes(t.kind)) {
+      send({ type: 'config_list', kind: t.kind, scope: m.scope });
+    } else if (m.tab === 'sessions') {
+      send({ type: 'list_sessions' });
+    } else if (m.tab === 'projects') {
+      send({ type: 'list_projects' });
+    } else if (m.tab === 'files') {
+      send({ type: 'files_list', path: m.filePath });
+    } else if (m.tab === 'checkpoints') {
+      send({ type: 'checkpoint_list' });
+    } else if (m.tab === 'prompts') {
+      send({ type: 'prompts_list' });
+    } else if (m.tab === 'scripts') {
+      send({ type: 'scripts_list' });
+      send({ type: 'autoverify_get' });
+    } else if (m.tab === 'usage') {
+      send({ type: 'usage_summary' });
+    } else if (m.tab === 'git') {
+      send({ type: 'files_list', path: '.' }); // for the changed-files count
+    } else if (m.tab === 'mcp') {
+      send({ type: 'config_list', kind: 'mcp', scope: m.scope });
+    } else if (m.tab === 'hooks') {
+      send({ type: 'config_list', kind: 'hooks', scope: m.scope });
+    }
+  }
+
+  function renderPane() {
+    const pane = document.getElementById('mgrPane');
+    if (!pane) return;
+    pane.innerHTML = '';
+    switch (m.tab) {
+      case 'files': return renderFiles(pane);
+      case 'scripts': return renderScripts(pane);
+      case 'git': return renderGit(pane);
+      case 'checkpoints': return renderCheckpoints(pane);
+      case 'prompts': return renderPrompts(pane);
+      case 'skills': return renderResourceList(pane, 'skills', 'skill');
+      case 'agents': return renderResourceList(pane, 'agents', 'agent');
+      case 'commands': return renderResourceList(pane, 'commands', 'command');
+      case 'output-styles': return renderResourceList(pane, 'output-styles', 'output style');
+      case 'memory': return renderMemory(pane);
+      case 'permissions': return renderPermissions(pane);
+      case 'hooks': return renderHooks(pane);
+      case 'sessions': return renderSessions(pane);
+      case 'projects': return renderProjects(pane);
+      case 'context': return renderContext(pane);
+      case 'usage': return renderUsage(pane);
+      case 'mcp': return renderMcp(pane);
+    }
+  }
+
+  // ---- scope switch --------------------------------------------------------
+
+  function scopeBar() {
+    const bar = el('div', 'scope-bar');
+    ['project', 'user'].forEach((s) => {
+      const b = el('button', 'chip' + (m.scope === s ? ' on' : ''), s);
+      b.onclick = () => { m.scope = s; renderPane(); requestTabData(); };
+      bar.appendChild(b);
+    });
+    return bar;
+  }
+
+  // ---- skills / agents / commands ------------------------------------------
+
+  function renderResourceList(pane, kind, noun) {
+    pane.appendChild(scopeBar());
+    if (m.editing && m.editing.kind === kind) return renderEditor(pane, kind, noun);
+
+    const items = m.items[kind] || [];
+    const list = el('div', 'mgr-list');
+    if (!items.length) list.appendChild(el('div', 'mgr-empty', `No ${noun}s in ${m.scope} scope yet.`));
+    for (const it of items) {
+      const row = el('div', 'mgr-row');
+      const info = el('div', 'mgr-row-info');
+      info.appendChild(el('div', 'mgr-row-name', it.name));
+      info.appendChild(el('div', 'mgr-row-desc', it.description || it.command || it.model || ''));
+      row.appendChild(info);
+      const actions = el('div', 'mgr-row-actions');
+      if (kind === 'skills' || kind === 'commands') {
+        const run = el('button', 'ghost small', 'Run');
+        run.onclick = () => { send({ type: 'slash_command', name: it.name }); close(); };
+        actions.appendChild(run);
+      }
+      if (kind === 'agents') {
+        const run = el('button', 'ghost small', 'Invoke');
+        run.onclick = () => { send({ type: 'user_message', text: `@agent-${it.name} ` }); close(); };
+        actions.appendChild(run);
+      }
+      if (kind === 'output-styles') {
+        const use = el('button', 'ghost small', 'Use');
+        use.onclick = () => { send({ type: 'slash_command', name: 'output-style', args: it.name }); close(); };
+        actions.appendChild(use);
+      }
+      const edit = el('button', 'ghost small', 'Edit');
+      edit.onclick = () => send({ type: 'config_read', kind, name: it.name, scope: m.scope });
+      const del = el('button', 'ghost small', 'Delete');
+      del.onclick = () => { if (confirm(`Delete ${noun} "${it.name}"?`)) send({ type: 'config_delete', kind, name: it.name, scope: m.scope }); };
+      actions.appendChild(edit); actions.appendChild(del);
+      row.appendChild(actions);
+      list.appendChild(row);
+    }
+    pane.appendChild(list);
+    const add = el('button', 'primary small', `+ New ${noun}`);
+    add.onclick = () => { m.editing = { kind, name: '', fields: {}, body: defaultBody(kind), isNew: true }; renderPane(); };
+    pane.appendChild(add);
+  }
+
+  function defaultBody(kind) {
+    if (kind === 'skills') return 'Describe what this skill does and the steps to follow.\n';
+    if (kind === 'agents') return 'You are a focused subagent. Describe the role and constraints here.\n';
+    if (kind === 'output-styles') return 'Describe the tone and format the assistant should use (e.g. terse, bullet-first, teaching style).\n';
+    return 'Command instructions. Use $ARGUMENTS for input.\n';
+  }
+
+  function renderEditor(pane, kind, noun) {
+    const e = m.editing;
+    const f = e.fields || {};
+    const wrap = el('div', 'mgr-editor');
+    // Name is editable only for a NEW resource (it's the file/dir name); editing
+    // an existing one keeps the name fixed so Save updates rather than forks it.
+    wrap.appendChild(field('Name', e.name, (v) => (e.name = v), e.isNew ? '' : null, !e.isNew));
+    wrap.appendChild(field('Description', f.description || '', (v) => (f.description = v)));
+    if (kind === 'skills') {
+      wrap.appendChild(field('Allowed tools (comma-sep)', f.allowedTools || '', (v) => (f.allowedTools = v)));
+      wrap.appendChild(field('Model (optional)', f.model || '', (v) => (f.model = v)));
+    } else if (kind === 'agents') {
+      wrap.appendChild(field('Tools (comma-sep)', f.tools || '', (v) => (f.tools = v)));
+      wrap.appendChild(field('Model (sonnet/opus/haiku/inherit)', f.model || '', (v) => (f.model = v)));
+    } else if (kind === 'mcp') {
+      wrap.appendChild(field('Command (stdio) or URL (http)', f.command || '', (v) => (f.command = v), 'npx -y @scope/server  OR  https://host/mcp'));
+      wrap.appendChild(field('Args (space-sep, stdio only)', f.args || '', (v) => (f.args = v)));
+      wrap.appendChild(field('Transport (stdio | http | sse)', f.transport || 'stdio', (v) => (f.transport = v)));
+    } else if (kind === 'output-styles') {
+      /* description (above) + body only */
+    } else {
+      wrap.appendChild(field('Argument hint', f.argumentHint || '', (v) => (f.argumentHint = v)));
+      wrap.appendChild(field('Allowed tools', f.allowedTools || '', (v) => (f.allowedTools = v)));
+    }
+    if (kind !== 'mcp') {
+      const bodyLabel = kind === 'agents' ? 'System prompt' : kind === 'skills' ? 'Skill instructions'
+        : kind === 'output-styles' ? 'Style instructions' : 'Command body';
+      wrap.appendChild(textarea(bodyLabel, e.body || '', (v) => (e.body = v)));
+    }
+
+    const actions = el('div', 'mgr-editor-actions');
+    const save = el('button', 'primary small', 'Save');
+    save.onclick = () => {
+      if (!e.name.trim()) return alert('Name is required');
+      send({ type: 'config_write', kind, name: e.name.trim().replace(/[^a-zA-Z0-9_-]/g, '-'), scope: m.scope, fields: f, body: e.body });
+      m.editing = null;
+    };
+    const cancel = el('button', 'ghost small', 'Cancel');
+    cancel.onclick = () => { m.editing = null; renderPane(); };
+    actions.appendChild(save); actions.appendChild(cancel);
+    wrap.appendChild(actions);
+    pane.appendChild(wrap);
+  }
+
+  // ---- memory --------------------------------------------------------------
+
+  function renderMemory(pane) {
+    const items = m.items.memory || [];
+    pane.appendChild(el('p', 'mgr-hint', 'CLAUDE.md instructions loaded every session. Project scope is shared via git; Local is gitignored; User applies to all projects.'));
+    for (const it of items) {
+      const block = el('div', 'mem-block');
+      const h = el('div', 'mem-head');
+      h.appendChild(el('span', '', it.label + (it.exists ? ` · ${it.size} B` : ' · empty')));
+      block.appendChild(h);
+      const ta = el('textarea', 'mem-text');
+      ta.value = it._content || '';
+      ta.placeholder = '(empty — type to create)';
+      ta.dataset.id = it.id;
+      block.appendChild(ta);
+      const save = el('button', 'primary small', 'Save');
+      save.onclick = () => send({ type: 'config_write', kind: 'memory', name: it.id, content: ta.value });
+      block.appendChild(save);
+      pane.appendChild(block);
+      // lazily fetch content
+      if (it.exists && it._content == null) send({ type: 'config_read', kind: 'memory', name: it.id });
+    }
+  }
+
+  // ---- permissions ---------------------------------------------------------
+
+  function renderPermissions(pane) {
+    const s = m.items.settings || { defaultMode: 'default', allow: [], deny: [], ask: [] };
+    pane.appendChild(scopeBar());
+    pane.appendChild(el('p', 'mgr-hint', 'Rules are evaluated deny → ask → allow. Specifiers: Bash(npm run test:*), Read(./src/**), WebFetch(domain:x.com), Agent(Explore), mcp__server__*.'));
+
+    const modeRow = el('div', 'perm-mode-row');
+    modeRow.appendChild(el('span', 'mgr-label', 'Default mode'));
+    const sel = el('select', 'mgr-select');
+    ['default', 'acceptEdits', 'plan', 'bypassPermissions'].forEach((mode) => {
+      const o = document.createElement('option'); o.value = mode; o.textContent = mode;
+      if (mode === s.defaultMode) o.selected = true; sel.appendChild(o);
+    });
+    modeRow.appendChild(sel);
+    pane.appendChild(modeRow);
+
+    const lists = {};
+    ['deny', 'ask', 'allow'].forEach((bucket) => {
+      const sec = el('div', 'perm-bucket');
+      sec.appendChild(el('div', 'perm-bucket-title ' + bucket, bucket.toUpperCase()));
+      const ul = el('div', 'perm-rules');
+      lists[bucket] = [...(s[bucket] || [])];
+      const redraw = () => {
+        ul.innerHTML = '';
+        lists[bucket].forEach((rule, i) => {
+          const r = el('div', 'perm-rule');
+          r.appendChild(el('code', '', rule));
+          const rm = el('button', 'ghost small', '✕');
+          rm.onclick = () => { lists[bucket].splice(i, 1); redraw(); };
+          r.appendChild(rm);
+          ul.appendChild(r);
+        });
+      };
+      redraw();
+      sec.appendChild(ul);
+      const addRow = el('div', 'perm-add');
+      const inp = el('input', 'mgr-input'); inp.placeholder = `add ${bucket} rule…`;
+      const addBtn = el('button', 'ghost small', 'Add');
+      addBtn.onclick = () => { if (inp.value.trim()) { lists[bucket].push(inp.value.trim()); inp.value = ''; redraw(); } };
+      addRow.appendChild(inp); addRow.appendChild(addBtn);
+      sec.appendChild(addRow);
+      pane.appendChild(sec);
+    });
+
+    const save = el('button', 'primary small', 'Save permission rules');
+    save.onclick = () => send({
+      type: 'config_write', kind: 'settings', scope: m.scope,
+      defaultMode: sel.value, allow: lists.allow, deny: lists.deny, ask: lists.ask,
+    });
+    pane.appendChild(save);
+  }
+
+  // ---- hooks ---------------------------------------------------------------
+
+  const HOOK_EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SubagentStop', 'Notification', 'SessionStart', 'PreCompact'];
+
+  function renderHooks(pane) {
+    pane.appendChild(scopeBar());
+    pane.appendChild(el('p', 'mgr-hint', 'Shell commands the harness runs on lifecycle events (e.g. lint on PostToolUse). The matcher targets a tool (e.g. Bash, Edit) or is blank for all.'));
+    const items = m.items.hooks || [];
+    const list = el('div', 'mgr-list');
+    if (!items.length) list.appendChild(el('div', 'mgr-empty', `No hooks in ${m.scope} scope.`));
+    items.forEach((h) => {
+      const row = el('div', 'mgr-row');
+      const info = el('div', 'mgr-row-info');
+      info.appendChild(el('div', 'mgr-row-name', `${h.event}${h.matcher ? ' · ' + h.matcher : ''}`));
+      info.appendChild(el('div', 'mgr-row-desc', h.command));
+      row.appendChild(info);
+      const del = el('button', 'ghost small', 'Delete');
+      del.onclick = () => send({ type: 'config_delete', kind: 'hooks', name: h.name, scope: m.scope });
+      row.appendChild(del);
+      list.appendChild(row);
+    });
+    pane.appendChild(list);
+
+    pane.appendChild(el('div', 'perm-bucket-title', 'ADD HOOK'));
+    const f = { event: 'PostToolUse', matcher: '', command: '' };
+    const add = el('div', 'mgr-editor');
+    const ev = el('select', 'mgr-select');
+    HOOK_EVENTS.forEach((e) => { const o = document.createElement('option'); o.value = e; o.textContent = e; ev.appendChild(o); });
+    ev.value = f.event; ev.onchange = () => (f.event = ev.value);
+    add.appendChild(labeled('Event', ev));
+    const matcher = el('input', 'mgr-input'); matcher.placeholder = 'matcher (tool name, blank = all)'; matcher.oninput = () => (f.matcher = matcher.value);
+    add.appendChild(labeled('Matcher', matcher));
+    const cmd = el('input', 'mgr-input'); cmd.placeholder = 'shell command, e.g. npm run lint'; cmd.oninput = () => (f.command = cmd.value);
+    add.appendChild(labeled('Command', cmd));
+    const save = el('button', 'primary small', 'Add hook');
+    save.onclick = () => { if (f.command.trim()) { send({ type: 'config_write', kind: 'hooks', name: f.event, scope: m.scope, fields: { ...f } }); matcher.value = ''; cmd.value = ''; f.matcher = ''; f.command = ''; } };
+    add.appendChild(save);
+    pane.appendChild(add);
+  }
+  function labeled(label, node) {
+    const w = el('div', 'mgr-field');
+    w.appendChild(el('label', '', label));
+    w.appendChild(node);
+    return w;
+  }
+
+  // ---- sessions ------------------------------------------------------------
+
+  function renderSessions(pane) {
+    const items = m.items.sessions || [];
+    pane.appendChild(el('p', 'mgr-hint', 'Past sessions for this project. Resume restores the conversation context.'));
+    const nb = el('button', 'ghost small', '+ New session');
+    nb.onclick = () => { send({ type: 'new_session' }); close(); };
+    pane.appendChild(nb);
+    const list = el('div', 'mgr-list');
+    if (!items.length) list.appendChild(el('div', 'mgr-empty', 'No saved sessions found.'));
+    for (const s of items) {
+      const row = el('div', 'mgr-row');
+      const info = el('div', 'mgr-row-info');
+      info.appendChild(el('div', 'mgr-row-name', s.summary || s.id));
+      info.appendChild(el('div', 'mgr-row-desc', new Date(s.mtime).toLocaleString() + ' · ' + s.id.slice(0, 8)));
+      row.appendChild(info);
+      const resume = el('button', 'ghost small', 'Resume');
+      resume.onclick = () => { send({ type: 'resume', sessionId: s.id }); close(); };
+      row.appendChild(resume);
+      list.appendChild(row);
+    }
+    pane.appendChild(list);
+  }
+
+  // ---- projects ------------------------------------------------------------
+
+  function renderProjects(pane) {
+    const list = el('div', 'mgr-list');
+    for (const p of m.projects) {
+      const row = el('div', 'mgr-row' + (p.active ? ' active' : ''));
+      const info = el('div', 'mgr-row-info');
+      info.appendChild(el('div', 'mgr-row-name', p.name + (p.isExpo ? ' ⚛' : '')));
+      info.appendChild(el('div', 'mgr-row-desc', (p.hasGit ? 'git · ' : '') + 'metro :' + p.metroPort));
+      row.appendChild(info);
+      const open = el('button', 'ghost small', 'Open');
+      open.onclick = () => { send({ type: 'open_project', projectId: p.id }); close(); };
+      row.appendChild(open);
+      list.appendChild(row);
+    }
+    pane.appendChild(list);
+    const add = el('div', 'mgr-newproj');
+    const name = el('input', 'mgr-input'); name.placeholder = 'new-project-name';
+    const tpl = el('select', 'mgr-select');
+    ['expo', 'blank'].forEach((t) => { const o = document.createElement('option'); o.value = t; o.textContent = t; tpl.appendChild(o); });
+    const create = el('button', 'primary small', 'Create');
+    create.onclick = () => { if (name.value.trim()) { send({ type: 'create_project', name: name.value.trim(), template: tpl.value }); name.value = ''; } };
+    add.appendChild(name); add.appendChild(tpl); add.appendChild(create);
+    pane.appendChild(add);
+  }
+
+  // ---- context -------------------------------------------------------------
+
+  function renderContext(pane) {
+    const c = m.lastContext;
+    pane.appendChild(el('p', 'mgr-hint', 'Live context-window usage. Compact summarizes history to reclaim space; Clear wipes it.'));
+    const box = el('div', 'ctx-box');
+    if (c) {
+      const pct = Math.min(100, Math.round((c.usedTokens / c.windowTokens) * 100));
+      box.appendChild(el('div', 'ctx-big', `${(c.usedTokens / 1000).toFixed(1)}k / ${(c.windowTokens / 1000).toFixed(0)}k tokens (${pct}%)`));
+      const track = el('div', 'ctx-track big');
+      const bar = el('div', 'ctx-bar' + (pct > 85 ? ' hot' : pct > 65 ? ' warm' : ''));
+      bar.style.width = pct + '%';
+      track.appendChild(bar);
+      box.appendChild(track);
+      box.appendChild(el('div', 'mgr-row-desc', 'model: ' + (c.model || '?')));
+    } else {
+      box.appendChild(el('div', 'mgr-empty', 'No context data yet — send a message first.'));
+    }
+    pane.appendChild(box);
+
+    const focusRow = el('div', 'mgr-newproj');
+    const focus = el('input', 'mgr-input'); focus.placeholder = 'compact focus (optional, e.g. "keep the auth work")';
+    const compact = el('button', 'primary small', 'Compact');
+    compact.onclick = () => { send({ type: 'compact', focus: focus.value.trim() || undefined }); close(); };
+    focusRow.appendChild(focus); focusRow.appendChild(compact);
+    pane.appendChild(focusRow);
+
+    const ctxBtn = el('button', 'ghost small', '/context breakdown');
+    ctxBtn.onclick = () => { send({ type: 'slash_command', name: 'context' }); close(); };
+    const clearBtn = el('button', 'ghost small', 'Clear conversation');
+    clearBtn.onclick = () => { if (confirm('Clear the conversation context?')) { send({ type: 'clear' }); close(); } };
+    pane.appendChild(ctxBtn); pane.appendChild(clearBtn);
+  }
+
+  // ---- mcp / plugins -------------------------------------------------------
+
+  function renderMcp(pane) {
+    // Editable .mcp.json servers (CRUD) at the top…
+    pane.appendChild(el('div', 'perm-bucket-title', 'CONFIGURED SERVERS (.mcp.json)'));
+    renderResourceList(pane, 'mcp', 'MCP server');
+    // …then the LIVE status from the running engine's capabilities.
+    const caps = m.caps;
+    if (!caps) { pane.appendChild(el('div', 'mgr-hint', 'Start a Claude engine to see live MCP status, tools and agents.')); return; }
+    pane.appendChild(el('div', 'perm-bucket-title', 'LIVE (from engine)'));
+    section(pane, 'MCP servers', (caps.mcpServers || []).map((s) =>
+      `${esc(s.name || s)} — ${esc((s.status || 'unknown'))}`), 'No MCP servers configured.');
+    section(pane, 'Available tools', (caps.tools || []).map((t) => esc(typeof t === 'string' ? t : t.name)), 'No tools reported.');
+    section(pane, 'Subagents', (caps.agents || []).map((a) => `${esc(a.name || a)}${a.description ? ' — ' + esc(a.description) : ''}`), 'No subagents.');
+    section(pane, 'Slash commands', (caps.slashCommands || []).map((c) => esc(typeof c === 'string' ? c : c.name)), 'None.');
+    if (caps.plugins && caps.plugins.length) section(pane, 'Plugins', caps.plugins.map((p) => esc(p.name || p)), 'None.');
+    pane.appendChild(el('div', 'mgr-row-desc', `output style: ${esc(caps.outputStyle || 'default')} · auth: ${esc(caps.apiKeySource || 'oauth')}`));
+  }
+  function section(pane, title, lines, empty) {
+    pane.appendChild(el('div', 'perm-bucket-title', title.toUpperCase()));
+    const box = el('div', 'mgr-list');
+    if (!lines.length) box.appendChild(el('div', 'mgr-empty', empty));
+    lines.forEach((l) => { const d = el('div', 'mgr-row'); d.innerHTML = `<code>${l}</code>`; box.appendChild(d); });
+    pane.appendChild(box);
+  }
+
+  // ---- files ---------------------------------------------------------------
+
+  function renderFiles(pane) {
+    // --- diff view ---
+    if (m.diffView) {
+      const back = el('button', 'ghost small', '← back');
+      back.onclick = () => { m.diffView = null; renderPane(); };
+      pane.appendChild(back);
+      pane.appendChild(el('div', 'mgr-row-name', `${m.diffView.path} (${m.diffView.status})`));
+      const box = el('div');
+      box.innerHTML = window.DiffRender.renderDiff({ before: m.diffView.before, after: m.diffView.after });
+      pane.appendChild(box);
+      const discard = el('button', 'danger small', 'Discard changes');
+      discard.onclick = () => { if (confirm(`Discard changes to ${m.diffView.path}?`)) { send({ type: 'git', op: 'discard', path: m.diffView.path }); m.diffView = null; send({ type: 'files_list', path: '.' }); } };
+      pane.appendChild(discard);
+      return;
+    }
+    // --- file view / inline edit ---
+    if (m.openFile) {
+      const back = el('button', 'ghost small', '← back');
+      back.onclick = () => { m.openFile = null; m.editingFile = false; renderPane(); };
+      pane.appendChild(back);
+      pane.appendChild(el('div', 'mgr-row-name', m.openFile.path));
+      if (m.editingFile) {
+        const ta = el('textarea', 'mgr-textarea file-edit');
+        ta.value = m.openFile.content;
+        pane.appendChild(ta);
+        const save = el('button', 'primary small', 'Save');
+        save.onclick = () => { send({ type: 'files_write', path: m.openFile.path, content: ta.value }); m.openFile.content = ta.value; m.editingFile = false; renderPane(); };
+        const cancel = el('button', 'ghost small', 'Cancel');
+        cancel.onclick = () => { m.editingFile = false; renderPane(); };
+        pane.appendChild(save); pane.appendChild(cancel);
+      } else {
+        const pre = el('pre', 'file-view');
+        pre.textContent = m.openFile.content + (m.openFile.truncated ? '\n… (truncated)' : '');
+        pane.appendChild(pre);
+        const edit = el('button', 'ghost small', 'Edit');
+        edit.onclick = () => { m.editingFile = true; renderPane(); };
+        const ref = el('button', 'ghost small', 'Reference (@)');
+        ref.onclick = () => { const inp = document.getElementById('input'); inp.value += (inp.value && !inp.value.endsWith(' ') ? ' ' : '') + '@' + m.openFile.path + ' '; close(); inp.focus(); };
+        pane.appendChild(edit); pane.appendChild(ref);
+      }
+      return;
+    }
+    // --- content search ---
+    const searchRow = el('div', 'mgr-newproj');
+    const q = el('input', 'mgr-input'); q.placeholder = 'search file contents…'; q.id = 'grepInput';
+    if (m.grep) q.value = m.grep.query;
+    const go = el('button', 'ghost small', 'Search');
+    const doGrep = () => { if (q.value.trim()) send({ type: 'files_grep', query: q.value.trim() }); };
+    go.onclick = doGrep;
+    q.onkeydown = (e) => { if (e.key === 'Enter') doGrep(); };
+    searchRow.appendChild(q); searchRow.appendChild(go);
+    pane.appendChild(searchRow);
+    if (m.grep) {
+      const clear = el('button', 'ghost small', `× clear results (${m.grep.matches.length})`);
+      clear.onclick = () => { m.grep = null; renderPane(); };
+      pane.appendChild(clear);
+      // find & replace across the matched files
+      const repRow = el('div', 'mgr-newproj');
+      const rep = el('input', 'mgr-input'); rep.placeholder = `replace "${m.grep.query}" with…`;
+      const repBtn = el('button', 'danger small', 'Replace all');
+      repBtn.onclick = () => {
+        if (confirm(`Replace every "${m.grep.query}" → "${rep.value}" across the project? A checkpoint is taken first so you can ↶ Undo.`)) {
+          send({ type: 'files_replace', query: m.grep.query, replacement: rep.value });
+          m.grep = null; close();
+        }
+      };
+      repRow.appendChild(rep); repRow.appendChild(repBtn);
+      pane.appendChild(repRow);
+      const gl = el('div', 'mgr-list');
+      if (!m.grep.matches.length) gl.appendChild(el('div', 'mgr-empty', 'No matches.'));
+      m.grep.matches.forEach((mt) => {
+        const row = el('div', 'mgr-row'); row.style.cursor = 'pointer';
+        row.innerHTML = `<div class="mgr-row-info"><div class="mgr-row-name">${esc(mt.path)}:${mt.line}</div><code>${esc(mt.text)}</code></div>`;
+        row.onclick = () => send({ type: 'files_read', path: mt.path });
+        gl.appendChild(row);
+      });
+      pane.appendChild(gl);
+      return;
+    }
+    // --- changed files + commit ---
+    if (m.changed && m.changed.length) {
+      pane.appendChild(el('div', 'perm-bucket-title', `CHANGES (${m.changed.length})`));
+      const cl = el('div', 'mgr-list');
+      m.changed.forEach((c) => {
+        const row = el('div', 'mgr-row');
+        row.innerHTML = `<code class="chg-${(c.status || '?')[0]}">${esc(c.status || '?')}</code> <span class="mgr-row-name">${esc(c.path)}</span>`;
+        const diff = el('button', 'ghost small', 'Diff');
+        diff.onclick = () => send({ type: 'files_diff', path: c.path });
+        row.appendChild(diff);
+        cl.appendChild(row);
+      });
+      pane.appendChild(cl);
+      const commitRow = el('div', 'mgr-newproj');
+      const msg = el('input', 'mgr-input'); msg.placeholder = 'commit message';
+      const commit = el('button', 'primary small', 'Commit all');
+      commit.onclick = () => { send({ type: 'git', op: 'commit', message: msg.value || undefined }); msg.value = ''; };
+      commitRow.appendChild(msg); commitRow.appendChild(commit);
+      pane.appendChild(commitRow);
+    }
+    // --- quick .env ---
+    const envBtn = el('button', 'ghost small', 'Edit .env');
+    envBtn.onclick = () => send({ type: 'files_read', path: '.env' });
+    pane.appendChild(envBtn);
+    // --- tree ---
+    const crumb = el('div', 'mgr-hint');
+    crumb.textContent = '📁 ' + (m.filePath === '.' ? '/' : '/' + m.filePath);
+    pane.appendChild(crumb);
+    const list = el('div', 'mgr-list');
+    if (m.filePath !== '.') {
+      const up = el('div', 'mgr-row'); up.style.cursor = 'pointer';
+      up.innerHTML = '<span class="mgr-row-name">../</span>';
+      up.onclick = () => { m.filePath = m.filePath.split('/').slice(0, -1).join('/') || '.'; send({ type: 'files_list', path: m.filePath }); };
+      list.appendChild(up);
+    }
+    (m.fileEntries || []).forEach((e) => {
+      const row = el('div', 'mgr-row'); row.style.cursor = 'pointer';
+      row.innerHTML = `<span class="mgr-row-name">${e.dir ? '📁 ' : '📄 '}${esc(e.name)}</span>` +
+        (e.dir ? '' : `<span class="mgr-row-desc">${e.size} B</span>`);
+      row.onclick = () => {
+        const child = m.filePath === '.' ? e.name : m.filePath + '/' + e.name;
+        if (e.dir) { m.filePath = child; send({ type: 'files_list', path: child }); }
+        else send({ type: 'files_read', path: child });
+      };
+      list.appendChild(row);
+    });
+    pane.appendChild(list);
+  }
+
+  function renderPrompts(pane) {
+    pane.appendChild(el('p', 'mgr-hint', 'Saved prompts — tap to drop into the composer.'));
+    const list = el('div', 'mgr-list');
+    if (!m.prompts.length) list.appendChild(el('div', 'mgr-empty', 'No saved prompts.'));
+    m.prompts.forEach((p) => {
+      const row = el('div', 'mgr-row');
+      const info = el('div', 'mgr-row-info'); info.style.cursor = 'pointer';
+      info.appendChild(el('div', 'mgr-row-name', p.name));
+      info.appendChild(el('div', 'mgr-row-desc', p.text));
+      info.onclick = () => { const inp = document.getElementById('input'); inp.value = p.text; close(); inp.focus(); };
+      row.appendChild(info);
+      const del = el('button', 'ghost small', 'Delete');
+      del.onclick = () => send({ type: 'prompts_delete', name: p.name });
+      row.appendChild(del);
+      list.appendChild(row);
+    });
+    pane.appendChild(list);
+    const add = el('div', 'mgr-editor');
+    const name = el('input', 'mgr-input'); name.placeholder = 'prompt name';
+    const text = el('textarea', 'mgr-textarea'); text.placeholder = 'prompt text…';
+    const save = el('button', 'primary small', 'Save prompt');
+    save.onclick = () => { if (name.value.trim() && text.value.trim()) { send({ type: 'prompts_save', name: name.value.trim(), text: text.value.trim() }); name.value = ''; text.value = ''; } };
+    add.appendChild(name); add.appendChild(text); add.appendChild(save);
+    pane.appendChild(add);
+  }
+
+  // ---- checkpoints ---------------------------------------------------------
+
+  function renderCheckpoints(pane) {
+    // changes-since-checkpoint review sub-view
+    if (m.checkpointDiff) {
+      const back = el('button', 'ghost small', '← back');
+      back.onclick = () => { m.checkpointDiff = null; renderPane(); };
+      pane.appendChild(back);
+      pane.appendChild(el('div', 'mgr-row-name', `Changes since: ${m.checkpointDiff.label || m.checkpointDiff.id}`));
+      if (m.checkpointDiff.stat) { const pre = el('pre', 'file-view'); pre.textContent = m.checkpointDiff.stat; pane.appendChild(pre); }
+      const list = el('div', 'mgr-list');
+      if (!m.checkpointDiff.files.length) list.appendChild(el('div', 'mgr-empty', 'No changes since this checkpoint.'));
+      m.checkpointDiff.files.forEach((f) => {
+        const row = el('div', 'mgr-row'); row.style.cursor = 'pointer';
+        row.innerHTML = `<code class="chg-${(f.status || '?')[0]}">${esc(f.status || '?')}</code> <span class="mgr-row-name">${esc(f.path)}</span>`;
+        row.onclick = () => send({ type: 'files_diff', path: f.path, checkpointId: m.checkpointDiff.id });
+        list.appendChild(row);
+      });
+      pane.appendChild(list);
+      return;
+    }
+    pane.appendChild(el('p', 'mgr-hint', 'A non-destructive snapshot is taken before every turn. Review changes since one, or Restore to rewind (reverting the agent\'s changes since).'));
+    if (!m.checkpoints.enabled) {
+      pane.appendChild(el('div', 'mgr-empty', 'Checkpoints need a git repo for this project.'));
+      const enable = el('button', 'primary small', 'Enable checkpoints (git init)');
+      enable.onclick = () => send({ type: 'checkpoints_enable' });
+      pane.appendChild(enable);
+      return;
+    }
+    const mk = el('button', 'ghost small', '+ Snapshot now');
+    mk.onclick = () => send({ type: 'checkpoint_create', label: 'manual' });
+    pane.appendChild(mk);
+    const list = el('div', 'mgr-list');
+    if (!m.checkpoints.items.length) list.appendChild(el('div', 'mgr-empty', 'No checkpoints yet.'));
+    m.checkpoints.items.forEach((c, i) => {
+      const row = el('div', 'mgr-row' + (i === 0 ? ' active' : ''));
+      const info = el('div', 'mgr-row-info');
+      info.appendChild(el('div', 'mgr-row-name', c.label));
+      info.appendChild(el('div', 'mgr-row-desc', new Date(c.time).toLocaleString() + ' · ' + c.id));
+      row.appendChild(info);
+      const review = el('button', 'ghost small', 'Review');
+      review.onclick = () => send({ type: 'checkpoint_diff', id: c.id });
+      const restore = el('button', 'ghost small', 'Restore');
+      restore.onclick = () => { if (confirm(`Rewind to "${c.label}"?`)) { send({ type: 'checkpoint_restore', id: c.id }); close(); } };
+      row.appendChild(review); row.appendChild(restore);
+      list.appendChild(row);
+    });
+    pane.appendChild(list);
+  }
+
+  // ---- scripts -------------------------------------------------------------
+
+  function renderScripts(pane) {
+    // --- auto-verify loop config ---
+    const av = m.autoverify;
+    pane.appendChild(el('div', 'perm-bucket-title', 'AUTO-VERIFY (self-healing loop)'));
+    const avBox = el('div', 'mgr-editor');
+    const toggle = el('label', 'av-toggle');
+    const cb = el('input'); cb.type = 'checkbox'; cb.checked = !!av.enabled;
+    toggle.appendChild(cb);
+    toggle.appendChild(el('span', '', ' After each turn, run the verify command; on failure, feed the output back to the agent to fix.'));
+    avBox.appendChild(toggle);
+    const cmd = el('input', 'mgr-input'); cmd.value = av.command || 'npm test'; cmd.placeholder = 'verify command (e.g. npm test)';
+    avBox.appendChild(cmd);
+    const maxRow = el('div', 'mgr-newproj');
+    const max = el('input', 'mgr-input'); max.type = 'number'; max.value = av.maxIterations || 3; max.style.maxWidth = '90px';
+    maxRow.appendChild(el('span', 'mgr-label', 'max fix attempts'));
+    maxRow.appendChild(max);
+    const save = el('button', 'primary small', 'Save');
+    save.onclick = () => send({ type: 'autoverify_set', enabled: cb.checked, command: cmd.value.trim() || 'npm test', maxIterations: Number(max.value) || 3 });
+    maxRow.appendChild(save);
+    avBox.appendChild(maxRow);
+    pane.appendChild(avBox);
+
+    pane.appendChild(el('div', 'perm-bucket-title', 'PACKAGE SCRIPTS'));
+    pane.appendChild(el('p', 'mgr-hint', 'Output streams to the Terminal drawer.'));
+    const list = el('div', 'mgr-list');
+    if (!m.scripts.items.length) list.appendChild(el('div', 'mgr-empty', 'No scripts in package.json.'));
+    m.scripts.items.forEach((s) => {
+      const running = m.scripts.running.includes(s.name);
+      const row = el('div', 'mgr-row' + (running ? ' active' : ''));
+      const info = el('div', 'mgr-row-info');
+      info.appendChild(el('div', 'mgr-row-name', s.name + (running ? ' • running' : '')));
+      info.appendChild(el('div', 'mgr-row-desc', s.cmd));
+      row.appendChild(info);
+      if (running) {
+        const stop = el('button', 'danger small', 'Stop');
+        stop.onclick = () => send({ type: 'script_stop', name: s.name });
+        row.appendChild(stop);
+      } else {
+        const run = el('button', 'accent small', '▶ Run');
+        run.onclick = () => { send({ type: 'script_run', name: s.name }); toast(`Running npm run ${s.name} — see Terminal`); close(); };
+        row.appendChild(run);
+      }
+      list.appendChild(row);
+    });
+    pane.appendChild(list);
+  }
+
+  function toast(msg) { if (window.Agent && window.Agent.toast) window.Agent.toast(msg); }
+
+  // ---- git / github --------------------------------------------------------
+
+  function renderGit(pane) {
+    pane.appendChild(el('p', 'mgr-hint', 'Commit, push to GitHub, and open a PR. Output streams to the Terminal drawer.'));
+    pane.appendChild(el('div', 'mgr-row-desc', `${(m.changed || []).length} changed file(s)`));
+
+    section2(pane, 'Commit', () => {
+      const msg = el('input', 'mgr-input'); msg.placeholder = 'commit message';
+      const commit = el('button', 'primary small', 'Commit all');
+      commit.onclick = () => { send({ type: 'git', op: 'commit', message: msg.value || undefined }); send({ type: 'files_list', path: '.' }); };
+      return [msg, commit];
+    });
+
+    section2(pane, 'Push to GitHub', () => {
+      const msg = el('input', 'mgr-input'); msg.placeholder = 'commit message (optional)';
+      const push = el('button', 'accent small', 'Commit & Push');
+      push.onclick = () => { send({ type: 'github_push', message: msg.value || undefined }); openTerminal(); };
+      return [msg, push];
+    });
+
+    section2(pane, 'Open pull request', () => {
+      const title = el('input', 'mgr-input'); title.placeholder = 'PR title (blank = autofill from commits)';
+      const body = el('textarea', 'mgr-textarea'); body.placeholder = 'PR description (optional)';
+      const pr = el('button', 'primary small', 'Create PR');
+      pr.onclick = () => { send({ type: 'github_pr', title: title.value || undefined, body: body.value || undefined }); openTerminal(); };
+      return [title, body, pr];
+    });
+
+    section2(pane, 'Set remote (origin)', () => {
+      const url = el('input', 'mgr-input'); url.placeholder = 'git@github.com:you/repo.git';
+      const set = el('button', 'ghost small', 'Set origin');
+      set.onclick = () => { if (url.value.trim()) send({ type: 'git_remote_set', url: url.value.trim() }); };
+      return [url, set];
+    });
+  }
+  function section2(pane, title, build) {
+    pane.appendChild(el('div', 'perm-bucket-title', title.toUpperCase()));
+    const box = el('div', 'mgr-editor');
+    build().forEach((n) => box.appendChild(n));
+    pane.appendChild(box);
+  }
+  function openTerminal() {
+    const t = document.getElementById('terminal');
+    if (t && t.classList.contains('hidden')) document.getElementById('termBtn').click();
+    close();
+  }
+
+  // ---- usage analytics -----------------------------------------------------
+
+  function renderUsage(pane) {
+    const s = m.usageStats;
+    if (!s) { pane.appendChild(el('div', 'mgr-empty', 'No usage recorded yet.')); return; }
+    const fmt = (n) => (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n || 0));
+    const money = (c) => (c ? '$' + c.toFixed(2) : 'flat');
+    const card = (title, v) => {
+      const c = el('div', 'ctx-box');
+      c.appendChild(el('div', 'mgr-row-desc', title));
+      c.appendChild(el('div', 'ctx-big', `${fmt(v.in)} in · ${fmt(v.out)} out`));
+      c.appendChild(el('div', 'mgr-row-desc', `${v.turns} turn(s) · ${money(v.cost)}`));
+      return c;
+    };
+    pane.appendChild(card('Today', s.today));
+    pane.appendChild(card('All time', s.total));
+    pane.appendChild(el('div', 'perm-bucket-title', 'BY DAY'));
+    const list = el('div', 'mgr-list');
+    const maxIn = Math.max(1, ...s.days.map((d) => d.in + d.out));
+    s.days.forEach((d) => {
+      const row = el('div', 'mgr-row');
+      const info = el('div', 'mgr-row-info');
+      info.appendChild(el('div', 'mgr-row-name', d.date));
+      const track = el('div', 'ctx-track'); track.style.width = '120px';
+      const bar = el('div', 'ctx-bar'); bar.style.width = Math.round(((d.in + d.out) / maxIn) * 100) + '%';
+      track.appendChild(bar);
+      info.appendChild(track);
+      row.appendChild(info);
+      row.appendChild(el('div', 'mgr-row-desc', `${fmt(d.in + d.out)} tok · ${d.turns}t · ${money(d.cost)}`));
+      list.appendChild(row);
+    });
+    pane.appendChild(list);
+  }
+
+  // ---- field helpers -------------------------------------------------------
+
+  function field(label, value, onChange, placeholder, disabled) {
+    const wrap = el('div', 'mgr-field');
+    wrap.appendChild(el('label', '', label));
+    const inp = el('input', 'mgr-input');
+    inp.value = value || '';
+    if (placeholder != null) inp.placeholder = placeholder;
+    inp.disabled = !!disabled;
+    inp.oninput = () => onChange(inp.value);
+    wrap.appendChild(inp);
+    return wrap;
+  }
+  function textarea(label, value, onChange) {
+    const wrap = el('div', 'mgr-field');
+    wrap.appendChild(el('label', '', label));
+    const ta = el('textarea', 'mgr-textarea');
+    ta.value = value || '';
+    ta.oninput = () => onChange(ta.value);
+    wrap.appendChild(ta);
+    return wrap;
+  }
+
+  // ---- event intake from app.js -------------------------------------------
+
+  function onConfig(ev) {
+    if (ev.item) {
+      // a config_read response
+      if (ev.kind === 'memory') {
+        const items = m.items.memory || [];
+        const it = items.find((x) => x.id === ev.name);
+        if (it) { it._content = ev.item.content || ''; if (m.tab === 'memory') renderPane(); }
+        return;
+      }
+      m.editing = { kind: ev.kind, name: ev.item.name, fields: ev.item.fields || {}, body: ev.item.body || '' };
+      if (root.classList.contains('hidden') === false) renderPane();
+      return;
+    }
+    if (ev.kind === 'settings') { m.items.settings = ev; if (m.tab === 'permissions') renderPane(); return; }
+    m.items[ev.kind] = ev.items || [];
+    if ((m.tab === ev.kind) || (ev.kind === 'sessions' && m.tab === 'sessions')) renderPane();
+  }
+  function onCapabilities(ev) { m.caps = ev; if (m.tab === 'mcp') renderPane(); }
+  function onContext(ev) { m.lastContext = ev; if (m.tab === 'context') renderPane(); }
+  function onProjects(ev) { m.projects = ev.projects || []; if (m.tab === 'projects') renderPane(); }
+  function onProfiles(ev) { m.profiles = ev.profiles || []; }
+  function onCheckpoints(ev) { m.checkpoints = { items: ev.items || [], enabled: !!ev.enabled }; if (m.tab === 'checkpoints') renderPane(); }
+  function onFiles(ev) {
+    m.filePath = ev.path || '.';
+    m.fileEntries = ev.entries || [];
+    m.changed = ev.changed || [];
+    // Don't clobber an open file/diff/grep view — a FILES refresh can arrive
+    // from a background write/restore while the user is viewing something.
+    if (m.tab === 'files' && !m.openFile && !m.diffView && !m.grep) renderPane();
+  }
+  function onFile(ev) {
+    m.openFile = { path: ev.path, content: ev.content || '', truncated: ev.truncated };
+    m.editingFile = false;
+    m.diffView = null;
+    m.grep = null;
+    if (root.classList.contains('hidden')) return;
+    if (m.tab !== 'files') { m.tab = 'files'; render(); } else renderPane();
+  }
+  function onFileDiff(ev) {
+    m.diffView = ev;
+    m.openFile = null;
+    if (root.classList.contains('hidden')) return;
+    if (m.tab !== 'files') { m.tab = 'files'; render(); } else renderPane();
+  }
+  function onFileGrep(ev) {
+    m.grep = { query: ev.query, matches: ev.matches || [] };
+    m.openFile = null; m.diffView = null;
+    if (!root.classList.contains('hidden') && m.tab === 'files') renderPane();
+  }
+  function onPrompts(ev) { m.prompts = ev.items || []; if (!root.classList.contains('hidden') && m.tab === 'prompts') renderPane(); }
+  function onScripts(ev) { m.scripts = { items: ev.items || [], running: ev.running || [] }; if (!root.classList.contains('hidden') && m.tab === 'scripts') renderPane(); }
+  function onAutoVerify(ev) {
+    m.autoverify = { enabled: ev.enabled, command: ev.command, maxIterations: ev.maxIterations };
+    if (!root.classList.contains('hidden') && m.tab === 'scripts') renderPane();
+  }
+  function onUsageStats(ev) { m.usageStats = ev.summary; if (!root.classList.contains('hidden') && m.tab === 'usage') renderPane(); }
+  function onCheckpointDiff(ev) {
+    m.checkpointDiff = { id: ev.id, label: ev.label, files: ev.files || [], stat: ev.stat || '' };
+    if (root.classList.contains('hidden')) return;
+    if (m.tab !== 'checkpoints') { m.tab = 'checkpoints'; render(); } else renderPane();
+  }
+
+  window.Managers = {
+    open, openTab, close, onConfig, onCapabilities, onContext, onProjects, onProfiles,
+    onCheckpoints, onFiles, onFile, onFileDiff, onFileGrep, onPrompts, onScripts,
+    onAutoVerify, onUsageStats, onCheckpointDiff,
+  };
+})();

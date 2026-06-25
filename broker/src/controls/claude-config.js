@@ -1,0 +1,486 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { parseFrontmatter, stringifyFrontmatter } from './frontmatter.js';
+
+/**
+ * ClaudeConfig — read/write the Claude Code harness config that lives in
+ * `.claude/` directories, so the UI can offer first-class managers for:
+ *   - skills    (.claude/skills/<name>/SKILL.md)
+ *   - agents    (.claude/agents/<name>.md)
+ *   - commands  (.claude/commands/<name>.md)
+ *   - memory    (CLAUDE.md / CLAUDE.local.md across scopes)
+ *   - settings  (.claude/settings.json — permissions allow/deny/ask)
+ *   - sessions  (~/.claude/projects/<proj>/*.jsonl transcripts)
+ *
+ * scope is 'project' (the active project's .claude) or 'user' (~/.claude).
+ * See docs/claude-code-surface.md for the authoritative file formats.
+ */
+export class ClaudeConfig {
+  constructor({ getProjectDir }) {
+    this.getProjectDir = getProjectDir;
+  }
+
+  _baseFor(scope) {
+    if (scope === 'user') return path.join(os.homedir(), '.claude');
+    const dir = this.getProjectDir();
+    return path.join(dir || os.homedir(), '.claude');
+  }
+
+  _projectDir() {
+    return this.getProjectDir() || os.homedir();
+  }
+
+  // --- list -------------------------------------------------------------------
+
+  list(kind, scope = 'project') {
+    switch (kind) {
+      case 'skills':
+        return this._listSkills(scope);
+      case 'agents':
+        return this._listAgents(scope);
+      case 'commands':
+        return this._listCommands(scope);
+      case 'output-styles':
+        return this._listOutputStyles(scope);
+      case 'memory':
+        return this._listMemory();
+      case 'settings':
+        return this._readSettings(scope);
+      case 'sessions':
+        return this._listSessions();
+      case 'mcp':
+        return this._listMcp(scope);
+      case 'hooks':
+        return this._listHooks(scope);
+      default:
+        return [];
+    }
+  }
+
+  // --- Hooks (.claude/settings.json `hooks`) ----------------------------------
+
+  _settingsPath(scope) {
+    return path.join(this._baseFor(scope), 'settings.json');
+  }
+  _readSettingsRaw(scope) {
+    try {
+      const f = this._settingsPath(scope);
+      if (fs.existsSync(f)) return JSON.parse(read(f));
+    } catch {
+      /* ignore */
+    }
+    return {};
+  }
+  _writeSettingsRaw(scope, json) {
+    const f = this._settingsPath(scope);
+    try {
+      fs.mkdirSync(path.dirname(f), { recursive: true });
+      fs.writeFileSync(f, JSON.stringify(json, null, 2));
+    } catch {
+      /* ignore */
+    }
+  }
+  _listHooks(scope) {
+    const hooks = this._readSettingsRaw(scope).hooks || {};
+    const out = [];
+    for (const [eventName, groups] of Object.entries(hooks)) {
+      (groups || []).forEach((group, gi) => {
+        (group.hooks || []).forEach((h, hi) => {
+          out.push({
+            name: `${eventName}#${gi}#${hi}`,
+            event: eventName,
+            matcher: group.matcher || '',
+            type: h.type || 'command',
+            command: h.command || '',
+            scope,
+          });
+        });
+      });
+    }
+    return out;
+  }
+
+  // --- MCP servers (.mcp.json project / ~/.claude.json user) ------------------
+
+  _mcpFile(scope) {
+    if (scope === 'user') return path.join(os.homedir(), '.claude.json');
+    return path.join(this._projectDir(), '.mcp.json');
+  }
+  _readMcpServers(scope) {
+    const file = this._mcpFile(scope);
+    try {
+      if (fs.existsSync(file)) return JSON.parse(read(file)).mcpServers || {};
+    } catch {
+      /* ignore */
+    }
+    return {};
+  }
+  _writeMcpServers(scope, servers) {
+    const file = this._mcpFile(scope);
+    let json = {};
+    try {
+      if (fs.existsSync(file)) json = JSON.parse(read(file));
+    } catch {
+      /* start fresh */
+    }
+    json.mcpServers = servers;
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify(json, null, 2));
+    } catch {
+      /* ignore */
+    }
+  }
+  _listMcp(scope) {
+    const servers = this._readMcpServers(scope);
+    return Object.entries(servers).map(([name, cfg]) => ({
+      name,
+      command: cfg.command || cfg.url || '',
+      args: Array.isArray(cfg.args) ? cfg.args.join(' ') : '',
+      transport: cfg.type || cfg.transport || (cfg.url ? 'http' : 'stdio'),
+      scope,
+    }));
+  }
+
+  _listSkills(scope) {
+    const dir = path.join(this._baseFor(scope), 'skills');
+    if (!fs.existsSync(dir)) return [];
+    return safeReaddir(dir)
+      .filter((n) => fs.existsSync(path.join(dir, n, 'SKILL.md')))
+      .map((n) => {
+        const { data } = parseFrontmatter(read(path.join(dir, n, 'SKILL.md')));
+        return {
+          name: n,
+          description: data.description || '',
+          model: data.model || '',
+          allowedTools: data['allowed-tools'] || data.allowedTools || '',
+          userInvocable: data['user-invocable'] !== false,
+          scope,
+        };
+      });
+  }
+
+  _listAgents(scope) {
+    const dir = path.join(this._baseFor(scope), 'agents');
+    if (!fs.existsSync(dir)) return [];
+    return safeReaddir(dir)
+      .filter((n) => n.endsWith('.md'))
+      .map((n) => {
+        const { data } = parseFrontmatter(read(path.join(dir, n)));
+        return {
+          name: n.replace(/\.md$/, ''),
+          description: data.description || '',
+          tools: data.tools || '',
+          model: data.model || '',
+          scope,
+        };
+      });
+  }
+
+  _listCommands(scope) {
+    const dir = path.join(this._baseFor(scope), 'commands');
+    if (!fs.existsSync(dir)) return [];
+    return safeReaddir(dir)
+      .filter((n) => n.endsWith('.md'))
+      .map((n) => {
+        const { data } = parseFrontmatter(read(path.join(dir, n)));
+        return {
+          name: n.replace(/\.md$/, ''),
+          description: data.description || '',
+          argumentHint: data['argument-hint'] || '',
+          model: data.model || '',
+          scope,
+        };
+      });
+  }
+
+  _listOutputStyles(scope) {
+    const dir = path.join(this._baseFor(scope), 'output-styles');
+    if (!fs.existsSync(dir)) return [];
+    return safeReaddir(dir)
+      .filter((n) => n.endsWith('.md'))
+      .map((n) => {
+        const { data } = parseFrontmatter(read(path.join(dir, n)));
+        return { name: n.replace(/\.md$/, ''), description: data.description || '', scope };
+      });
+  }
+
+  _listMemory() {
+    const proj = this._projectDir();
+    const home = os.homedir();
+    const files = [
+      { id: 'project', label: 'Project (./CLAUDE.md)', file: path.join(proj, 'CLAUDE.md') },
+      { id: 'project-dot', label: 'Project (.claude/CLAUDE.md)', file: path.join(proj, '.claude', 'CLAUDE.md') },
+      { id: 'local', label: 'Local (./CLAUDE.local.md, gitignored)', file: path.join(proj, 'CLAUDE.local.md') },
+      { id: 'user', label: 'User (~/.claude/CLAUDE.md)', file: path.join(home, '.claude', 'CLAUDE.md') },
+    ];
+    return files.map((f) => ({
+      ...f,
+      exists: fs.existsSync(f.file),
+      size: fs.existsSync(f.file) ? fs.statSync(f.file).size : 0,
+    }));
+  }
+
+  _readSettings(scope) {
+    const file = path.join(this._baseFor(scope), 'settings.json');
+    let json = {};
+    try {
+      if (fs.existsSync(file)) json = JSON.parse(read(file));
+    } catch {
+      /* ignore */
+    }
+    const perms = json.permissions || {};
+    return {
+      file,
+      defaultMode: perms.defaultMode || 'default',
+      allow: perms.allow || [],
+      deny: perms.deny || [],
+      ask: perms.ask || [],
+      additionalDirectories: perms.additionalDirectories || [],
+    };
+  }
+
+  _sessionsDir() {
+    const proj = this._projectDir();
+    // Claude stores transcripts under ~/.claude/projects/<cwd with sep -> ->.
+    const encoded = proj.replace(/[/\\:]+/g, '-').replace(/^-+/, '-');
+    return path.join(os.homedir(), '.claude', 'projects', encoded);
+  }
+
+  _listSessions() {
+    const dir = this._sessionsDir();
+    if (!fs.existsSync(dir)) return [];
+    return safeReaddir(dir)
+      .filter((n) => n.endsWith('.jsonl'))
+      .map((n) => {
+        const full = path.join(dir, n);
+        const stat = fs.statSync(full);
+        return {
+          id: n.replace(/\.jsonl$/, ''),
+          summary: firstUserText(full),
+          mtime: stat.mtimeMs,
+          size: stat.size,
+        };
+      })
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, 50);
+  }
+
+  // --- read -------------------------------------------------------------------
+
+  read(kind, name, scope = 'project') {
+    if (kind === 'skills') {
+      const file = path.join(this._baseFor(scope), 'skills', name, 'SKILL.md');
+      const { data, body } = parseFrontmatter(read(file));
+      return { name, scope, fields: data, body, file };
+    }
+    if (kind === 'agents' || kind === 'commands' || kind === 'output-styles') {
+      const file = path.join(this._baseFor(scope), kind, `${name}.md`);
+      const { data, body } = parseFrontmatter(read(file));
+      return { name, scope, fields: data, body, file };
+    }
+    if (kind === 'memory') {
+      const entry = this._listMemory().find((m) => m.id === name);
+      return { name, file: entry?.file, content: entry && entry.exists ? read(entry.file) : '' };
+    }
+    if (kind === 'settings') return this._readSettings(scope);
+    if (kind === 'mcp') {
+      const cfg = this._readMcpServers(scope)[name] || {};
+      return {
+        name, scope,
+        fields: {
+          command: cfg.command || cfg.url || '',
+          args: Array.isArray(cfg.args) ? cfg.args.join(' ') : '',
+          transport: cfg.type || cfg.transport || (cfg.url ? 'http' : 'stdio'),
+        },
+      };
+    }
+    return null;
+  }
+
+  // --- write ------------------------------------------------------------------
+
+  write(kind, name, scope = 'project', payload = {}) {
+    if (kind === 'skills') {
+      const fields = payload.fields || {};
+      const fm = compact({
+        name: name,
+        description: fields.description,
+        model: fields.model,
+        'allowed-tools': fields.allowedTools,
+        'disallowed-tools': fields.disallowedTools,
+        'argument-hint': fields.argumentHint,
+        'user-invocable': fields.userInvocable,
+        'disable-model-invocation': fields.disableModelInvocation,
+      });
+      const file = path.join(this._baseFor(scope), 'skills', name, 'SKILL.md');
+      ensureDir(path.dirname(file));
+      fs.writeFileSync(file, stringifyFrontmatter(fm, payload.body || ''));
+      return { ok: true, file };
+    }
+    if (kind === 'agents') {
+      const fields = payload.fields || {};
+      const fm = compact({
+        name,
+        description: fields.description,
+        tools: fields.tools,
+        disallowedTools: fields.disallowedTools,
+        model: fields.model,
+        permissionMode: fields.permissionMode,
+      });
+      const file = path.join(this._baseFor(scope), 'agents', `${name}.md`);
+      ensureDir(path.dirname(file));
+      fs.writeFileSync(file, stringifyFrontmatter(fm, payload.body || ''));
+      return { ok: true, file };
+    }
+    if (kind === 'commands') {
+      const fields = payload.fields || {};
+      const fm = compact({
+        description: fields.description,
+        'argument-hint': fields.argumentHint,
+        'allowed-tools': fields.allowedTools,
+        model: fields.model,
+      });
+      const file = path.join(this._baseFor(scope), 'commands', `${name}.md`);
+      ensureDir(path.dirname(file));
+      fs.writeFileSync(file, stringifyFrontmatter(fm, payload.body || ''));
+      return { ok: true, file };
+    }
+    if (kind === 'output-styles') {
+      const fields = payload.fields || {};
+      const fm = compact({ name, description: fields.description });
+      const file = path.join(this._baseFor(scope), 'output-styles', `${name}.md`);
+      ensureDir(path.dirname(file));
+      fs.writeFileSync(file, stringifyFrontmatter(fm, payload.body || ''));
+      return { ok: true, file };
+    }
+    if (kind === 'memory') {
+      const entry = this._listMemory().find((m) => m.id === name);
+      if (!entry) return { error: `unknown memory scope ${name}` };
+      ensureDir(path.dirname(entry.file));
+      fs.writeFileSync(entry.file, payload.content || '');
+      return { ok: true, file: entry.file };
+    }
+    if (kind === 'hooks') {
+      const f = payload.fields || {};
+      const event = f.event || 'PreToolUse';
+      const json = this._readSettingsRaw(scope);
+      json.hooks ||= {};
+      json.hooks[event] ||= [];
+      json.hooks[event].push({
+        matcher: f.matcher || '',
+        hooks: [{ type: f.type || 'command', command: f.command || '' }],
+      });
+      this._writeSettingsRaw(scope, json);
+      return { ok: true, file: this._settingsPath(scope) };
+    }
+    if (kind === 'mcp') {
+      const fields = payload.fields || {};
+      const servers = this._readMcpServers(scope);
+      const isHttp = (fields.transport || 'stdio') !== 'stdio' || /^https?:\/\//.test(fields.command || '');
+      servers[name] = isHttp
+        ? { type: fields.transport || 'http', url: fields.command }
+        : { command: fields.command, args: (fields.args || '').split(/\s+/).filter(Boolean) };
+      this._writeMcpServers(scope, servers);
+      return { ok: true, file: this._mcpFile(scope) };
+    }
+    if (kind === 'settings') {
+      const file = path.join(this._baseFor(scope), 'settings.json');
+      let json = {};
+      try {
+        if (fs.existsSync(file)) json = JSON.parse(read(file));
+      } catch {
+        /* start fresh */
+      }
+      json.permissions = {
+        ...(json.permissions || {}),
+        defaultMode: payload.defaultMode ?? json.permissions?.defaultMode ?? 'default',
+        allow: payload.allow ?? json.permissions?.allow ?? [],
+        deny: payload.deny ?? json.permissions?.deny ?? [],
+        ask: payload.ask ?? json.permissions?.ask ?? [],
+      };
+      ensureDir(path.dirname(file));
+      fs.writeFileSync(file, JSON.stringify(json, null, 2));
+      return { ok: true, file };
+    }
+    return { error: `unknown kind ${kind}` };
+  }
+
+  delete(kind, name, scope = 'project') {
+    if (kind === 'mcp') {
+      const servers = this._readMcpServers(scope);
+      delete servers[name];
+      this._writeMcpServers(scope, servers);
+      return { ok: true };
+    }
+    if (kind === 'hooks') {
+      // name = `event#groupIndex#hookIndex`
+      const [event, gi] = String(name).split('#');
+      const json = this._readSettingsRaw(scope);
+      if (json.hooks && json.hooks[event]) {
+        json.hooks[event].splice(Number(gi), 1);
+        if (!json.hooks[event].length) delete json.hooks[event];
+        this._writeSettingsRaw(scope, json);
+      }
+      return { ok: true };
+    }
+    let target;
+    if (kind === 'skills') target = path.join(this._baseFor(scope), 'skills', name);
+    else if (kind === 'agents' || kind === 'commands' || kind === 'output-styles')
+      target = path.join(this._baseFor(scope), kind, `${name}.md`);
+    else return { error: `cannot delete kind ${kind}` };
+    try {
+      fs.rmSync(target, { recursive: true, force: true });
+      return { ok: true };
+    } catch (e) {
+      return { error: e.message };
+    }
+  }
+}
+
+function read(file) {
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch {
+    return '';
+  }
+}
+function safeReaddir(dir) {
+  try {
+    return fs.readdirSync(dir).filter((n) => !n.startsWith('.'));
+  } catch {
+    return [];
+  }
+}
+function ensureDir(p) {
+  try {
+    fs.mkdirSync(p, { recursive: true });
+  } catch {
+    /* ignore */
+  }
+}
+function compact(obj) {
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) if (v != null && v !== '') out[k] = v;
+  return out;
+}
+function firstUserText(file) {
+  try {
+    const head = fs.readFileSync(file, 'utf8').split('\n').slice(0, 40);
+    for (const line of head) {
+      if (!line.trim()) continue;
+      const obj = JSON.parse(line);
+      const content = obj?.message?.content;
+      if (obj.type === 'user' && content) {
+        const text = typeof content === 'string'
+          ? content
+          : (content.find?.((b) => b.type === 'text')?.text || '');
+        if (text) return String(text).slice(0, 80);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return '(session)';
+}

@@ -1,0 +1,349 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { EngineAdapter } from './base.js';
+import { EventType, StatusState, CommandType } from '../protocol.js';
+
+/**
+ * Mock engine — a fully self-contained fake harness.
+ *
+ * Why this exists: the real `claude-code` engine needs the claude CLI logged in
+ * with a Max subscription, running inside proot on the phone. The mock engine
+ * emits the exact same canonical events, so the ENTIRE rest of the stack — the
+ * WebSocket protocol, the web UI, tool cards, diff rendering, approval flow, the
+ * Test loop — can be built, run and demoed on any laptop with zero credentials.
+ *
+ * It also genuinely touches the filesystem (creates/edits files in the project
+ * dir) so the "files change in ~/projects/<app>" acceptance criteria is real.
+ */
+export class MockEngine extends EngineAdapter {
+  constructor(opts) {
+    super(opts);
+    this._pendingPermissions = new Map();
+    this._interrupted = false;
+    this._turn = 0;
+    this._seq = 0;
+  }
+
+  async _spawn() {
+    // Simulate the system/init handshake of a real harness.
+    await delay(120);
+    this.setSession(`mock-${this.profile?.id || 'session'}-${this._stableId()}`);
+    // Mirror the claude-code capability surface so the UI's managers/palettes work offline.
+    this.emitEvent(EventType.CAPABILITIES, {
+      slashCommands: ['/compact', '/clear', '/init', '/review', '/help'],
+      agents: [
+        { name: 'Explore', description: 'Read-only search agent' },
+        { name: 'Plan', description: 'Implementation planner' },
+        { name: 'general-purpose', description: 'Full-capability agent' },
+      ],
+      mcpServers: [{ name: 'broker', status: 'connected' }],
+      tools: ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Agent', 'Skill', 'WebSearch'],
+      outputStyle: 'default',
+      permissionMode: this.permissionMode || 'default',
+      model: this.model,
+    });
+    this.emitEvent(EventType.PERMISSION_MODE, { mode: this.permissionMode || 'default' });
+    this.emitEvent(EventType.CONTEXT, { usedTokens: 3200, windowTokens: 200000, model: this.model });
+    this.emitStatus(StatusState.IDLE);
+  }
+
+  _stableId() {
+    // Deterministic-ish id without Date.now()/Math.random (kept reproducible).
+    this._seq += 1;
+    return `${this.profile?.id || 'x'}${this._seq}`;
+  }
+
+  async send(cmd) {
+    switch (cmd.type) {
+      case CommandType.USER_MESSAGE:
+        await this._handleUserMessage(cmd.text || '', cmd.images);
+        break;
+      default:
+        // Mock ignores other commands silently.
+        break;
+    }
+  }
+
+  interrupt() {
+    this._interrupted = true;
+    this.emitStatus(StatusState.IDLE, 'interrupted');
+  }
+
+  respondPermission(id, decision) {
+    const pending = this._pendingPermissions.get(id);
+    if (!pending) return;
+    this._pendingPermissions.delete(id);
+    this.emitEvent(EventType.PERMISSION_RESOLVED, { id, decision });
+    pending.resolve(decision);
+  }
+
+  async _teardown() {
+    for (const p of this._pendingPermissions.values()) p.resolve('deny');
+    this._pendingPermissions.clear();
+  }
+
+  // --- the simulated turn -----------------------------------------------------
+
+  async _handleUserMessage(text, images) {
+    this._interrupted = false;
+    this._turn += 1;
+    this.emitEvent(EventType.USER_ECHO, { text });
+    this.emitStatus(StatusState.THINKING);
+    await delay(200);
+
+    if (images && images.length) {
+      await this._streamText(`I can see the ${images.length === 1 ? 'image' : images.length + ' images'} you attached. `);
+    }
+
+    const wantsScreen = /\b(screen|component|button|build|make|create|add)\b/i.test(text);
+    const wantsRun = /\b(run|test|start|install|npm|expo)\b/i.test(text);
+    const wantsAgent = /\b(research|explore|investigate|agent|subagent|audit)\b/i.test(text);
+
+    // 1) Stream some assistant reasoning text.
+    await this._streamText(
+      wantsScreen
+        ? `I'll build that for you. Let me create a new screen component and wire it in.\n\n`
+        : `Got it. Let me take a look and respond.\n\n`
+    );
+
+    if (this._interrupted) return this._finish(true);
+
+    if (wantsAgent) {
+      await this._simulateSubagent(text);
+    } else if (wantsScreen) {
+      await this._simulateTodos();
+      await this._simulateFileWrite(text);
+    } else {
+      // A read tool call to feel like a real agent inspecting the project.
+      await this._simulateFileRead();
+    }
+
+    if (this._interrupted) return this._finish(true);
+
+    if (wantsRun) {
+      await this._simulateBash('echo "Metro can be started from the Test button"');
+    }
+
+    await this._streamText(
+      wantsScreen
+        ? `\nDone. The screen is written — tap **Test** to see it live-reload on the phone.`
+        : `\nLet me know what you'd like to build.`
+    );
+
+    const inTok = 1200 + this._turn * 40;
+    const outTok = 320 + this._turn * 25;
+    this.emitEvent(EventType.USAGE, {
+      inTok,
+      outTok,
+      cacheReadTok: 800,
+      cost: null, // null = covered by flat subscription
+    });
+    this.emitEvent(EventType.CONTEXT, {
+      usedTokens: 3200 + this._turn * 600,
+      windowTokens: 200000,
+      model: this.model,
+    });
+
+    this._finish(false);
+  }
+
+  /** Simulate the agent's TodoWrite tool so the UI's live checklist demos. */
+  async _simulateTodos() {
+    const id = `tool_${this._stableId()}`;
+    const todos = [
+      { content: 'Create the screen component', status: 'in_progress', activeForm: 'Creating the screen component' },
+      { content: 'Wire it into navigation', status: 'pending', activeForm: 'Wiring navigation' },
+      { content: 'Verify it renders', status: 'pending', activeForm: 'Verifying' },
+    ];
+    this.emitEvent(EventType.TOOL_CALL, { id, name: 'TodoWrite', kind: 'tool', input: { todos } });
+    this.emitEvent(EventType.TOOL_RESULT, { id, name: 'TodoWrite', status: 'ok', output: 'Todos updated' });
+    await delay(80);
+  }
+
+  /** Simulate a subagent (Agent/Task) with nested, indented activity. */
+  async _simulateSubagent(text) {
+    const taskId = `tool_${this._stableId()}`;
+    this.emitEvent(EventType.TOOL_CALL, {
+      id: taskId,
+      name: 'Agent',
+      kind: 'subagent',
+      input: { subagent_type: 'Explore', description: text.slice(0, 60) },
+    });
+    this.emitStatus(StatusState.RUNNING, 'Agent: Explore');
+    await delay(120);
+    // Nested sub-events tagged with the parent so the UI indents them.
+    this.emitEvent(EventType.ASSISTANT_TEXT, {
+      delta: 'Searching the project for relevant files…',
+      parentToolUseId: taskId,
+    });
+    const subRead = `tool_${this._stableId()}`;
+    this.emitEvent(EventType.TOOL_CALL, {
+      id: subRead,
+      name: 'Grep',
+      kind: 'tool',
+      input: { pattern: 'export default' },
+      parentToolUseId: taskId,
+    });
+    await delay(120);
+    this.emitEvent(EventType.TOOL_RESULT, {
+      id: subRead,
+      name: 'Grep',
+      status: 'ok',
+      output: 'app/index.tsx:1\napp/Counter.tsx:4',
+      parentToolUseId: taskId,
+    });
+    await delay(120);
+    this.emitEvent(EventType.TOOL_RESULT, {
+      id: taskId,
+      name: 'Agent',
+      status: 'ok',
+      output: 'Found 2 screens. Summary: the app exports index and Counter screens.',
+    });
+  }
+
+  _finish(interrupted) {
+    this.emitEvent(EventType.RESULT, {
+      subtype: interrupted ? 'interrupted' : 'success',
+      isError: false,
+    });
+    this.emitStatus(StatusState.IDLE);
+  }
+
+  async _streamText(full) {
+    // Token-ish streaming: split on words, keep punctuation attached.
+    const parts = full.match(/\S+\s*|\s+/g) || [full];
+    for (const p of parts) {
+      if (this._interrupted) return;
+      this.emitText(p);
+      await delay(18);
+    }
+  }
+
+  async _simulateFileRead() {
+    const id = `tool_${this._stableId()}`;
+    const target = 'app/(tabs)/index.tsx';
+    this.emitEvent(EventType.TOOL_CALL, {
+      id,
+      name: 'Read',
+      input: { file_path: target },
+    });
+    this.emitStatus(StatusState.RUNNING, `Reading ${target}`);
+    await delay(180);
+    let snippet = 'export default function HomeScreen() { /* ... */ }';
+    try {
+      const full = path.join(this.cwd, target);
+      snippet = (await fs.readFile(full, 'utf8')).split('\n').slice(0, 20).join('\n');
+    } catch {
+      /* file may not exist in a fresh dir; snippet stays */
+    }
+    this.emitEvent(EventType.TOOL_RESULT, { id, status: 'ok', output: snippet });
+  }
+
+  async _simulateBash(command) {
+    const id = `tool_${this._stableId()}`;
+    this.emitEvent(EventType.TOOL_CALL, { id, name: 'Bash', input: { command } });
+    this.emitStatus(StatusState.RUNNING, command);
+    await delay(150);
+    this.emitEvent(EventType.TOOL_RESULT, {
+      id,
+      status: 'ok',
+      output: 'Metro can be started from the Test button',
+    });
+  }
+
+  async _simulateFileWrite(userText) {
+    const id = `tool_${this._stableId()}`;
+    const screenName = deriveScreenName(userText);
+    const rel = path.join('app', `${screenName}.tsx`);
+    const abs = path.join(this.cwd, rel);
+
+    let before = '';
+    try {
+      before = await fs.readFile(abs, 'utf8');
+    } catch {
+      before = '';
+    }
+    const after = renderScreen(screenName, userText);
+
+    // Surface as a gated tool call requiring approval (real approval flow).
+    this.emitEvent(EventType.TOOL_CALL, {
+      id,
+      name: before ? 'Edit' : 'Write',
+      input: { file_path: rel, before, after },
+    });
+    const decision = await this._requestPermission(
+      'write_file',
+      `${before ? 'Edit' : 'Create'} ${rel}`,
+      { toolName: before ? 'Edit' : 'Write', input: { file_path: rel } }
+    );
+    if (decision === 'deny') {
+      this.emitEvent(EventType.TOOL_RESULT, { id, status: 'error', output: 'Denied by user' });
+      return;
+    }
+
+    this.emitStatus(StatusState.RUNNING, `Writing ${rel}`);
+    await fs.mkdir(path.dirname(abs), { recursive: true });
+    await fs.writeFile(abs, after, 'utf8');
+    await delay(120);
+    this.emitEvent(EventType.TOOL_RESULT, {
+      id,
+      status: 'ok',
+      output: `Wrote ${after.split('\n').length} lines to ${rel}`,
+    });
+  }
+
+  _requestPermission(action, detail, extra = {}) {
+    const id = `perm_${this._stableId()}`;
+    // Register the resolver BEFORE emitting: emit() is synchronous, so a
+    // synchronous auto-approving listener could otherwise call
+    // respondPermission(id) before the pending entry exists and hang forever.
+    return new Promise((resolve) => {
+      this._pendingPermissions.set(id, { resolve });
+      this.emitEvent(EventType.PERMISSION_REQUEST, { id, action, detail, ...extra });
+      this.emitStatus(StatusState.WAITING, detail);
+    });
+  }
+}
+
+function deriveScreenName(text) {
+  const m = text.match(/\b(\w+)\s+screen\b/i);
+  if (m) return capitalize(m[1]);
+  const verb = text.match(/\b(?:build|make|create|add)\s+(?:a|an|the)?\s*(\w+)/i);
+  if (verb) return capitalize(verb[1]);
+  return 'Generated';
+}
+
+function capitalize(s) {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function renderScreen(name, prompt) {
+  const safePrompt = (prompt || '').replace(/`/g, "'").slice(0, 120);
+  return `import { StyleSheet, Text, View, Pressable } from 'react-native';
+import { useState } from 'react';
+
+// Generated by the on-device agent for: ${safePrompt}
+export default function ${name}Screen() {
+  const [count, setCount] = useState(0);
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>${name}</Text>
+      <Pressable style={styles.button} onPress={() => setCount((c) => c + 1)}>
+        <Text style={styles.buttonText}>Tapped {count} times</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 16 },
+  title: { fontSize: 28, fontWeight: '700' },
+  button: { backgroundColor: '#4f46e5', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 10 },
+  buttonText: { color: 'white', fontSize: 16, fontWeight: '600' },
+});
+`;
+}
+
+function delay(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}

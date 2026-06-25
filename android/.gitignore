@@ -1,0 +1,12 @@
+.gradle/
+build/
+/app/build/
+local.properties
+*.iml
+.idea/
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
+# Bundled bootstrap payload is large & built separately — not committed.
+/app/src/main/assets/bootstrap-*.tar.*

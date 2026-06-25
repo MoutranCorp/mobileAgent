@@ -1,0 +1,21 @@
+{
+  "name": "ondevice-agent-broker",
+  "version": "0.1.0",
+  "description": "On-device Claude Code agent broker: drives a pluggable agent harness over a localhost WebSocket using a canonical event protocol.",
+  "type": "module",
+  "bin": {
+    "agent-broker": "src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node src/index.js --engine mock",
+    "test": "node --test test/"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "license": "GPL-3.0-or-later"
+}

@@ -1,0 +1,293 @@
+package com.ondevice.agent.ui
+
+import android.webkit.WebView
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.ondevice.agent.service.RuntimeController
+import com.ondevice.agent.service.RuntimeState
+
+/** Callbacks the host Activity wires into the screen. */
+interface MainActions {
+    fun startService()
+    fun stopService()
+    fun isBatteryExempt(): Boolean
+    fun requestBatteryExempt()
+    fun brokerUrl(): String
+    fun setBrokerUrl(url: String)
+    fun defaultProfile(): String
+    fun setDefaultProfile(p: String)
+    fun secretNames(): Set<String>
+    fun setSecret(name: String, value: String)
+    fun removeSecret(name: String)
+    // WebView bridge (window.AndroidAgent) — capabilities a WebView lacks.
+    fun pickImage(onResult: (String?, String?) -> Unit)
+    fun saveFile(name: String, content: String)
+    fun notifyUser(title: String, body: String)
+    fun startVoice(onResult: (String?) -> Unit)
+    fun openExternal(url: String)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun MainScreen(actions: MainActions) {
+    val state by RuntimeController.state.collectAsState()
+    val detail by RuntimeController.detail.collectAsState()
+    var tab by remember { mutableIntStateOf(0) }
+
+    Column(Modifier.fillMaxSize().background(Bg)) {
+        // Top bar
+        Row(
+            Modifier.fillMaxWidth().background(BgElev).statusBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("On-Device Agent", color = TextMain, fontSize = 17.sp)
+            Spacer(Modifier.weight(1f))
+            StatusPill(state)
+        }
+
+        TabRow(
+            selectedTabIndex = tab,
+            containerColor = BgElev,
+            contentColor = Accent,
+        ) {
+            Tab(selected = tab == 0, onClick = { tab = 0 },
+                text = { Text("Agent", color = if (tab == 0) Accent else TextDim) })
+            Tab(selected = tab == 1, onClick = { tab = 1 },
+                text = { Text("Runtime", color = if (tab == 1) Accent else TextDim) })
+        }
+
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            when (tab) {
+                0 -> AgentTab(state, detail, actions)
+                else -> RuntimeTab(state, detail, actions)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AgentTab(state: RuntimeState, detail: String, actions: MainActions) {
+    var forceWeb by remember { mutableStateOf(false) }
+    var webView by remember { mutableStateOf<WebView?>(null) }
+    var canGoBack by remember { mutableStateOf(false) }
+
+    if (state == RuntimeState.RUNNING || forceWeb) {
+        BackHandler(enabled = canGoBack) { webView?.goBack() }
+        AgentWebView(
+            url = actions.brokerUrl(),
+            host = actions,
+            modifier = Modifier.fillMaxSize(),
+            onCreated = { webView = it },
+            onCanGoBackChange = { canGoBack = it },
+        )
+    } else {
+        Column(
+            Modifier.fillMaxSize().padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text("Runtime: ${state.name}", color = TextMain, fontSize = 20.sp)
+            Spacer(Modifier.height(8.dp))
+            Text(detail.ifEmpty { "The agent runtime isn't running yet." },
+                color = TextDim, fontSize = 14.sp)
+            Spacer(Modifier.height(20.dp))
+            FilledButton("Start runtime") { actions.startService() }
+            Spacer(Modifier.height(10.dp))
+            OutlineButton("Load agent UI anyway") { forceWeb = true }
+            if (state == RuntimeState.BOOTSTRAP_MISSING) {
+                Spacer(Modifier.height(18.dp))
+                Text(
+                    "No on-device bootstrap yet. Provision it (provisioning/README) " +
+                        "or run the broker on your computer and use `adb reverse tcp:8765 tcp:8765`, " +
+                        "then tap “Load agent UI anyway”.",
+                    color = TextDim, fontSize = 12.sp,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RuntimeTab(state: RuntimeState, detail: String, actions: MainActions) {
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+    ) {
+        Section("Status") {
+            Text("State: ${state.name}", color = TextMain)
+            if (detail.isNotEmpty()) Text(detail, color = TextDim, fontSize = 13.sp)
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledButton("Start") { actions.startService() }
+                OutlineButton("Stop") { actions.stopService() }
+            }
+        }
+
+        var exempt by remember { mutableStateOf(actions.isBatteryExempt()) }
+        Section("Battery (keep alive while testing)") {
+            Text(if (exempt) "Exempt from battery optimization ✓" else "NOT exempt — Doze may kill Metro",
+                color = if (exempt) Green else Amber, fontSize = 13.sp)
+            Spacer(Modifier.height(8.dp))
+            OutlineButton("Request exemption") {
+                actions.requestBatteryExempt(); exempt = actions.isBatteryExempt()
+            }
+        }
+
+        var urlText by remember { mutableStateOf(actions.brokerUrl()) }
+        Section("Broker URL") {
+            DarkField(urlText, { urlText = it }, "http://127.0.0.1:8765/")
+            Spacer(Modifier.height(8.dp))
+            FilledButton("Save") { actions.setBrokerUrl(urlText.trim()) }
+        }
+
+        Section("Default engine profile") {
+            val profiles = listOf("claude-max", "glm-zai", "opencode", "mock")
+            var sel by remember { mutableStateOf(actions.defaultProfile()) }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                profiles.forEach { p ->
+                    Chip(p, p == sel) { sel = p; actions.setDefaultProfile(p) }
+                }
+            }
+        }
+
+        Section("Provider secrets (Keystore-encrypted)") {
+            var names by remember { mutableStateOf(actions.secretNames().toList()) }
+            names.forEach { n ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(n, color = TextMain, modifier = Modifier.weight(1f))
+                    TextButton(onClick = {
+                        actions.removeSecret(n); names = actions.secretNames().toList()
+                    }) { Text("Remove", color = Red) }
+                }
+            }
+            var k by remember { mutableStateOf("") }
+            var v by remember { mutableStateOf("") }
+            DarkField(k, { k = it }, "SECRET_NAME (e.g. ZAI_AUTH_TOKEN)")
+            Spacer(Modifier.height(6.dp))
+            DarkField(v, { v = it }, "value", secret = true)
+            Spacer(Modifier.height(6.dp))
+            FilledButton("Add secret") {
+                if (k.isNotBlank() && v.isNotBlank()) {
+                    actions.setSecret(k.trim(), v.trim()); k = ""; v = ""
+                    names = actions.secretNames().toList()
+                }
+            }
+        }
+
+        Section("Runtime logs") {
+            val logs by RuntimeController.logs.collectAsState()
+            val listState = rememberLazyListState()
+            LaunchedEffect(logs.size) {
+                if (logs.isNotEmpty()) listState.animateScrollToItem(logs.size - 1)
+            }
+            Surface(color = Color(0xFF0A0C10), shape = RoundedCornerShape(8.dp)) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxWidth().height(220.dp).padding(8.dp),
+                ) {
+                    items(logs) { line ->
+                        Text(line, color = TextDim, fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            OutlineButton("Clear logs") { RuntimeController.clearLogs() }
+        }
+
+            Spacer(Modifier.height(40.dp))
+    }
+}
+
+// ---- small reusable bits ----
+
+@Composable
+private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
+        Text(title.uppercase(), color = TextDim, fontSize = 11.sp)
+        Spacer(Modifier.height(6.dp))
+        Surface(color = BgElev, shape = RoundedCornerShape(12.dp)) {
+            Column(Modifier.fillMaxWidth().padding(14.dp), content = content)
+        }
+    }
+}
+
+@Composable
+private fun StatusPill(state: RuntimeState) {
+    val (c, label) = when (state) {
+        RuntimeState.RUNNING -> Green to "running"
+        RuntimeState.STARTING -> Accent to "starting"
+        RuntimeState.BOOTSTRAP_MISSING -> Amber to "setup"
+        RuntimeState.ERROR -> Red to "error"
+        RuntimeState.STOPPED -> TextDim to "stopped"
+    }
+    Surface(color = Color.Transparent, shape = RoundedCornerShape(999.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, c)) {
+        Text(label, color = c, fontSize = 12.sp,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp))
+    }
+}
+
+@Composable
+private fun FilledButton(text: String, onClick: () -> Unit) {
+    Button(onClick = onClick,
+        colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Color.White)) {
+        Text(text)
+    }
+}
+
+@Composable
+private fun OutlineButton(text: String, onClick: () -> Unit) {
+    OutlinedButton(onClick = onClick,
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextMain)) {
+        Text(text)
+    }
+}
+
+@Composable
+private fun Chip(text: String, selected: Boolean, onClick: () -> Unit) {
+    Surface(
+        color = if (selected) Accent else BgElev2,
+        shape = RoundedCornerShape(999.dp),
+        modifier = Modifier.clickable { onClick() },
+    ) {
+        Text(text, color = if (selected) Color.White else TextDim, fontSize = 12.sp,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+    }
+}
+
+@Composable
+private fun DarkField(value: String, onChange: (String) -> Unit, hint: String, secret: Boolean = false) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onChange,
+        placeholder = { Text(hint, color = TextDim, fontSize = 13.sp) },
+        singleLine = true,
+        visualTransformation = if (secret)
+            androidx.compose.ui.text.input.PasswordVisualTransformation()
+        else androidx.compose.ui.text.input.VisualTransformation.None,
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedTextColor = TextMain, unfocusedTextColor = TextMain,
+            focusedBorderColor = Accent, unfocusedBorderColor = Border,
+            focusedContainerColor = BgElev2, unfocusedContainerColor = BgElev2,
+        ),
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
