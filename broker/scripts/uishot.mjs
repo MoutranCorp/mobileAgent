@@ -69,6 +69,16 @@ await page.evaluate(() => { const t = document.getElementById('transcript'); if 
 await sleep(200);
 await shot('03c-markdown-mid');
 
+// bubble action menu (long-press equiv via contextmenu)
+try {
+  await page.locator('.msg.user').last().dispatchEvent('contextmenu');
+  await sleep(400); await shot('07b-bubble-menu-user');
+  await page.keyboard.press('Escape');
+  await page.locator('.msg.assistant .bubble').last().dispatchEvent('contextmenu');
+  await sleep(400); await shot('07c-bubble-menu-assistant');
+  await page.keyboard.press('Escape');
+} catch (e) { console.log('bubble menu err', e.message); }
+
 try { await page.click('#menuBtn'); await sleep(700); await shot('04-sheet');
   const skills = page.locator('.mgr-tab', { hasText: 'Skills' });
   if (await skills.count()) { await skills.first().click(); await sleep(500); await shot('05-sheet-skills'); }

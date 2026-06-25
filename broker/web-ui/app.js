@@ -70,6 +70,65 @@
     }
   }
   window.Agent.copy = copyToClipboard;
+
+  // ---- bubble action menu (long-press / right-click) -----------------------
+
+  function textOfBubble(msgEl) { const b = msgEl.querySelector('.bubble'); return b ? b.textContent : ''; }
+  function rawOfBubble(msgEl, isUser) {
+    const b = msgEl.querySelector('.bubble');
+    if (isUser) return (msgEl.dataset.revertText != null ? msgEl.dataset.revertText : textOfBubble(msgEl));
+    return (b && b.dataset.md) ? b.dataset.md : textOfBubble(msgEl); // assistant: raw markdown
+  }
+  function openBubbleMenu(msgEl, isUser) {
+    closeBubbleMenu();
+    const scrim = el('div', 'sheet-scrim');
+    const sheet = el('div', 'action-sheet');
+    const group = el('div', 'action-group');
+    const copyBtn = el('button', 'action-item', 'Copy');
+    copyBtn.onclick = () => { copyToClipboard(rawOfBubble(msgEl, isUser)); closeBubbleMenu(); };
+    group.appendChild(copyBtn);
+    if (isUser && msgEl.dataset.turnId) {
+      const rev = el('button', 'action-item danger', 'Revert to here');
+      rev.onclick = () => { closeBubbleMenu(); revertFromBubble(msgEl); };
+      group.appendChild(rev);
+    }
+    sheet.appendChild(group);
+    const cancel = el('button', 'action-cancel', 'Cancel');
+    cancel.onclick = closeBubbleMenu;
+    sheet.appendChild(cancel);
+    scrim.appendChild(sheet);
+    scrim.addEventListener('click', (e) => { if (e.target === scrim) closeBubbleMenu(); });
+    document.body.appendChild(scrim);
+    state._bubbleMenu = scrim;
+  }
+  function closeBubbleMenu() { if (state._bubbleMenu) { state._bubbleMenu.remove(); state._bubbleMenu = null; } }
+
+  function buildRevertWarning(restoresFiles) {
+    const files = restoresFiles
+      ? 'Your files will be restored to the snapshot from right before this message — edits the agent made after it (including new files it created) will be undone.'
+      : 'This workspace has no checkpoints, so your files will NOT change — only the conversation is rewound.';
+    return 'Revert to before this message?\n\n' + files +
+      '\n\nThis message and everything after it are removed, and the agent starts a fresh session (it won’t remember this turn or anything after). The message text goes back in the box. This can’t be undone.';
+  }
+  function revertFromBubble(msgEl) {
+    const turnId = msgEl.dataset.turnId;
+    if (!turnId) { toast('This message can’t be reverted', 'error'); return; }
+    if (state.activity !== 'idle') { toast('Let the agent finish, then revert', 'error'); return; }
+    const checkpointId = msgEl.dataset.checkpointId || null;
+    const text = msgEl.dataset.revertText || '';
+    if (!confirm(buildRevertWarning(!!checkpointId))) return;
+    send({ type: 'revert', turnId, checkpointId, text });
+  }
+  function onReverted(ev) {
+    if (!ev.ok) { toast(ev.message || 'Revert failed', 'error'); return; }
+    setActivity('idle');
+    const input = $('input');
+    if (ev.text) { input.value = ev.text; autoGrow(); input.focus(); }
+    const parts = [];
+    if (ev.removed) parts.push(`removed ${ev.removed} message${ev.removed === 1 ? '' : 's'}`);
+    if (ev.restoredFiles != null) parts.push('files restored');
+    toast('Reverted' + (parts.length ? ' · ' + parts.join(' · ') : ''), 'info');
+  }
   // Callbacks the native side invokes (via evaluateJavascript):
   window.onPickedImage = (base64, mime) => {
     if (!base64) return;
@@ -141,7 +200,8 @@
       case 'status': setStatus(ev.state, ev.detail); break;
       case 'assistant_text': appendAssistant(ev.delta, ev.parentToolUseId); break;
       case 'assistant_thinking': appendThinking(ev.delta, ev.parentToolUseId); break;
-      case 'user_echo': onUserEcho(ev.text); break;
+      case 'user_echo': onUserEcho(ev); break;
+      case 'reverted': onReverted(ev); break;
       case 'tool_call': onToolCall(ev); break;
       case 'tool_result': onToolResult(ev); break;
       case 'permission_request': onPermissionRequest(ev); break;
@@ -378,21 +438,39 @@
     document.querySelectorAll('.tool-card .tool-body').forEach((b) => { b.classList.toggle('collapsed', collapsed); });
   }
 
-  function onUserEcho(text) {
+  function onUserEcho(ev) {
+    const text = typeof ev === 'string' ? ev : (ev && ev.text);
+    const meta = ev && typeof ev === 'object' ? ev : {};
     if (text == null || text === '') return;
-    const norm = text.trim();
+    const norm = String(text).trim();
     const i = state.pendingSent.indexOf(norm);
-    if (i >= 0) { state.pendingSent.splice(i, 1); return; } // our optimistic copy
-    addUserMessage(text);
+    if (i >= 0) { // our optimistic copy — keep it, just stamp the revert ids onto it
+      state.pendingSent.splice(i, 1);
+      stampUserBubble(lastUserBubble(), meta);
+      return;
+    }
+    addUserMessage(text, meta);
   }
 
-  function addUserMessage(text) {
+  function lastUserBubble() {
+    const msgs = $('transcript').querySelectorAll('.msg.user');
+    return msgs.length ? msgs[msgs.length - 1] : null;
+  }
+  function stampUserBubble(msgEl, meta) {
+    if (!msgEl || !meta) return;
+    if (meta.turnId) msgEl.dataset.turnId = meta.turnId;
+    msgEl.dataset.checkpointId = meta.checkpointId || '';
+    if (meta.text != null) msgEl.dataset.revertText = meta.text;
+  }
+
+  function addUserMessage(text, meta) {
     hideEmpty();
     finalizeAssistant();
     const msg = el('div', 'msg user');
     msg.appendChild(el('div', 'role', 'You'));
     msg.appendChild(el('div', 'bubble', text));
     $('transcript').appendChild(msg);
+    stampUserBubble(msg, meta || { text });
     scrollDown();
   }
 
@@ -1362,6 +1440,32 @@
       const prev = btn.textContent; btn.textContent = 'Copied'; btn.classList.add('copied');
       setTimeout(() => { btn.textContent = prev; btn.classList.remove('copied'); }, 1200);
     });
+
+    // Long-press (touch) / right-click (desktop) a message bubble -> action menu.
+    const bubbleAt = (e) => {
+      const m = e.target.closest && e.target.closest('.msg.user, .msg.assistant');
+      return m && m.id !== 'activityRow' && m.querySelector('.bubble') ? m : null;
+    };
+    let _lp = null, _lpStart = null;
+    const tr = $('transcript');
+    tr.addEventListener('touchstart', (e) => {
+      const m = bubbleAt(e); if (!m) return;
+      _lpStart = e.touches[0];
+      _lp = setTimeout(() => { _lp = null; if (navigator.vibrate) try { navigator.vibrate(8); } catch {} openBubbleMenu(m, m.classList.contains('user')); }, 500);
+    }, { passive: true });
+    tr.addEventListener('touchmove', (e) => {
+      if (!_lp || !_lpStart) return;
+      const t = e.touches[0];
+      if (Math.abs(t.clientX - _lpStart.clientX) > 10 || Math.abs(t.clientY - _lpStart.clientY) > 10) { clearTimeout(_lp); _lp = null; }
+    }, { passive: true });
+    const cancelLp = () => { if (_lp) { clearTimeout(_lp); _lp = null; } };
+    tr.addEventListener('touchend', cancelLp);
+    tr.addEventListener('touchcancel', cancelLp);
+    tr.addEventListener('contextmenu', (e) => {
+      const m = bubbleAt(e); if (!m) return;
+      e.preventDefault(); openBubbleMenu(m, m.classList.contains('user'));
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeBubbleMenu(); });
 
     $('undoBtn').onclick = () => {
       if (!state.checkpoints.length) return;

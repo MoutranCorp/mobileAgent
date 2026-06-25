@@ -71,6 +71,7 @@ export const EventType = Object.freeze({
   TOAST: 'toast', // { message, level? }  transient user-facing notice
   APP_VERSION: 'app_version', // { sha, subject, when, branch, dirty }  current app build
   APP_UPDATE: 'app_update', // { state?: 'updating', ok, upToDate?, fromSha, toSha, needsReload, needsRestart, ... }
+  REVERTED: 'reverted', // { ok, checkpointId, removed, restoredFiles, text, message? } result of a revert
   ack: 'ack', // { ofType, ok, message? }  acknowledges a received command
 });
 
@@ -147,6 +148,7 @@ export const CommandType = Object.freeze({
   // Self-update (git pull the app's own repo)
   APP_VERSION: 'app_version', // {} — request current build info
   APP_UPDATE: 'app_update', // {} — git pull --ff-only the app repo
+  REVERT: 'revert', // { turnId, checkpointId?, text } — restore files + truncate convo to before a user message
   // Meta
   PING: 'ping', // {}
   HELLO: 'hello', // {} — client requests a full state snapshot

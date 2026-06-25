@@ -667,6 +667,24 @@ mark.find-hit.current { background: var(--orange); color: #000; }
   padding: 8px 11px; font-family: var(--mono); font-size: 12.5px; }
 .preview-frame { flex: 1; border: none; background: #fff; width: 100%; }
 
+/* ---- bubble action sheet (long-press / right-click) ---- */
+.sheet-scrim { position: fixed; inset: 0; z-index: 65; background: var(--scrim);
+  -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+  display: flex; flex-direction: column; justify-content: flex-end; padding: 12px;
+  padding-bottom: max(12px, var(--safe-bot)); animation: fade .18s var(--ease); }
+.action-sheet { width: min(440px, 100%); margin: 0 auto; display: flex; flex-direction: column; gap: 8px;
+  animation: sheet-up .34s var(--spring); }
+.action-group { background: var(--mat-thick); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+  border: .5px solid var(--separator); border-radius: var(--r-lg); overflow: hidden; }
+.action-item { width: 100%; background: transparent; border: none; color: var(--accent);
+  font-size: 17px; font-weight: 560; padding: 16px; cursor: pointer; border-bottom: .5px solid var(--separator-2); }
+.action-item:last-child { border-bottom: none; }
+.action-item:active { background: var(--fill-3); }
+.action-item.danger { color: var(--red); font-weight: 620; }
+.action-cancel { width: min(440px, 100%); margin: 0 auto; background: var(--mat-thick);
+  -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: .5px solid var(--separator);
+  border-radius: var(--r-lg); color: var(--accent); font-size: 17px; font-weight: 680; padding: 16px; cursor: pointer; }
+
 .hidden { display: none !important; }
 
 @media (prefers-reduced-motion: reduce) {

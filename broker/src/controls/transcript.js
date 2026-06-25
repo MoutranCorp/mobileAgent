@@ -117,6 +117,24 @@ export class TranscriptStore {
     return this._events.slice();
   }
 
+  /**
+   * Drop the user_echo with this turnId and everything after it (a revert).
+   * Rewrites the .jsonl so a restart/replay doesn't resurrect dropped turns.
+   * Returns the number of records removed, or null if the turn isn't in the buffer.
+   */
+  truncateBefore(turnId) {
+    this._flush();
+    const idx = this._events.findIndex((e) => e.type === 'user_echo' && e.turnId === turnId);
+    if (idx === -1) return null;
+    const removed = this._events.length - idx;
+    this._events = this._events.slice(0, idx);
+    const f = this._file();
+    if (f) {
+      try { fs.writeFileSync(f, this._events.map((e) => JSON.stringify(e)).join('\n') + (this._events.length ? '\n' : '')); } catch { /* ignore */ }
+    }
+    return removed;
+  }
+
   /** Search the recorded conversation for text (case-insensitive). */
   search(query, limit = 60) {
     if (!query) return [];

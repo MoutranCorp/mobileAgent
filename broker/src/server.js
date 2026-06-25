@@ -124,6 +124,13 @@ export class BrokerServer {
   /** Central outbound hook: record transcript + detect native-dep change, then broadcast. */
   _emitEvent(ev) {
     try {
+      // Stamp the turn/checkpoint id onto this turn's user_echo (FIFO, one in flight)
+      // so its bubble can be reverted later. Must happen before transcript.record.
+      if (ev.type === EventType.USER_ECHO && this._pendingTurn) {
+        ev.turnId = this._pendingTurn.turnId;
+        ev.checkpointId = this._pendingTurn.checkpointId;
+        this._pendingTurn = null;
+      }
       this.transcript.record(ev);
       // Learn alias -> versioned id for FREE from the live engine's init, so the
       // model picker can show "Opus 4.8" without an extra probe spawn.
@@ -294,13 +301,19 @@ export class BrokerServer {
         this.autoverify.resetChain(); // a real user message starts a fresh fix-chain
         // Auto-checkpoint the project before the turn so it can be rewound.
         const proj = this.projects.getActive();
+        let checkpointId = null;
         if (proj && this.checkpoints.isRepo(proj.dir)) {
           const cp = this.checkpoints.snapshot(proj.id, proj.dir, (cmd.text || 'turn').slice(0, 60));
           if (cp) {
             this._turnCheckpoint = cp.id; // baseline for "what changed this turn"
+            checkpointId = cp.id;
             this.broadcast(event(EventType.CHECKPOINTS, this.checkpoints.list(proj.id, proj.dir)));
           }
         }
+        // Tag the upcoming user_echo so its bubble can be reverted to here later.
+        // Set even when not a git repo (checkpointId null -> conversation-only revert).
+        this._turnSeq = (this._turnSeq || 0) + 1;
+        this._pendingTurn = { turnId: `t${this._turnSeq}`, checkpointId, text: cmd.text || '' };
         return this.session.sendUserMessage(cmd.text || '', cmd.images);
       }
       case CommandType.SLASH_COMMAND:
@@ -414,6 +427,36 @@ export class BrokerServer {
         else this.broadcast(event(EventType.CHECKPOINT_RESTORED, { id: res.id, removed: res.removed }));
         this.broadcast(event(EventType.FILES, this.files.list('.')));
         return;
+      }
+      case CommandType.REVERT: {
+        const p = this.projects.getActive();
+        let restoredFiles = null;
+        // 1) Restore the codebase to the pre-turn snapshot. Abort BEFORE truncating
+        //    if the checkpoint is gone, so we never lose the convo with files untouched.
+        if (cmd.checkpointId) {
+          if (!p || !this.checkpoints.isRepo(p.dir)) {
+            return this.broadcast(event(EventType.REVERTED, { ok: false, message: 'This workspace has no checkpoints to restore.' }));
+          }
+          const res = this.checkpoints.restore(p.id, p.dir, cmd.checkpointId);
+          if (!res || res.error) {
+            return this.broadcast(event(EventType.REVERTED, { ok: false, message: res?.error || 'That checkpoint is no longer available — nothing was changed.' }));
+          }
+          restoredFiles = res.removed ?? null;
+        }
+        // 2) Truncate the conversation to before that message.
+        const removed = this.transcript.truncateBefore(cmd.turnId);
+        // 3) Fork a fresh engine session — Claude sessions are append-only, so this
+        //    is the honest way to make the agent forget the reverted turn onward.
+        await this.session.newSession();
+        // 4) Push the rebuilt state to the UI.
+        this.broadcast(event(EventType.TRANSCRIPT, { events: this.transcript.replay(), reset: true }));
+        if (p) {
+          this.broadcast(event(EventType.CHECKPOINTS, this.checkpoints.list(p.id, p.dir)));
+          this.broadcast(event(EventType.FILES, this.files.list('.')));
+        }
+        return this.broadcast(event(EventType.REVERTED, {
+          ok: true, checkpointId: cmd.checkpointId || null, removed: removed ?? 0, restoredFiles, text: cmd.text || '',
+        }));
       }
 
       // files
