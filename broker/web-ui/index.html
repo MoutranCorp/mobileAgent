@@ -16,56 +16,68 @@
   </head>
   <body>
     <div id="app">
-      <!-- Top bar -->
-      <header class="topbar">
-        <div class="topbar-left">
-          <button id="menuBtn" class="icon-btn" title="Skills, agents, memory, settings">☰</button>
-          <div class="selectors">
-            <label class="sel">
-              <span class="sel-label">Project</span>
-              <select id="projectSelect"></select>
-            </label>
-            <label class="sel">
-              <span class="sel-label">Engine</span>
-              <select id="engineSelect"></select>
-            </label>
-            <label class="sel">
-              <span class="sel-label">Model</span>
-              <select id="modelSelect"></select>
-            </label>
-            <label class="sel">
-              <span class="sel-label">Effort</span>
-              <select id="effortSelect" title="Reasoning effort">
-                <option value="low">low</option>
-                <option value="medium">medium</option>
-                <option value="high" selected>high</option>
-                <option value="xhigh">xhigh</option>
-                <option value="max">max</option>
-              </select>
-            </label>
-            <label class="sel">
-              <span class="sel-label">Permissions</span>
-              <select id="permModeSelect" title="Permission mode">
-                <option value="default">default (ask)</option>
-                <option value="acceptEdits">acceptEdits</option>
-                <option value="plan">plan (read-only)</option>
-                <option value="bypassPermissions">⚠ bypass all</option>
-              </select>
-            </label>
+      <!-- Navigation bar -->
+      <header class="navbar">
+        <div class="nav-left">
+          <button id="menuBtn" class="nav-glyph" title="Skills, agents, memory, settings" aria-label="Manage">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/>
+              <circle cx="9" cy="7" r="2.4" fill="var(--mat-bar)"/><circle cx="15" cy="12" r="2.4" fill="var(--mat-bar)"/><circle cx="8" cy="17" r="2.4" fill="var(--mat-bar)"/>
+            </svg>
+          </button>
+        </div>
+        <div class="nav-center">
+          <div class="nav-title">Agent</div>
+          <div class="nav-sub">
+            <span id="statusPill" class="status-pill idle">idle</span>
+            <span id="connDot" class="conn-dot" title="Broker connection"></span>
           </div>
         </div>
-        <div class="topbar-right">
-          <button id="paletteBtn" class="icon-btn" title="Command palette (Ctrl-K)">⌘</button>
-          <button id="findBtn" class="icon-btn" title="Find in conversation (Ctrl-F)">🔍</button>
+        <div class="nav-right">
           <div id="ctxMeter" class="ctx-meter hidden" title="Context window usage">
             <div class="ctx-track"><div id="ctxBar" class="ctx-bar"></div></div>
             <span id="ctxLabel" class="ctx-label"></span>
           </div>
           <span id="usage" class="usage" title="Token usage"></span>
-          <span id="statusPill" class="status-pill idle">idle</span>
-          <span id="connDot" class="conn-dot" title="Broker connection"></span>
+          <button id="findBtn" class="nav-glyph" title="Find in conversation (Ctrl-F)" aria-label="Find">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/>
+            </svg>
+          </button>
+          <button id="paletteBtn" class="nav-glyph" title="Command palette (Ctrl-K)" aria-label="Commands">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3.5" y="3.5" width="7" height="7" rx="2.2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2.2"/>
+              <rect x="3.5" y="13.5" width="7" height="7" rx="2.2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2.2"/>
+            </svg>
+          </button>
         </div>
       </header>
+
+      <!-- Context chips -->
+      <div class="context-bar">
+        <div class="selectors">
+          <label class="sel"><span class="sel-label">Folder</span><select id="projectSelect"></select></label>
+          <label class="sel"><span class="sel-label">Engine</span><select id="engineSelect"></select></label>
+          <label class="sel"><span class="sel-label">Model</span><select id="modelSelect"></select></label>
+          <label class="sel"><span class="sel-label">Effort</span>
+            <select id="effortSelect" title="Reasoning effort">
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high" selected>high</option>
+              <option value="xhigh">xhigh</option>
+              <option value="max">max</option>
+            </select>
+          </label>
+          <label class="sel"><span class="sel-label">Access</span>
+            <select id="permModeSelect" title="Permission mode">
+              <option value="default">ask</option>
+              <option value="acceptEdits">accept edits</option>
+              <option value="plan">plan</option>
+              <option value="bypassPermissions">⚠ bypass all</option>
+            </select>
+          </label>
+        </div>
+      </div>
 
       <!-- Find-in-conversation bar -->
       <div id="findBar" class="find-bar hidden">
@@ -82,9 +94,14 @@
       <!-- Conversation -->
       <main id="transcript" class="transcript">
         <div class="empty-state">
+          <div class="hero-glyph">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 2.5l1.9 4.9 4.9 1.9-4.9 1.9L12 16l-1.9-4.8L5.2 9.3l4.9-1.9L12 2.5z"/>
+              <path d="M18.5 14.5l.9 2.3 2.3.9-2.3.9-.9 2.3-.9-2.3-2.3-.9 2.3-.9.9-2.3z" opacity=".85"/>
+            </svg>
+          </div>
           <h1>On-Device Agent</h1>
-          <p>Ask the agent to build something. It reads, edits, runs — and you tap
-            <strong>Test</strong> to see your app live on this phone.</p>
+          <p>Ask it to build something. It reads, edits and runs your code — tap <strong>Test</strong> to see it live on this phone.</p>
           <div class="suggestions">
             <button class="suggestion">Build a counter screen with a + button</button>
             <button class="suggestion">Research how the navigation is set up</button>
@@ -99,17 +116,29 @@
         <div id="slashPalette" class="slash-palette hidden"></div>
         <div id="attachTray" class="attach-tray hidden"></div>
         <div class="composer-row">
-          <button id="attachBtn" class="icon-btn" title="Attach image / screenshot">📎</button>
-          <button id="voiceBtn" class="icon-btn" title="Voice input">🎤</button>
-          <textarea id="input" rows="1" placeholder="Message the agent…  (/ commands · @ files · 📎 image · Enter to send)"></textarea>
-          <button id="sendBtn" class="primary" title="Send">Send</button>
+          <button id="attachBtn" class="icon-btn" title="Attach image / screenshot" aria-label="Attach">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 11.5l-8.4 8.4a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.6 1.6 0 0 1-2.3-2.3l7.8-7.8"/>
+            </svg>
+          </button>
+          <button id="voiceBtn" class="icon-btn" title="Voice input" aria-label="Voice">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><line x1="12" y1="17.5" x2="12" y2="21"/>
+            </svg>
+          </button>
+          <textarea id="input" rows="1" placeholder="Message the agent…"></textarea>
+          <button id="sendBtn" title="Send" aria-label="Send">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="19" x2="12" y2="6"/><polyline points="6 12 12 6 18 12"/>
+            </svg>
+          </button>
           <input id="imageInput" type="file" accept="image/*" multiple style="display:none" />
         </div>
         <div class="composer-actions">
           <button id="interruptBtn" class="ghost" title="Interrupt the current turn">Stop</button>
           <button id="newBtn" class="ghost" title="New session">New</button>
           <button id="undoBtn" class="ghost hidden" title="Rewind the project to before the last turn">↶ Undo</button>
-          <button id="testBtn" class="accent" title="Start Metro & open in dev client">▶ Test</button>
+          <button id="testBtn" class="accent" title="Start Metro & open in dev client"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5.3v13.4c0 .9 1 1.4 1.7.9l10-6.7a1 1 0 0 0 0-1.7l-10-6.7c-.7-.5-1.7 0-1.7.9z"/></svg>Test</button>
           <button id="previewBtn" class="ghost" title="Preview the project (static/web) in an iframe">Preview</button>
           <button id="exportBtn" class="ghost" title="Export conversation to Markdown">Export</button>
           <span id="metroBadge" class="metro-badge hidden"></span>

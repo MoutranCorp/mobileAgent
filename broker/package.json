@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node src/index.js --engine mock",
-    "test": "node --test test/"
+    "test": "node --test test/",
+    "uishot": "node scripts/uishot.mjs"
   },
   "engines": {
     "node": ">=18"
@@ -17,5 +18,8 @@
   "dependencies": {
     "ws": "^8.18.0"
   },
-  "license": "GPL-3.0-or-later"
+  "license": "GPL-3.0-or-later",
+  "devDependencies": {
+    "playwright": "^1.61.1"
+  }
 }

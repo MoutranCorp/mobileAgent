@@ -576,8 +576,8 @@
     panel.appendChild(head);
     todos.forEach((t) => {
       const row = el('div', 'todo-item ' + (t.status || 'pending'));
-      const mark = t.status === 'completed' ? '☑' : t.status === 'in_progress' ? '▸' : '☐';
-      row.textContent = `${mark} ${t.status === 'in_progress' && t.activeForm ? t.activeForm : t.content}`;
+      // The status marker is drawn by CSS (::before circle/check/spinner).
+      row.textContent = t.status === 'in_progress' && t.activeForm ? t.activeForm : t.content;
       panel.appendChild(row);
     });
     panel.classList.remove('hidden');
@@ -977,9 +977,26 @@
     e.innerHTML = html;
     return e;
   }
+  const SUGGESTIONS = [
+    'Build a counter screen with a + button',
+    'Research how the navigation is set up',
+    'Create a to-do list with add and delete',
+  ];
   function buildEmptyState() {
     const d = el('div', 'empty-state');
-    d.innerHTML = `<h1>On-Device Agent</h1><p>Ask the agent to build something, then tap <strong>Test</strong> to see it live on this phone.</p>`;
+    d.innerHTML =
+      `<div class="hero-glyph"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">` +
+      `<path d="M12 2.5l1.9 4.9 4.9 1.9-4.9 1.9L12 16l-1.9-4.8L5.2 9.3l4.9-1.9L12 2.5z"/>` +
+      `<path d="M18.5 14.5l.9 2.3 2.3.9-2.3.9-.9 2.3-.9-2.3-2.3-.9 2.3-.9.9-2.3z" opacity=".85"/></svg></div>` +
+      `<h1>On-Device Agent</h1>` +
+      `<p>Ask it to build something. It reads, edits and runs your code — tap <strong>Test</strong> to see it live on this phone.</p>`;
+    const list = el('div', 'suggestions');
+    SUGGESTIONS.forEach((text) => {
+      const b = el('button', 'suggestion', text);
+      b.onclick = () => { $('input').value = text; autoGrow(); $('input').focus(); };
+      list.appendChild(b);
+    });
+    d.appendChild(list);
     return d;
   }
   function scrollDown() { const t = $('transcript'); t.scrollTop = t.scrollHeight; }
@@ -1034,6 +1051,7 @@
       chip.appendChild(x);
       tray.appendChild(chip);
     });
+    autoGrow(); // keep the send button state in sync with attachments
   }
   function clearAttachments() { state.attachments = []; renderAttachments(); }
 
@@ -1099,6 +1117,9 @@
     const ta = $('input');
     ta.style.height = 'auto';
     ta.style.height = Math.min(ta.scrollHeight, 160) + 'px';
+    // Light up the circular send button when there's something to send (iMessage).
+    const composer = document.querySelector('.composer');
+    if (composer) composer.classList.toggle('has-text', !!ta.value.trim() || state.attachments.length > 0);
   }
 
   // slash command palette

@@ -5,3 +5,4 @@ test-out.txt
 *.log
 .agent-broker/
 secrets.json
+.uishots/
