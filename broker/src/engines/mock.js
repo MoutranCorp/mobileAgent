@@ -95,6 +95,12 @@ export class MockEngine extends EngineAdapter {
       await this._streamText(`I can see the ${images.length === 1 ? 'image' : images.length + ' images'} you attached. `);
     }
 
+    // A rich-markdown sample so the UI's markdown rendering can be exercised.
+    if (/\b(markdown|format|render|explain)\b/i.test(text)) {
+      await this._streamText(MARKDOWN_SAMPLE);
+      return this._finish(false);
+    }
+
     const wantsScreen = /\b(screen|component|button|build|make|create|add)\b/i.test(text);
     const wantsRun = /\b(run|test|start|install|npm|expo)\b/i.test(text);
     const wantsAgent = /\b(research|explore|investigate|agent|subagent|audit)\b/i.test(text);
@@ -347,3 +353,34 @@ const styles = StyleSheet.create({
 function delay(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
+
+// A rich-markdown reply used to exercise the UI's markdown rendering.
+const MARKDOWN_SAMPLE = [
+  '## How rendering works',
+  '',
+  "Here's how **bold**, *italic*, ~~strikethrough~~ and `inline code` should look.",
+  '',
+  '### A few steps',
+  '1. First **item** with some `code`',
+  '2. Second item linking to [the docs](https://example.com)',
+  '3. Third item',
+  '',
+  '### Bullets',
+  '- Alpha',
+  '- Beta',
+  '- Gamma',
+  '',
+  '> A blockquote calling out something important.',
+  '',
+  '```js',
+  'function greet(name) {',
+  '  return `Hi, ${name}!`;',
+  '}',
+  '```',
+  '',
+  'And a final paragraph below a divider.',
+  '',
+  '---',
+  '',
+  'Done — that covers the common elements.',
+].join('\n');

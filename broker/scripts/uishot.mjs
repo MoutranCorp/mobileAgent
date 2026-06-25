@@ -47,6 +47,18 @@ await page.evaluate(() => { const t = document.getElementById('transcript'); if 
 await sleep(300);
 await shot('03-convo');
 
+// markdown rendering check (mock emits a rich-markdown reply for this prompt)
+await page.fill('#input', 'explain how markdown formatting renders');
+await page.dispatchEvent('#input', 'input');
+await page.click('#sendBtn');
+await sleep(2600);
+await page.evaluate(() => { const t = document.getElementById('transcript'); if (t) t.scrollTop = t.scrollHeight; });
+await sleep(300);
+await shot('03b-markdown');
+await page.evaluate(() => { const t = document.getElementById('transcript'); if (t) t.scrollTop = Math.max(0, t.scrollHeight - 1700); });
+await sleep(200);
+await shot('03c-markdown-mid');
+
 try { await page.click('#menuBtn'); await sleep(700); await shot('04-sheet');
   const skills = page.locator('.mgr-tab', { hasText: 'Skills' });
   if (await skills.count()) { await skills.first().click(); await sleep(500); await shot('05-sheet-skills'); }

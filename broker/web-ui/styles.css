@@ -252,6 +252,35 @@ svg { display: block; }
   border: .5px solid var(--separator-2); border-bottom-left-radius: 7px; box-shadow: var(--sh-1); }
 .bubble code { font-family: var(--mono); font-size: .9em; background: var(--fill-3); padding: 1px 5px; border-radius: 5px; }
 .cursor::after { content: "▍"; color: var(--accent); animation: blink 1s steps(2) infinite; }
+
+/* ---- rendered markdown (assistant bubbles + subagent narration) ---- */
+.bubble.md, .nested-text { white-space: normal; }
+.bubble.md > :first-child, .nested-text > :first-child { margin-top: 0; }
+.bubble.md > :last-child, .nested-text > :last-child { margin-bottom: 0; }
+.bubble.md p, .nested-text p { margin: 0 0 9px; }
+.bubble.md h1, .bubble.md h2, .bubble.md h3, .bubble.md h4, .bubble.md h5, .bubble.md h6 {
+  margin: 15px 0 8px; line-height: 1.25; font-weight: 680; letter-spacing: -0.015em; }
+.bubble.md h1 { font-size: 1.34em; }
+.bubble.md h2 { font-size: 1.2em; }
+.bubble.md h3 { font-size: 1.07em; }
+.bubble.md h4, .bubble.md h5, .bubble.md h6 { font-size: 1em; }
+.bubble.md ul, .bubble.md ol, .nested-text ul, .nested-text ol { margin: 6px 0 10px; padding-left: 1.4em; }
+.bubble.md li, .nested-text li { margin: 3px 0; }
+.bubble.md li > ul, .bubble.md li > ol { margin: 3px 0; }
+.bubble.md blockquote, .nested-text blockquote {
+  margin: 9px 0; padding: 2px 0 2px 13px; border-left: 3px solid var(--separator); color: var(--label-2); }
+.bubble.md pre, .nested-text pre {
+  margin: 9px 0; background: var(--grouped); border: .5px solid var(--separator); border-radius: 12px;
+  padding: 12px 13px; overflow-x: auto; }
+.bubble.md pre code, .nested-text pre code {
+  background: none; padding: 0; font-size: 12.5px; line-height: 1.5; color: var(--label); white-space: pre; }
+.bubble.md a, .nested-text a { color: var(--accent); text-decoration: none; }
+.bubble.md a:hover { text-decoration: underline; }
+.bubble.md hr { border: none; border-top: .5px solid var(--separator); margin: 13px 0; }
+.bubble.md strong { font-weight: 680; }
+.bubble.md del { opacity: .65; }
+.bubble.md table { border-collapse: collapse; margin: 8px 0; font-size: .94em; }
+.bubble.md th, .bubble.md td { border: .5px solid var(--separator); padding: 6px 10px; text-align: left; }
 @keyframes blink { 0%,50% { opacity: 1; } 51%,100% { opacity: 0; } }
 
 .thinking {

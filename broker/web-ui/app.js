@@ -222,22 +222,41 @@
       let line = host.querySelector('.nested-text:last-child');
       if (!line || line.dataset.done) {
         line = el('div', 'nested-text');
+        line._md = '';
         host.appendChild(line);
       }
-      line.textContent += delta;
-      scrollDown();
+      line._md += delta;
+      scheduleMd(line);
       return;
     }
     if (!state.activeAssistant) {
       const msg = el('div', 'msg assistant');
       msg.appendChild(el('div', 'role', 'Agent'));
-      const bubble = el('div', 'bubble cursor');
+      const bubble = el('div', 'bubble md cursor');
+      bubble._md = '';
       msg.appendChild(bubble);
       $('transcript').appendChild(msg);
       state.activeAssistant = bubble;
     }
-    state.activeAssistant.textContent += delta;
-    scrollDown();
+    state.activeAssistant._md += delta;
+    scheduleMd(state.activeAssistant);
+  }
+
+  // Render an element's accumulated Markdown to HTML. We keep the raw source on
+  // dataset.md so search/export can read the original syntax. Throttled to one
+  // render per animation frame so long streaming replies stay smooth.
+  function renderMd(b) {
+    b.dataset.md = b._md || '';
+    b.innerHTML = window.MD ? window.MD.render(b._md || '') : esc(b._md || '');
+  }
+  function scheduleMd(b) {
+    if (b._mdPending) return;
+    b._mdPending = requestAnimationFrame(() => { b._mdPending = 0; renderMd(b); scrollDown(); });
+  }
+  function flushMd(b) {
+    if (!b) return;
+    if (b._mdPending) { cancelAnimationFrame(b._mdPending); b._mdPending = 0; }
+    if (b._md != null) renderMd(b);
   }
 
   function appendThinking(delta, parentId) {
@@ -260,10 +279,10 @@
   }
 
   function finalizeAssistant() {
-    if (state.activeAssistant) state.activeAssistant.classList.remove('cursor');
+    if (state.activeAssistant) { flushMd(state.activeAssistant); state.activeAssistant.classList.remove('cursor'); }
     state.activeAssistant = null;
     state.activeThinking = null;
-    document.querySelectorAll('.nested-text:not([data-done])').forEach((n) => (n.dataset.done = '1'));
+    document.querySelectorAll('.nested-text:not([data-done])').forEach((n) => { flushMd(n); n.dataset.done = '1'; });
   }
 
   function onUserEcho(text) {
@@ -608,7 +627,9 @@
     for (const node of $('transcript').children) {
       if (node.classList.contains('msg')) {
         const role = node.classList.contains('user') ? 'You' : 'Agent';
-        const text = node.querySelector('.bubble')?.textContent || '';
+        const bubble = node.querySelector('.bubble');
+        // Prefer the original Markdown source (assistant bubbles render to HTML).
+        const text = (bubble && (bubble.dataset.md ?? bubble.textContent)) || '';
         md += `**${role}:** ${text}\n\n`;
       } else if (node.classList.contains('tool-card')) {
         const name = node.querySelector('.tool-name')?.textContent || 'tool';
