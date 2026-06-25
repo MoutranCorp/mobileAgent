@@ -45,9 +45,12 @@ export class BrokerServer {
     this.prompts = new PromptLibrary(config.stateDir);
     this.runner = new ProcessRunner({ emit, log: (m) => this._log(m) });
     this.projects = new ProjectManager({ config, runner: this.runner, emit });
-    this.files = new Files({ getProjectDir: () => this.projects.getActive()?.dir });
+    // Fall back to projectsDir (the cwd the engine actually uses when no project
+    // is active) so file browsing + session lookup match where Claude ran.
+    const getProjectDir = () => this.projects.getActive()?.dir || config.projectsDir;
+    this.files = new Files({ getProjectDir });
     this.devtools = new DevTools({ config, runner: this.runner, projects: this.projects, emit });
-    this.claudeConfig = new ClaudeConfig({ getProjectDir: () => this.projects.getActive()?.dir });
+    this.claudeConfig = new ClaudeConfig({ getProjectDir });
     this.session = new SessionManager({
       config,
       profiles: this.profiles,
@@ -440,6 +443,20 @@ export class BrokerServer {
         const res = await this.projects.create(cmd.name, cmd.template);
         this.broadcast(event(EventType.PROJECTS, this.projects.snapshot()));
         if (res.error) this.broadcast(event(EventType.ERROR, { message: res.error }));
+        return;
+      }
+      case CommandType.WORKSPACE_BROWSE:
+        return this._send(ws, event(EventType.WORKSPACE_BROWSE, this.projects.browse(cmd.path)));
+      case CommandType.OPEN_PATH: {
+        const res = this.projects.openPath(cmd.path);
+        if (res.error) { this.broadcast(event(EventType.ERROR, { message: res.error })); return; }
+        this.transcript.setProject(this.projects.activeId);
+        this._nativeFingerprint = null;
+        this.broadcast(event(EventType.PROJECTS, this.projects.snapshot()));
+        this._send(ws, event(EventType.TRANSCRIPT, { events: this.transcript.replay(), reset: true }));
+        const p = this.projects.getActive();
+        if (p) this._send(ws, event(EventType.CHECKPOINTS, this.checkpoints.list(p.id, p.dir)));
+        await this.session.startEngine(this.session.activeProfileId, {});
         return;
       }
 

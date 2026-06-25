@@ -41,6 +41,7 @@ export const EventType = Object.freeze({
   METRO_STATUS: 'metro_status', // { running, port, url, projectId }
   GIT_STATUS: 'git_status', // { ... }
   PROJECTS: 'projects', // { projects: [...], activeProjectId }
+  WORKSPACE_BROWSE: 'workspace_browse', // { path, parent, dirs: [{name, isProject}] }
   PROFILES: 'profiles', // { profiles: [...], activeProfileId }
   ENGINE_STATE: 'engine_state', // { state: 'stopped'|'starting'|'ready'|'stopping' }
   // Harness config surfaces (skills/agents/commands/memory/settings/sessions)
@@ -90,6 +91,8 @@ export const CommandType = Object.freeze({
   LIST_PROJECTS: 'list_projects', // {}
   CREATE_PROJECT: 'create_project', // { name, template? }
   OPEN_PROJECT: 'open_project', // { projectId }
+  OPEN_PATH: 'open_path', // { path }  open an arbitrary folder as the workspace
+  WORKSPACE_BROWSE: 'workspace_browse', // { path? }  list subdirs for the folder picker
   // Harness config (skills / agents / commands / memory / settings)
   CONFIG_LIST: 'config_list', // { kind, scope? }
   CONFIG_READ: 'config_read', // { kind, name, scope? }

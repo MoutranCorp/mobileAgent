@@ -54,6 +54,7 @@
     scripts: { items: [], running: [] },
     autoverify: { enabled: false, command: 'npm test', maxIterations: 3 },
     usageStats: null,
+    browse: null, // { path, parent, dirs } folder picker
   };
 
   function el(tag, cls, text) {
@@ -416,19 +417,58 @@
   // ---- projects ------------------------------------------------------------
 
   function renderProjects(pane) {
+    pane.appendChild(el('div', 'perm-bucket-title', 'CURRENT & RECENT WORKSPACES'));
     const list = el('div', 'mgr-list');
     for (const p of m.projects) {
       const row = el('div', 'mgr-row' + (p.active ? ' active' : ''));
       const info = el('div', 'mgr-row-info');
-      info.appendChild(el('div', 'mgr-row-name', p.name + (p.isExpo ? ' ⚛' : '')));
-      info.appendChild(el('div', 'mgr-row-desc', (p.hasGit ? 'git · ' : '') + 'metro :' + p.metroPort));
+      info.appendChild(el('div', 'mgr-row-name', (p.active ? '✓ ' : '') + p.name + (p.isExpo ? ' ⚛' : '')));
+      info.appendChild(el('div', 'mgr-row-desc', (p.external ? p.dir : (p.hasGit ? 'git · ' : '') + 'metro :' + p.metroPort)));
       row.appendChild(info);
-      const open = el('button', 'ghost small', 'Open');
-      open.onclick = () => { send({ type: 'open_project', projectId: p.id }); close(); };
+      const open = el('button', 'ghost small', p.active ? 'Active' : 'Open');
+      if (!p.active) open.onclick = () => { send({ type: 'open_project', projectId: p.id }); close(); };
       row.appendChild(open);
       list.appendChild(row);
     }
+    if (!m.projects.length) list.appendChild(el('div', 'mgr-empty', 'No workspaces yet — open a folder below.'));
     pane.appendChild(list);
+
+    // --- open any folder (filesystem browser) ---
+    pane.appendChild(el('div', 'perm-bucket-title', 'OPEN A FOLDER'));
+    if (!m.browse) send({ type: 'workspace_browse' }); // load home on first view
+    const b = m.browse;
+    if (b) {
+      const crumb = el('div', 'mgr-hint'); crumb.textContent = '📂 ' + b.path;
+      pane.appendChild(crumb);
+      const fl = el('div', 'mgr-list');
+      if (b.parent) {
+        const up = el('div', 'mgr-row'); up.style.cursor = 'pointer';
+        up.innerHTML = '<span class="mgr-row-name">⬆ ..</span>';
+        up.onclick = () => send({ type: 'workspace_browse', path: b.parent });
+        fl.appendChild(up);
+      }
+      (b.dirs || []).forEach((d) => {
+        const row = el('div', 'mgr-row'); row.style.cursor = 'pointer';
+        const child = b.path.replace(/\/$/, '') + '/' + d.name;
+        row.innerHTML = `<span class="mgr-row-name">📁 ${esc(d.name)}${d.isProject ? ' ⚛' : ''}</span>`;
+        row.onclick = () => send({ type: 'workspace_browse', path: child });
+        fl.appendChild(row);
+      });
+      pane.appendChild(fl);
+      const useBtn = el('button', 'primary small', `✓ Use this folder`);
+      useBtn.onclick = () => { send({ type: 'open_path', path: b.path }); close(); };
+      pane.appendChild(useBtn);
+    }
+    // manual path entry
+    const pathRow = el('div', 'mgr-newproj');
+    const pin = el('input', 'mgr-input'); pin.placeholder = 'or type a path, e.g. ~/myapp';
+    const go = el('button', 'ghost small', 'Open');
+    go.onclick = () => { if (pin.value.trim()) { send({ type: 'open_path', path: pin.value.trim() }); close(); } };
+    pathRow.appendChild(pin); pathRow.appendChild(go);
+    pane.appendChild(pathRow);
+
+    // --- scaffold a new project under ~/projects ---
+    pane.appendChild(el('div', 'perm-bucket-title', 'NEW PROJECT (under ~/projects)'));
     const add = el('div', 'mgr-newproj');
     const name = el('input', 'mgr-input'); name.placeholder = 'new-project-name';
     const tpl = el('select', 'mgr-select');
@@ -882,6 +922,7 @@
   function onCapabilities(ev) { m.caps = ev; if (m.tab === 'mcp') renderPane(); }
   function onContext(ev) { m.lastContext = ev; if (m.tab === 'context') renderPane(); }
   function onProjects(ev) { m.projects = ev.projects || []; if (m.tab === 'projects') renderPane(); }
+  function onWorkspaceBrowse(ev) { m.browse = ev; if (!root.classList.contains('hidden') && m.tab === 'projects') renderPane(); }
   function onProfiles(ev) { m.profiles = ev.profiles || []; }
   function onCheckpoints(ev) { m.checkpoints = { items: ev.items || [], enabled: !!ev.enabled }; if (m.tab === 'checkpoints') renderPane(); }
   function onFiles(ev) {
@@ -927,6 +968,6 @@
   window.Managers = {
     open, openTab, close, onConfig, onCapabilities, onContext, onProjects, onProfiles,
     onCheckpoints, onFiles, onFile, onFileDiff, onFileGrep, onPrompts, onScripts,
-    onAutoVerify, onUsageStats, onCheckpointDiff,
+    onAutoVerify, onUsageStats, onCheckpointDiff, onWorkspaceBrowse,
   };
 })();

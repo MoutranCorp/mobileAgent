@@ -1,10 +1,12 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 /**
- * ProjectManager — each project is a directory under <projectsDir>. Tracks the
- * active project and assigns a stable Metro port per project (base + index) so
- * multiple projects can run side by side (Phase 5).
+ * ProjectManager — a "project" is a working directory. By default it discovers
+ * the immediate subdirectories of <projectsDir>, but you can also OPEN ANY FOLDER
+ * on the device as a workspace (tracked in `workspaces`). Tracks the active
+ * project and a stable Metro port per project.
  */
 export class ProjectManager {
   constructor({ config, runner, emit }) {
@@ -27,21 +29,21 @@ export class ProjectManager {
     } catch {
       /* ignore */
     }
-    return { activeId: null, order: [] };
+    return { activeId: null, order: [], workspaces: [] };
   }
 
   _saveMeta() {
     try {
       fs.writeFileSync(
         this._stateFile,
-        JSON.stringify({ activeId: this.activeId, order: this._meta.order || [] }, null, 2)
+        JSON.stringify({ activeId: this.activeId, order: this._meta.order || [], workspaces: this._meta.workspaces || [] }, null, 2)
       );
     } catch {
       /* ignore */
     }
   }
 
-  /** All projects = immediate subdirectories of projectsDir. */
+  /** Projects = subdirectories of projectsDir + any opened workspace folders. */
   list() {
     let entries = [];
     try {
@@ -52,22 +54,72 @@ export class ProjectManager {
     } catch {
       entries = [];
     }
-    // Preserve a stable order so port assignment is deterministic.
     entries.sort();
-    return entries.map((name, i) => this._describe(name, i));
+    const discovered = entries.map((name, i) => this._describe(name, i));
+    const discoveredDirs = new Set(discovered.map((p) => p.dir));
+    // Opened folders that live OUTSIDE projectsDir (arbitrary workspaces).
+    const extras = (this._meta.workspaces || [])
+      .filter((p) => p && fs.existsSync(p) && !discoveredDirs.has(p))
+      .map((abs, i) => this._describePath(abs, entries.length + i));
+    return [...discovered, ...extras];
   }
 
   _describe(name, index) {
     const dir = path.join(this.config.projectsDir, name);
+    return this._descriptor(name, dir, index);
+  }
+  _describePath(abs, index) {
+    return this._descriptor(abs, abs, index); // id = absolute path for external folders
+  }
+  _underProjects(dir) {
+    const root = this.config.projectsDir;
+    return dir === root || dir.startsWith(root + path.sep);
+  }
+  _descriptor(id, dir, index) {
     return {
-      id: name,
-      name,
+      id,
+      name: path.basename(dir) || dir,
       dir,
+      external: !this._underProjects(dir),
       metroPort: this.config.metroBasePort + index,
       isExpo: this._looksLikeExpo(dir),
       hasGit: fs.existsSync(path.join(dir, '.git')),
-      active: name === this.activeId,
+      active: id === this.activeId,
     };
+  }
+
+  /** Open an arbitrary folder as the active workspace. */
+  openPath(p) {
+    if (!p) return { error: 'no path' };
+    const abs = path.resolve(p.replace(/^~(?=$|\/|\\)/, os.homedir()));
+    let stat;
+    try { stat = fs.statSync(abs); } catch { return { error: `not found: ${abs}` }; }
+    if (!stat.isDirectory()) return { error: `not a folder: ${abs}` };
+    this._meta.workspaces = this._meta.workspaces || [];
+    if (!this._meta.workspaces.includes(abs) && !abs.startsWith(this.config.projectsDir)) {
+      this._meta.workspaces.unshift(abs);
+      this._meta.workspaces = this._meta.workspaces.slice(0, 20);
+    }
+    this.activeId = abs.startsWith(this.config.projectsDir) ? path.basename(abs) : abs;
+    this._saveMeta();
+    return { project: this.getActive() };
+  }
+
+  /** List subdirectories of `p` (default: home) for the folder picker. */
+  browse(p) {
+    const start = p ? path.resolve(p.replace(/^~(?=$|\/|\\)/, os.homedir())) : os.homedir();
+    let dirs = [];
+    try {
+      dirs = fs.readdirSync(start, { withFileTypes: true })
+        .filter((d) => d.isDirectory() && !d.name.startsWith('.git'))
+        .map((d) => ({ name: d.name, isProject: fs.existsSync(path.join(start, d.name, 'package.json')) }))
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .slice(0, 300);
+    } catch (e) {
+      return { path: start, parent: path.dirname(start), dirs: [], error: e.message };
+    }
+    const parent = path.dirname(start);
+    return { path: start, parent: parent === start ? null : parent, dirs };
   }
 
   _looksLikeExpo(dir) {

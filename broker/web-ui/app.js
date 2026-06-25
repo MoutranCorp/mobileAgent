@@ -149,6 +149,7 @@
       case 'file_replace': onFileReplace(ev); break;
       case 'transcript_search': break; // handled where requested
       case 'turn_changes': onTurnChanges(ev); break;
+      case 'workspace_browse': if (window.Managers) window.Managers.onWorkspaceBrowse(ev); break;
       case 'log': break;
       case 'ack': if (!ev.ok && ev.message) toast(ev.message, 'error'); break;
       case 'pong': break;
@@ -846,9 +847,15 @@
     }
     if (!state.projects.length) {
       const o = document.createElement('option');
-      o.textContent = '(no projects)'; o.value = '';
+      o.textContent = '(no folder open)'; o.value = '';
       sel.appendChild(o);
     }
+    // Always-present actions so workspace + session switching are reachable from the bar.
+    const og = document.createElement('optgroup'); og.label = '—';
+    [['__open__', '📂 Open folder…'], ['__sessions__', '🕘 Sessions…']].forEach(([v, label]) => {
+      const o = document.createElement('option'); o.value = v; o.textContent = label; og.appendChild(o);
+    });
+    sel.appendChild(og);
     if (window.Managers) window.Managers.onProjects(ev);
   }
 
@@ -1142,7 +1149,12 @@
       else if (e.key === 'Enter') { e.preventDefault(); const it = _palItems[_palIdx]; if (it) { it.run(); closePalette(); } }
     });
 
-    $('projectSelect').onchange = (e) => { if (e.target.value) send({ type: 'open_project', projectId: e.target.value }); };
+    $('projectSelect').onchange = (e) => {
+      const v = e.target.value;
+      if (v === '__open__') { if (window.Managers) window.Managers.openTab('projects'); e.target.value = state.activeProjectId || ''; }
+      else if (v === '__sessions__') { if (window.Managers) window.Managers.openTab('sessions'); e.target.value = state.activeProjectId || ''; }
+      else if (v) send({ type: 'open_project', projectId: v });
+    };
     $('engineSelect').onchange = (e) => send({ type: 'switch_engine', profileId: e.target.value });
     $('modelSelect').onchange = (e) => send({ type: 'switch_model', model: e.target.value });
     $('permModeSelect').onchange = (e) => {
