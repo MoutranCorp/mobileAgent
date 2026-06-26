@@ -5,6 +5,11 @@ WebSocket API speaking one **canonical protocol**. This is the heart of the
 system (Phase 1 of the plan) and the one piece that runs identically on a laptop
 and on the phone.
 
+> New here? Start with [`../CLAUDE.md`](../CLAUDE.md) and [`../docs/`](../docs)
+> (architecture, development, features). This README is a broker quick-reference;
+> [`src/protocol.js`](src/protocol.js) and [`src/session.js`](src/session.js) are
+> the ground truth where prose and code disagree.
+
 ```
 UI  ──ws──▶  broker  ──stdio/http──▶  engine adapter ──▶ model API
                 │
@@ -34,16 +39,25 @@ Flags: `--port 8765` `--host 127.0.0.1` `--profile <id>` `--projects <dir>`
 canonical events as the real one — it even writes real files into the project
 dir and drives the approval flow. It exists so the whole stack (protocol, UI,
 tool cards, diffs, approvals, Test loop) is buildable and demoable with zero
-credentials. The 13-test suite runs entirely against it.
+credentials. The whole `node:test` suite runs entirely against it.
 
 ```bash
-npm test     # node --test; covers JSONL buffering, the mock engine, and the WS server end-to-end
+npm test               # node:test suite (run it for the live count) — jsonl, engines, server, sessions, controls, …
+
+# Visually verify / smoke-test the web UI (needs `npx playwright install chromium` once):
+npm run uishot         # drives the UI at phone size against a mock broker; EXITS NON-ZERO on any JS console error
 ```
+
+See [../docs/development.md](../docs/development.md) for the full test + UI-verification workflow.
 
 ## Canonical protocol (the stable contract)
 
-Defined in [`src/protocol.js`](src/protocol.js). UIs only ever speak this; raw
-harness shapes never leak past an adapter.
+Defined in [`src/protocol.js`](src/protocol.js) — **the authoritative, fully
+commented list**. UIs only ever speak this; raw harness shapes never leak past an
+adapter. The summary below is a curated subset and lags the source (e.g. it omits
+the newer `resources`, `session_stop`/`session_pin`/`session_rename`/`session_delete`,
+`checkpoints`, `file_*`, `usage_stats`, `app_version`/`app_update`, `file_widget`
+messages) — when in doubt, read `protocol.js`.
 
 **Events (engine → UI):** `session_meta` · `capabilities` (init: slash commands,
 agents, MCP servers, tools, permission mode, output style) · `status` ·
@@ -128,16 +142,24 @@ Android) or `<stateDir>/secrets.json` (gitignored) — see
 src/
   index.js              entry
   server.js             WebSocket + static web UI, command routing
-  protocol.js           canonical events/commands
-  session.js            owns the active engine; engine/model switching + resume
+  protocol.js           canonical events/commands (authoritative — read this, don't trust prose)
+  session.js            Map of engines keyed by sessionKey (multiple concurrent live sessions
+                        per project) + activeKey, engine/model switching, resume, idle eviction
   jsonl.js              line-buffered stream-json parser (the #1 custom-UI bug)
   config.js  profiles.js  secrets.js
   engines/              base · claude-code · opencode · mock · index
-  controls/             process-runner · projects · devtools (metro/git/eas/run)
-                        claude-config (skills/agents/commands/memory/settings/sessions) · frontmatter
+  controls/             a dozen-plus modules — glob `src/controls/` for the full list. Notable:
+                        process-runner · projects · devtools (metro/git/eas/run) · claude-config
+                        (skills/agents/commands/memory/settings/sessions) · checkpoints · transcript
+                        · files · model-resolver · resources (device RAM/RSS) · usage-ledger
+                        · updater (in-app self-update) · autoverify · prompts · frontmatter
   mcp/                  permission-server (stdio MCP, fail-closed) · permission-bridge (IPC)
-web-ui/                 the bundled web client:
-                        index.html · app.js (transcript/protocol) · managers.js (skills/agents/…/permissions)
-                        diff.js · styles.css
-test/                  node:test suite (jsonl · mock-engine · server · config)
+web-ui/                 the bundled web client (glob `web-ui/` for the full list):
+                        index.html · app.js (transcript/protocol/tabs) · managers.js (skills/…/permissions/system)
+                        diff.js · markdown.js · styles.css · manifest.json · icon.svg
+test/                  node:test suite — glob `test/*.test.js`; run `npm test` for the count
 ```
+
+The multi-session **tabbed-workspace** subsystem (per-session engines, tab strip,
+System/RESOURCES tab, idle/LRU eviction, `session_stop`/`session_pin`/`resources`
+messages) is documented in [../docs/features.md](../docs/features.md).

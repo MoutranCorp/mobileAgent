@@ -42,8 +42,12 @@ diffs, inline approvals, terminal drawer, the Test button — driving the canoni
 protocol end to end.
 
 ```bash
-npm test              # 19 tests: JSONL buffering, mock engine, WS server, config CRUD
+npm test              # node:test suite (jsonl, engines, server, sessions, controls, …) — run it for the count
 ```
+
+> **Working on this repo (human or agent)?** Read [`CLAUDE.md`](CLAUDE.md) and
+> [`docs/`](docs) first — architecture, development/build/test, the current feature
+> surface, and how to keep the docs current.
 
 ## More than a chat client
 
