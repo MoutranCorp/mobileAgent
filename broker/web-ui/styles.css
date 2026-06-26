@@ -459,8 +459,9 @@ svg { display: block; }
 .composer {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 25;
   /* Side gutter scales with the viewport so the card is slightly inset on any
-     screen, clamped so it's never cramped on tiny phones nor huge on desktop. */
-  --composer-gutter: clamp(16px, 5.5vw, 96px);
+     screen, clamped so it's never cramped on tiny phones nor huge on desktop.
+     ~4vw per side => card holds ~92% of the viewport width. */
+  --composer-gutter: clamp(12px, 4vw, 80px);
   padding: 0 var(--composer-gutter); padding-bottom: max(8px, var(--safe-bot));
   pointer-events: none; /* let the side gutters click through to the transcript */
 }
