@@ -12,7 +12,7 @@
     <meta name="apple-mobile-web-app-title" content="Agent" />
     <link rel="apple-touch-icon" href="icon.svg" />
     <link rel="icon" href="icon.svg" />
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=__VER__" />
   </head>
   <body>
     <div id="app">
@@ -140,18 +140,6 @@
                     <option value="ultracode" id="ultracodeOpt">ultracode ✦</option>
                   </select>
                 </div>
-                <button type="button" class="cpill folder-pill" id="folderPill" title="Switch folder · sessions">
-                  <span class="cpill-ico" aria-hidden="true">📁</span><span id="folderPillName" class="cpill-name">folder</span>
-                  <span class="cpill-chev" aria-hidden="true">▾</span>
-                </button>
-                <div class="cpill access-pill" title="Permission mode">
-                  <select id="permModeSelect">
-                    <option value="default">ask</option>
-                    <option value="acceptEdits">accept edits</option>
-                    <option value="plan">plan</option>
-                    <option value="bypassPermissions" selected>⚠ bypass</option>
-                  </select>
-                </div>
               </div>
               <button id="voiceBtn" class="icon-btn" title="Voice input" aria-label="Voice">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -166,6 +154,18 @@
               </button>
             </div>
             <div class="composer-actions">
+              <button type="button" class="cpill folder-pill" id="folderPill" title="Switch folder · sessions">
+                <span class="cpill-ico" aria-hidden="true">📁</span><span id="folderPillName" class="cpill-name">folder</span>
+                <span class="cpill-chev" aria-hidden="true">▾</span>
+              </button>
+              <div class="cpill access-pill" title="Permission mode">
+                <select id="permModeSelect">
+                  <option value="default">ask</option>
+                  <option value="acceptEdits">accept</option>
+                  <option value="plan">plan</option>
+                  <option value="bypassPermissions" selected>⚠ bypass</option>
+                </select>
+              </div>
               <button id="newBtn" class="ghost" title="New session">New</button>
               <button id="undoBtn" class="ghost hidden" title="Rewind the project to before the last turn">↶ Undo</button>
               <button id="testBtn" class="accent" title="Start Metro & open in dev client"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5.3v13.4c0 .9 1 1.4 1.7.9l10-6.7a1 1 0 0 0 0-1.7l-10-6.7c-.7-.5-1.7 0-1.7.9z"/></svg>Test</button>
@@ -256,9 +256,9 @@
       <div id="toasts" class="toasts"></div>
     </div>
 
-    <script src="diff.js"></script>
-    <script src="markdown.js"></script>
-    <script src="app.js"></script>
-    <script src="managers.js"></script>
+    <script src="diff.js?v=__VER__"></script>
+    <script src="markdown.js?v=__VER__"></script>
+    <script src="app.js?v=__VER__"></script>
+    <script src="managers.js?v=__VER__"></script>
   </body>
 </html>

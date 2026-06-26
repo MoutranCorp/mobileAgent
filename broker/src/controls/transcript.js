@@ -65,13 +65,15 @@ export class TranscriptStore {
         b.pendText.delta += ev.delta || '';
       } else {
         this._flushText(b);
-        b.pendText = { type: 'assistant_text', delta: ev.delta || '', parentToolUseId: ev.parentToolUseId || null };
+        // Keep the FIRST delta's ts so replay stamps the bubble with the reply's
+        // own start time (not the preceding event's). Coalesced deltas share it.
+        b.pendText = { type: 'assistant_text', delta: ev.delta || '', parentToolUseId: ev.parentToolUseId || null, ts: ev.ts };
       }
       return;
     }
     if (ev.type === 'assistant_thinking') {
       if (b.pendThink) b.pendThink.delta += ev.delta || '';
-      else b.pendThink = { type: 'assistant_thinking', delta: ev.delta || '', parentToolUseId: ev.parentToolUseId || null };
+      else b.pendThink = { type: 'assistant_thinking', delta: ev.delta || '', parentToolUseId: ev.parentToolUseId || null, ts: ev.ts };
       return;
     }
     this._flushText(b);

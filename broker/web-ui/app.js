@@ -35,6 +35,8 @@
     activeTabId: null, // the focused tab's id (a session key, or 'file:<path>') — decoupled from broker activeKey
     _prevBusy: {}, // key -> busy, to detect a background session finishing
     resources: null, // latest RESOURCES sample (device RAM + per-engine RSS) for the System tab
+    recentSessionsByProject: {}, // projectId -> latest on-disk sessions (folder sheet)
+    activeSessionId: null, // claude sessionId of the session being viewed (from CONFIG/sessions)
   };
   // exposed for managers.js (toast attached after its definition below)
   window.Agent = { send, state, esc, openFileTab };
@@ -200,6 +202,7 @@
   // ---- event handling ------------------------------------------------------
 
   function handleEvent(ev) {
+    if (ev && ev.ts) state._lastEventTs = ev.ts; // newest server timestamp, for message stamps
     switch (ev.type) {
       case 'session_meta': onSessionMeta(ev); break;
       case 'capabilities': onCapabilities(ev); break;
@@ -231,7 +234,10 @@
       case 'profiles': onProfiles(ev); break;
       case 'engine_state': onEngineState(ev); break;
       case 'sessions': onSessions(ev); break;
-      case 'config': if (window.Managers) window.Managers.onConfig(ev); break;
+      case 'config':
+        if (window.Managers) window.Managers.onConfig(ev);
+        if (ev.kind === 'sessions' && Array.isArray(ev.items)) onSessionList(ev);
+        break;
       case 'transcript': applyTranscript(ev); break;
       case 'checkpoints': if (window.Managers) window.Managers.onCheckpoints(ev); onCheckpoints(ev); break;
       case 'checkpoint_restored': onCheckpointRestored(ev); break;
@@ -376,8 +382,16 @@
   }
   function renderTabs() {
     const host = $('tabs'); if (!host) return;
-    // keep session-tab titles fresh as project names arrive (file tabs keep their own)
-    for (const t of state.tabs) if (t.kind !== 'file') t.title = tabTitleFor(t.key, t.projectId, t.userTitle);
+    // Title session tabs by their folder, numbered sequentially PER FOLDER ("demo",
+    // "demo 2", "demo 3") — independent of the internal key suffix, so closing/reopening
+    // never shows a weird climbing counter. File tabs keep their own (file)name.
+    const seen = {};
+    for (const t of state.tabs) {
+      if (t.kind === 'file') continue;
+      const k = t.projectId || 'main'; seen[k] = (seen[k] || 0) + 1;
+      const base = projectName(t.projectId) || (t.projectId ? String(t.projectId) : 'Session');
+      t.title = t.userTitle || (seen[k] > 1 ? `${base} ${seen[k]}` : base); // first = "demo", rest = "demo 2"…
+    }
     host.innerHTML = '';
     for (const t of state.tabs) {
       const isActive = t.id === state.activeTabId;
@@ -502,27 +516,38 @@
   // ---- Phase 4: long-press menu + customize (color/rename) + drag-reorder ----
   let _tabGesture = null;
   function wireTabGesture(tabEl, tab) {
+    // Tabs are touch-action:none, so this gesture owns the whole touch and routes
+    // it to one of: tap (switch) · pre-hold slide (scroll the strip) · long-press
+    // (menu) · post-hold slide (drag-reorder). Pointer capture keeps moves flowing
+    // to this tab even when the finger leaves it.
     tabEl.addEventListener('pointerdown', (e) => {
       if (e.target.closest && e.target.closest('.tab-close')) return;
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       closeTabMenu();
-      const g = (_tabGesture = { tab, tabEl, sx: e.clientX, pid: e.pointerId, mode: 'pending', timer: null });
+      tabEl._suppress = false; // a fresh press always taps clean — clear any stale suppress
+      // (e.g. a long-press whose trailing click never fired on touch would otherwise eat it)
+      try { tabEl.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+      const g = (_tabGesture = { tab, tabEl, sx: e.clientX, lastX: e.clientX, pid: e.pointerId, mode: 'pending', timer: null });
       g.timer = setTimeout(() => {
         if (_tabGesture === g && g.mode === 'pending') { g.mode = 'menu'; tabEl._suppress = true; showTabMenu(tab, tabEl); }
       }, 450);
     });
     tabEl.addEventListener('pointermove', (e) => {
       const g = _tabGesture; if (!g || g.tabEl !== tabEl) return;
+      const dx = e.clientX - g.lastX; g.lastX = e.clientX;
       if (g.mode === 'drag') return updateDrag(g, e.clientX);
-      if ((g.mode === 'pending' || g.mode === 'menu') && Math.abs(e.clientX - g.sx) > 8) {
+      if (g.mode === 'scroll') { const host = $('tabs'); if (host) host.scrollLeft -= dx; return; }
+      if (Math.abs(e.clientX - g.sx) > 8) {
         clearTimeout(g.timer);
-        if (g.mode === 'menu') closeTabMenu();
-        g.mode = 'drag'; tabEl._suppress = true; startDrag(g);
+        tabEl._suppress = true; // a slide is never a tap-to-switch
+        if (g.mode === 'menu') { closeTabMenu(); g.mode = 'drag'; startDrag(g); }
+        else { g.mode = 'scroll'; const host = $('tabs'); if (host) host.scrollLeft -= dx; } // slide before the hold = scroll the strip
       }
     });
     const finish = () => {
       const g = _tabGesture; if (!g || g.tabEl !== tabEl) return;
       clearTimeout(g.timer);
+      try { tabEl.releasePointerCapture(g.pid); } catch { /* ignore */ }
       if (g.mode === 'drag') endDrag(g);
       if (g.mode !== 'menu') _tabGesture = null; // keep ref while the menu is open
     };
@@ -610,12 +635,50 @@
     const name = projectName(state.activeProjectId) || state.activeProjectId || 'folder';
     const e = $('folderPillName'); if (e) e.textContent = name;
   }
-  function openFolderSheet() { renderFolderSheet(); $('folderSheet').classList.remove('hidden'); }
+  function openFolderSheet() { send({ type: 'list_sessions', scope: 'all' }); renderFolderSheet(); $('folderSheet').classList.remove('hidden'); }
   function closeFolderSheet() { const s = $('folderSheet'); if (s) s.classList.add('hidden'); }
   function folderSheetOpen() { const s = $('folderSheet'); return s && !s.classList.contains('hidden'); }
+  // On-disk session list (list_sessions scope:all) → latest 3 per folder for the sheet.
+  function onSessionList(ev) {
+    if (ev.scope !== 'all') return; // only the comprehensive list feeds the folder sheet (a per-project list would drop the rest)
+    state.activeSessionId = ev.activeSessionId || null;
+    state._sessionListLoaded = true;
+    const by = {};
+    for (const s of ev.items) { const pid = s.projectId || '_unknown'; (by[pid] = by[pid] || []).push(s); }
+    for (const pid in by) by[pid] = by[pid].sort((a, b) => (b.mtime || 0) - (a.mtime || 0)).slice(0, 3);
+    state.recentSessionsByProject = by;
+    if (folderSheetOpen()) renderFolderSheet();
+  }
+  function relTime(ms) {
+    if (!ms) return '';
+    const s = Math.max(0, (Date.now() - ms) / 1000);
+    if (s < 60) return 'just now';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  }
   function renderFolderSheet() {
     const body = $('folderSheetBody'); if (!body) return;
     body.innerHTML = '';
+    const keyBySid = new Map(); // claude sessionId -> live session key (is it running now?)
+    for (const s of state.sessions) if (s.sessionId) keyBySid.set(s.sessionId, s.key);
+    // One recent-session row: live → switch to its tab, historical → resume from disk.
+    const sessionRow = (s, projectId) => {
+      const liveKey = keyBySid.get(s.id);
+      const live = liveKey ? state.sessions.find((x) => x.key === liveKey) : null;
+      const row = el('div', 'fs-session' + (s.id === state.activeSessionId ? ' active' : ''));
+      row.appendChild(el('span', 'fs-session-dot' + (live && live.busy ? ' busy' : '')));
+      const info = el('div', 'fs-session-info');
+      info.appendChild(el('span', 'fs-session-name', s.summary || s.id.slice(0, 8)));
+      info.appendChild(el('span', 'fs-session-meta', relTime(s.mtime) + (live ? ' · live' : '')));
+      row.appendChild(info);
+      row.onclick = () => {
+        if (liveKey) { ensureTab({ key: liveKey, projectId }); switchTab(liveKey); }
+        else send({ type: 'resume', sessionId: s.id, projectId: s.projectId || undefined, projectDir: s.projectDir });
+        closeFolderSheet();
+      };
+      return row;
+    };
     for (const p of state.projects.filter((x) => x.id)) {
       const folder = el('div', 'fs-folder');
       const head = el('div', 'fs-folder-head' + (p.id === state.activeProjectId ? ' current' : ''));
@@ -623,17 +686,26 @@
       head.appendChild(dot); head.appendChild(el('span', 'fs-folder-name', p.name + (p.isExpo ? ' ⚛' : '')));
       head.onclick = () => { send({ type: 'open_project', projectId: p.id }); closeFolderSheet(); };
       folder.appendChild(head);
-      for (const t of state.tabs.filter((x) => x.projectId === p.id)) {
-        const live = state.sessions.find((s) => s.key === t.key);
-        const row = el('div', 'fs-session' + (t.key === state.activeKey ? ' active' : ''));
-        const d = el('span', 'fs-session-dot' + (live && live.busy ? ' busy' : ''));
-        row.appendChild(d); row.appendChild(el('span', 'fs-session-name', t.title));
-        row.onclick = () => { switchTab(t.key); closeFolderSheet(); };
-        folder.appendChild(row);
-      }
+      // The 3 most-recent sessions of this folder (from disk), live ones flagged.
+      const recents = state.recentSessionsByProject[p.id] || [];
+      for (const s of recents) folder.appendChild(sessionRow(s, p.id));
+      if (!recents.length) folder.appendChild(el('div', 'fs-session fs-empty', state._sessionListLoaded ? 'No sessions yet' : 'Loading…'));
+      const all = el('div', 'fs-session fs-viewall', '↗ View all sessions');
+      all.onclick = () => { closeFolderSheet(); if (window.Managers) window.Managers.openTab('sessions'); };
+      folder.appendChild(all);
       const nw = el('div', 'fs-session fs-new', '+ New chat here');
       nw.onclick = () => { send({ type: 'open_project', projectId: p.id }); setTimeout(() => send({ type: 'new_session' }), 80); closeFolderSheet(); };
       folder.appendChild(nw);
+      body.appendChild(folder);
+    }
+    // Sessions whose folder couldn't be resolved (ambiguous on-disk encoding) — still reachable.
+    const orphans = state.recentSessionsByProject['_unknown'] || [];
+    if (orphans.length) {
+      const folder = el('div', 'fs-folder');
+      const head = el('div', 'fs-folder-head');
+      head.appendChild(el('span', 'fs-dot')); head.appendChild(el('span', 'fs-folder-name', 'Folder unknown'));
+      folder.appendChild(head);
+      for (const s of orphans) folder.appendChild(sessionRow(s, null));
       body.appendChild(folder);
     }
     if (!state.projects.filter((x) => x.id).length) body.appendChild(el('p', 'mgr-hint', 'No folders open yet.'));
@@ -727,6 +799,7 @@
     }
     if (!state.activeAssistant) {
       const msg = el('div', 'msg assistant');
+      msg.dataset.ts = state._lastEventTs || nowIso();
       msg.appendChild(el('div', 'role', 'Agent'));
       const bubble = el('div', 'bubble md cursor');
       bubble._md = '';
@@ -781,7 +854,11 @@
   }
 
   function finalizeAssistant() {
-    if (state.activeAssistant) { flushMd(state.activeAssistant); state.activeAssistant.classList.remove('cursor'); }
+    if (state.activeAssistant) {
+      flushMd(state.activeAssistant); state.activeAssistant.classList.remove('cursor');
+      const msg = state.activeAssistant.closest('.msg');
+      if (msg) appendTime(msg, msg.dataset.ts); // ts is fixed at the reply's first delta (replay-safe)
+    }
     state.activeAssistant = null;
     if (state.activeThinking) {
       const det = state.activeThinking;
@@ -869,17 +946,40 @@
     if (meta.turnId) msgEl.dataset.turnId = meta.turnId;
     msgEl.dataset.checkpointId = meta.checkpointId || '';
     if (meta.text != null) msgEl.dataset.revertText = meta.text;
+    if (meta.ts) { // replace the optimistic client-clock stamp with the authoritative server ts
+      msgEl.dataset.ts = meta.ts;
+      const t = formatTime(meta.ts);
+      const existing = [...msgEl.children].find((c) => c.classList && c.classList.contains('msg-time'));
+      if (existing) { if (t) existing.textContent = t; } else appendTime(msgEl, meta.ts);
+    }
   }
 
   function addUserMessage(text, meta) {
     hideEmpty();
     finalizeAssistant();
     const msg = el('div', 'msg user');
+    const ts = (meta && meta.ts) || nowIso();
+    msg.dataset.ts = ts;
     msg.appendChild(el('div', 'role', 'You'));
     msg.appendChild(el('div', 'bubble', text));
+    appendTime(msg, ts);
     $('transcript').appendChild(msg);
     stampUserBubble(msg, meta || { text });
     scrollDown();
+  }
+  // ---- message timestamps ---------------------------------------------------
+  function nowIso() { try { return new Date().toISOString(); } catch { return ''; } }
+  function formatTime(ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  function appendTime(msgEl, ts) {
+    if (!msgEl) return;
+    if ([...msgEl.children].some((c) => c.classList && c.classList.contains('msg-time'))) return;
+    const s = formatTime(ts); if (!s) return;
+    msgEl.appendChild(el('div', 'msg-time', s));
   }
 
   // ---- transcript: tool cards ----------------------------------------------

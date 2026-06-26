@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node src/index.js --engine mock",
-    "test": "node --test test/",
+    "test": "node --test \"test/**/*.test.js\"",
     "uishot": "node scripts/uishot.mjs"
   },
   "engines": {

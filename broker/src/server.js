@@ -791,9 +791,22 @@ export class BrokerServer {
         res.writeHead(404, { 'content-type': 'text/plain' });
         return res.end('not found');
       }
-      res.writeHead(200, { 'content-type': contentType(filePath), 'cache-control': 'no-cache' });
-      res.end(data);
+      // index.html embeds ?v=__VER__ on its assets; stamp it from the bundle's mtimes
+      // so a home-screen PWA re-fetches fresh JS/CSS whenever the UI changes (iOS PWAs
+      // cache the start page hard and ignore cache-control on their own).
+      const body = rel === 'index.html' ? Buffer.from(String(data).replace(/__VER__/g, this._assetVersion())) : data;
+      res.writeHead(200, { 'content-type': contentType(filePath), 'cache-control': 'no-cache, no-store, must-revalidate' });
+      res.end(body);
     });
+  }
+
+  /** A short stamp from the web-ui bundle's newest mtime — bumps on any UI change. */
+  _assetVersion() {
+    let m = 0;
+    for (const f of ['app.js', 'managers.js', 'styles.css', 'markdown.js', 'diff.js']) {
+      try { m = Math.max(m, fs.statSync(path.join(WEB_UI_DIR, f)).mtimeMs); } catch { /* ignore */ }
+    }
+    return Math.round(m).toString(36);
   }
 
   _scriptsSnapshot() {
@@ -842,7 +855,7 @@ export class BrokerServer {
         res.writeHead(404, { 'content-type': 'text/plain' });
         return res.end('not found in project: ' + rel);
       }
-      res.writeHead(200, { 'content-type': contentType(filePath), 'cache-control': 'no-cache' });
+      res.writeHead(200, { 'content-type': contentType(filePath), 'cache-control': 'no-store' });
       res.end(data);
     });
   }
@@ -861,7 +874,7 @@ export class BrokerServer {
         'content-type': contentType(filePath),
         'content-disposition': `attachment; filename="${name}"`,
         'content-length': data.length,
-        'cache-control': 'no-cache',
+        'cache-control': 'no-store',
       });
       res.end(data);
     });

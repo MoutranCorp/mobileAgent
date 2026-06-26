@@ -199,8 +199,7 @@ svg { display: block; }
   font-size: 13px; color: var(--label-2); transition: background .15s, border-color .15s, color .15s;
 }
 .tab:hover { background: var(--fill-2); }
-.tab.active { background: var(--sys-bg-2); border-color: var(--separator-2); color: var(--label);
-  box-shadow: var(--sh-1); }
+.tab.active { background: var(--sys-bg-2); border-color: var(--accent); color: var(--label); }
 .tab-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--label-3); }
 .tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 520; }
 .tab.active .tab-title { font-weight: 600; }
@@ -219,7 +218,9 @@ svg { display: block; }
   background: var(--fill-3); color: var(--label-2); display: grid; place-items: center; cursor: pointer; }
 .tab-new:hover { background: var(--fill-2); color: var(--label); }
 .tab-new svg { width: 17px; height: 17px; }
-.tab { touch-action: pan-x; user-select: none; -webkit-user-select: none; }
+/* touch-action:none so the gesture owns the touch (tap/scroll/long-press/drag);
+   without it iOS claims the horizontal pan as a scroll and drag-reorder never fires. */
+.tab { touch-action: none; user-select: none; -webkit-user-select: none; }
 .tab.dragging { opacity: .9; z-index: 5; box-shadow: 0 6px 18px rgba(0,0,0,.5); }
 /* long-press tab menu */
 .tab-menu { position: fixed; z-index: 60; min-width: 212px; background: var(--mat-thick);
@@ -251,6 +252,9 @@ svg { display: block; }
 .cpill select:focus { outline: none; }
 .cpill select option { background: var(--sys-bg-2); color: var(--label); }
 .access-pill select { color: var(--red); font-weight: 620; max-width: 28vw; }
+/* folder + access pills now live in the lower action row — match its button height */
+.composer-actions .cpill { height: 32px; flex: 0 0 auto; }
+.folder-pill .cpill-name { max-width: 22vw; }
 
 /* engine picker (☰ → Engine) */
 .engine-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
@@ -312,6 +316,12 @@ svg { display: block; }
 .fs-session.active { color: var(--accent); border-left-color: var(--accent); }
 .fs-session-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--label-3); flex: 0 0 auto; }
 .fs-session-dot.busy { background: var(--orange); }
+.fs-session-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.fs-session-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fs-session-meta { font-size: 11px; color: var(--label-3); }
+.fs-empty { color: var(--label-3); font-style: italic; cursor: default; }
+.fs-empty:hover { color: var(--label-3); }
+.fs-viewall { color: var(--accent); font-size: 13px; }
 .fs-new { color: var(--accent); font-weight: 560; }
 .fs-open { margin-top: 6px; width: 100%; text-align: left; padding: 13px; background: var(--fill-3);
   border: none; border-radius: var(--r-md); color: var(--label); font: inherit; font-size: 14px; cursor: pointer; }
@@ -393,6 +403,7 @@ svg { display: block; }
 .msg.assistant { align-items: flex-start; }
 .msg.assistant .bubble { background: var(--sys-bg-2); color: var(--label);
   border: .5px solid var(--separator-2); border-bottom-left-radius: 7px; box-shadow: var(--sh-1); }
+.msg-time { font-size: 11px; color: var(--label-3); padding: 0 4px; font-variant-numeric: tabular-nums; }
 .bubble code { font-family: var(--mono); font-size: .9em; background: var(--fill-3); padding: 1px 5px; border-radius: 5px; }
 .cursor::after { content: "▍"; color: var(--accent); animation: blink 1s steps(2) infinite; }
 
