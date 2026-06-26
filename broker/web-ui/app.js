@@ -334,8 +334,8 @@
   function saveTabs() {
     try {
       localStorage.setItem('agentTabs', JSON.stringify(state.tabs.map((t) => t.kind === 'file'
-        ? { kind: 'file', id: t.id, filePath: t.filePath, fileKind: t.fileKind, title: t.userTitle || null }
-        : { kind: 'session', key: t.key, projectId: t.projectId, title: t.userTitle || null })));
+        ? { kind: 'file', id: t.id, filePath: t.filePath, fileKind: t.fileKind, title: t.userTitle || null, userColor: t.userColor || null }
+        : { kind: 'session', key: t.key, projectId: t.projectId, title: t.userTitle || null, userColor: t.userColor || null })));
     } catch { /* ignore */ }
   }
   function ensureTab({ key, projectId, title }) {
@@ -398,8 +398,13 @@
       const close = el('button', 'tab-close', '✕');
       close.title = 'Close tab';
       tab.appendChild(ind); tab.appendChild(title); tab.appendChild(close);
-      tab.onclick = (e) => { if (e.target === close) return; switchTab(t.id); };
+      tab.onclick = (e) => {
+        if (e.target === close || (e.target.closest && e.target.closest('.tab-close'))) return;
+        if (tab._suppress) { tab._suppress = false; return; } // a long-press/drag just happened
+        switchTab(t.id);
+      };
       close.onclick = (e) => { e.stopPropagation(); closeTab(t.id); };
+      wireTabGesture(tab, t); // long-press menu + drag-to-reorder
       host.appendChild(tab);
     }
     // Bring the active tab into view when it changes, so it (and its ✕) is reachable.
@@ -412,9 +417,9 @@
   function restoreTabs() {
     state.tabs = loadTabs().map((t) => t.kind === 'file'
       ? { id: t.id || ('file:' + t.filePath), kind: 'file', filePath: t.filePath, fileKind: t.fileKind || fileKind(t.filePath),
-          userTitle: t.title || null, title: t.title || String(t.filePath).split(/[\\/]/).pop(), color: '#8a8a8a' }
+          userTitle: t.title || null, title: t.title || String(t.filePath).split(/[\\/]/).pop(), userColor: t.userColor || null, color: t.userColor || '#8a8a8a' }
       : { id: t.key, key: t.key, kind: 'session', projectId: t.projectId ?? null, userTitle: t.title || null,
-          title: '', color: tabColorFor(t.projectId), done: false });
+          title: '', userColor: t.userColor || null, color: t.userColor || tabColorFor(t.projectId), done: false });
     renderTabs();
     applyViewMode();
   }
@@ -493,6 +498,112 @@
     toast('Saved ' + t.title, 'info');
   }
   function activeFileTab() { const t = state.activeTabId ? tabById(state.activeTabId) : null; return t && t.kind === 'file' ? t : null; }
+
+  // ---- Phase 4: long-press menu + customize (color/rename) + drag-reorder ----
+  let _tabGesture = null;
+  function wireTabGesture(tabEl, tab) {
+    tabEl.addEventListener('pointerdown', (e) => {
+      if (e.target.closest && e.target.closest('.tab-close')) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      closeTabMenu();
+      const g = (_tabGesture = { tab, tabEl, sx: e.clientX, pid: e.pointerId, mode: 'pending', timer: null });
+      g.timer = setTimeout(() => {
+        if (_tabGesture === g && g.mode === 'pending') { g.mode = 'menu'; tabEl._suppress = true; showTabMenu(tab, tabEl); }
+      }, 450);
+    });
+    tabEl.addEventListener('pointermove', (e) => {
+      const g = _tabGesture; if (!g || g.tabEl !== tabEl) return;
+      if (g.mode === 'drag') return updateDrag(g, e.clientX);
+      if ((g.mode === 'pending' || g.mode === 'menu') && Math.abs(e.clientX - g.sx) > 8) {
+        clearTimeout(g.timer);
+        if (g.mode === 'menu') closeTabMenu();
+        g.mode = 'drag'; tabEl._suppress = true; startDrag(g);
+      }
+    });
+    const finish = () => {
+      const g = _tabGesture; if (!g || g.tabEl !== tabEl) return;
+      clearTimeout(g.timer);
+      if (g.mode === 'drag') endDrag(g);
+      if (g.mode !== 'menu') _tabGesture = null; // keep ref while the menu is open
+    };
+    tabEl.addEventListener('pointerup', finish);
+    tabEl.addEventListener('pointercancel', finish);
+  }
+  function startDrag(g) {
+    g.tabEl.classList.add('dragging'); g.fromIdx = state.tabs.indexOf(g.tab);
+    try { g.tabEl.setPointerCapture(g.pid); } catch { /* ignore */ }
+  }
+  function updateDrag(g, x) {
+    g.tabEl.style.transform = `translateX(${Math.round(x - g.sx)}px)`;
+    let idx = state.tabs.length;
+    const kids = [...$('tabs').children];
+    for (let i = 0; i < kids.length; i++) {
+      if (kids[i] === g.tabEl) continue;
+      const r = kids[i].getBoundingClientRect();
+      if (x < r.left + r.width / 2) { idx = i; break; }
+    }
+    g.toIdx = idx;
+  }
+  function endDrag(g) {
+    g.tabEl.style.transform = ''; g.tabEl.classList.remove('dragging');
+    const cur = state.tabs.indexOf(g.tab);
+    if (g.toIdx != null && cur >= 0) {
+      let to = g.toIdx > cur ? g.toIdx - 1 : g.toIdx;
+      if (to !== cur && to >= 0) { const [m] = state.tabs.splice(cur, 1); state.tabs.splice(to, 0, m); saveTabs(); }
+    }
+    _tabGesture = null;
+    renderTabs();
+  }
+  function closeTabMenu() { const m = document.getElementById('tabMenu'); if (m) m.remove(); document.removeEventListener('pointerdown', _menuOutside, true); }
+  function _menuOutside(e) { const m = document.getElementById('tabMenu'); if (m && !m.contains(e.target)) closeTabMenu(); }
+  function renameTabInline(tab, value) {
+    tab.userTitle = (value || '').trim() || null;
+    if (tab.kind === 'file') tab.title = tab.userTitle || String(tab.filePath).split(/[\\/]/).pop();
+    saveTabs(); renderTabs();
+  }
+  // Close a set of tabs at once (bulk actions), reconciling the active tab once.
+  function closeTabs(toClose) {
+    if (!toClose.length) return;
+    const set = new Set(toClose);
+    const closingActive = toClose.some((t) => t.id === state.activeTabId);
+    for (const t of toClose) if (t.kind !== 'file') send({ type: 'session_stop', key: t.key });
+    state.tabs = state.tabs.filter((t) => !set.has(t));
+    saveTabs();
+    if (closingActive) {
+      if (state.tabs.length) switchTab(state.tabs[state.tabs.length - 1].id);
+      else { state.activeTabId = null; applyViewMode(); send({ type: 'new_session' }); }
+    } else { renderTabs(); applyViewMode(); }
+  }
+  function showTabMenu(tab, tabEl) {
+    closeTabMenu();
+    const menu = el('div', 'tab-menu'); menu.id = 'tabMenu';
+    const idx = state.tabs.indexOf(tab);
+    const ren = document.createElement('input');
+    ren.className = 'tab-menu-rename'; ren.value = tab.userTitle || tab.title; ren.placeholder = 'Tab name'; ren.spellcheck = false;
+    ren.onkeydown = (e) => { if (e.key === 'Enter') { renameTabInline(tab, ren.value); closeTabMenu(); } };
+    menu.appendChild(ren);
+    const colors = el('div', 'tab-menu-colors');
+    for (const c of TAB_COLORS) {
+      const sw = el('button', 'tab-swatch' + (tab.color === c ? ' on' : '')); sw.style.background = c;
+      sw.onclick = () => { tab.userColor = c; tab.color = c; saveTabs(); renderTabs(); [...colors.children].forEach((x) => x.classList.remove('on')); sw.classList.add('on'); };
+      colors.appendChild(sw);
+    }
+    menu.appendChild(colors);
+    menu.appendChild(el('div', 'tab-menu-sep'));
+    const item = (label, fn, cls) => { const b = el('button', 'tab-menu-item' + (cls ? ' ' + cls : ''), label); b.onclick = () => { closeTabMenu(); fn(); }; menu.appendChild(b); };
+    item('Close', () => closeTab(tab.id));
+    if (state.tabs.length > 1) {
+      item('Close others', () => closeTabs(state.tabs.filter((t) => t !== tab)));
+      if (idx > 0) item('Close to the left', () => closeTabs(state.tabs.slice(0, idx)));
+      if (idx < state.tabs.length - 1) item('Close to the right', () => closeTabs(state.tabs.slice(idx + 1)));
+      item('Close all', () => closeTabs([...state.tabs]), 'tmenu-danger');
+    }
+    document.body.appendChild(menu);
+    const r = tabEl.getBoundingClientRect();
+    menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8)) + 'px';
+    menu.style.top = (r.bottom + 5) + 'px';
+    setTimeout(() => document.addEventListener('pointerdown', _menuOutside, true), 0);
+  }
 
   // ---- folder switcher sheet (folder pill tap · + long-press) ---------------
   function updateFolderPill() {
@@ -1570,26 +1681,9 @@
   function onProjects(ev) {
     state.projects = ev.projects || [];
     state.activeProjectId = ev.activeProjectId;
-    const sel = $('projectSelect');
-    sel.innerHTML = '';
-    for (const p of state.projects) {
-      const o = document.createElement('option');
-      o.value = p.id; o.textContent = p.name + (p.isExpo ? ' ⚛' : '');
-      if (p.id === ev.activeProjectId) o.selected = true;
-      sel.appendChild(o);
-    }
-    if (!state.projects.length) {
-      const o = document.createElement('option');
-      o.textContent = '(no folder open)'; o.value = '';
-      sel.appendChild(o);
-    }
-    // Always-present actions so workspace + session switching are reachable from the bar.
-    const og = document.createElement('optgroup'); og.label = '—';
-    [['__open__', '📂 Open folder…'], ['__sessions__', '🕘 Sessions…']].forEach(([v, label]) => {
-      const o = document.createElement('option'); o.value = v; o.textContent = label; og.appendChild(o);
-    });
-    sel.appendChild(og);
-    if (typeof renderTabs === 'function') renderTabs(); // project names just arrived -> refresh tab titles
+    // The old <select> folder picker is gone (replaced by the composer folder pill +
+    // folder sheet, which read state.projects); just refresh the surfaces that show it.
+    renderTabs(); // project names just arrived -> refresh tab titles
     updateFolderPill();
     if (folderSheetOpen()) renderFolderSheet();
     if (window.Managers) window.Managers.onProjects(ev);
@@ -1598,14 +1692,7 @@
   function onProfiles(ev) {
     state.profiles = ev.profiles || [];
     state.activeProfileId = ev.activeProfileId;
-    const sel = $('engineSelect');
-    sel.innerHTML = '';
-    for (const p of state.profiles) {
-      const o = document.createElement('option');
-      o.value = p.id; o.textContent = p.label + (p.ready ? '' : ' ⚠');
-      if (p.id === ev.activeProfileId) o.selected = true;
-      sel.appendChild(o);
-    }
+    // Engine switching now lives in ☰ → Engine (reads state.profiles, sends switch_engine).
     renderModelOptions();
     if (window.Managers) window.Managers.onProfiles(ev);
   }
@@ -2092,13 +2179,6 @@
       else if (e.key === 'Enter') { e.preventDefault(); const it = _palItems[_palIdx]; if (it) { it.run(); closePalette(); } }
     });
 
-    $('projectSelect').onchange = (e) => {
-      const v = e.target.value;
-      if (v === '__open__') { if (window.Managers) window.Managers.openTab('projects'); e.target.value = state.activeProjectId || ''; }
-      else if (v === '__sessions__') { if (window.Managers) window.Managers.openTab('sessions'); e.target.value = state.activeProjectId || ''; }
-      else if (v) send({ type: 'open_project', projectId: v });
-    };
-    $('engineSelect').onchange = (e) => send({ type: 'switch_engine', profileId: e.target.value });
     $('modelSelect').onchange = (e) => { state.selectedModel = e.target.value; updateEffortOptions(); send({ type: 'switch_model', model: e.target.value }); };
     // Resolve alias -> version labels lazily the first time the user opens the picker.
     $('modelSelect').addEventListener('mousedown', resolveModelsOnce);

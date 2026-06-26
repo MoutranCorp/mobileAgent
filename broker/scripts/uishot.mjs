@@ -60,6 +60,19 @@ try {
   await page.evaluate(() => document.getElementById('managerModal')?.classList.add('hidden'));
 } catch (e) { console.log('system-tab err', e.message); }
 
+// Tab long-press menu (Phase 4): hold a tab -> menu with rename, colours, close actions.
+try {
+  const tb = await page.locator('#tabs .tab').first().boundingBox();
+  if (tb) {
+    await page.mouse.move(tb.x + tb.width / 2, tb.y + tb.height / 2);
+    await page.mouse.down(); await sleep(600); await page.mouse.up();
+    console.log('CHECK tab long-press menu:', await page.evaluate(() => !!document.getElementById('tabMenu')));
+    console.log('CHECK menu has rename + swatches:', await page.evaluate(() => !!document.querySelector('#tabMenu .tab-menu-rename') && document.querySelectorAll('#tabMenu .tab-swatch').length > 0));
+    await shot('01e-tab-menu');
+    await page.evaluate(() => document.body.click());
+  }
+} catch (e) { console.log('tab-menu err', e.message); }
+
 await page.fill('#input', 'Build a polished counter screen with a + button');
 await page.dispatchEvent('#input', 'input');
 await sleep(400);

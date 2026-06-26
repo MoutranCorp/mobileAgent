@@ -219,6 +219,23 @@ svg { display: block; }
   background: var(--fill-3); color: var(--label-2); display: grid; place-items: center; cursor: pointer; }
 .tab-new:hover { background: var(--fill-2); color: var(--label); }
 .tab-new svg { width: 17px; height: 17px; }
+.tab { touch-action: pan-x; user-select: none; -webkit-user-select: none; }
+.tab.dragging { opacity: .9; z-index: 5; box-shadow: 0 6px 18px rgba(0,0,0,.5); }
+/* long-press tab menu */
+.tab-menu { position: fixed; z-index: 60; min-width: 212px; background: var(--mat-thick);
+  -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+  border: .5px solid var(--separator); border-radius: var(--r-md); box-shadow: var(--sh-2); padding: 8px;
+  animation: fade .14s var(--ease); }
+.tab-menu-rename { width: 100%; box-sizing: border-box; background: var(--fill-3); border: .5px solid var(--separator-2);
+  border-radius: var(--r-sm); color: var(--label); font: inherit; font-size: 14px; padding: 8px 10px; outline: none; }
+.tab-menu-colors { display: flex; gap: 7px; flex-wrap: wrap; padding: 9px 2px 4px; }
+.tab-swatch { width: 22px; height: 22px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
+.tab-swatch.on { border-color: var(--label); }
+.tab-menu-sep { height: .5px; background: var(--separator); margin: 6px 2px; }
+.tab-menu-item { display: block; width: 100%; text-align: left; background: transparent; border: none; color: var(--label);
+  font: inherit; font-size: 14px; padding: 9px 8px; border-radius: var(--r-sm); cursor: pointer; }
+.tab-menu-item:hover { background: var(--fill-3); }
+.tab-menu-item.tmenu-danger { color: var(--red); }
 
 /* composer pills (folder · access · model·effort all live in the composer now) */
 .composer-pills { display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0;
