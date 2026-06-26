@@ -275,19 +275,30 @@
     const act = state.sessions.find((s) => s.key === state.activeKey);
     if (act) ensureTab({ key: act.key, projectId: act.projectId, title: act.title });
     else if (state.activeKey) ensureTab({ key: state.activeKey, projectId: state.activeProjectId });
-    // Per-tab indicators: a background session that finished -> "done"; one waiting on
-    // a permission prompt -> "needs you". The focused tab clears both.
+    // "Done" nudge: a background session that finished a turn (busy -> idle) while
+    // unfocused. (working/waiting indicators are derived live in renderTabs.)
     const nowBusy = {};
     for (const s of state.sessions) {
       nowBusy[s.key] = s.busy;
       const t = state.tabs.find((x) => x.key === s.key);
       if (!t || s.key === state.activeKey) continue;
-      if (s.lastStatus === 'waiting') t.attn = true;
-      else if (prev[s.key] && !s.busy) t.done = true; // just finished while unfocused
+      if (prev[s.key] && !s.busy && s.lastStatus !== 'waiting') t.done = true;
     }
     state._prevBusy = nowBusy;
     const at = state.tabs.find((x) => x.key === state.activeKey);
-    if (at) { at.done = false; at.attn = false; }
+    if (at) at.done = false; // focusing a tab clears its "done" nudge
+    // Keep the global activity cue in sync with the ACTIVE session — a background
+    // session's stream (incl. its RESULT) is suppressed, so switching tabs must
+    // reconcile here or the indicator gets stuck "thinking".
+    if (act) {
+      const idleOk = Date.now() > (state._optimisticUntil || 0);
+      // Nav status pill = the ACTIVE session's engine status. Background statuses are
+      // suppressed, so without this it stays stuck (e.g. "thinking") after a switch.
+      const ps = act.busy ? (act.lastStatus || 'thinking') : (idleOk ? 'idle' : null);
+      if (ps) { const pill = $('statusPill'); if (pill) { pill.className = 'status-pill ' + ps; pill.textContent = ps; } }
+      const want = act.busy ? (act.lastStatus === 'waiting' ? 'waiting' : 'working') : 'idle';
+      if (want !== state.activity && (want !== 'idle' || idleOk)) setActivity(want);
+    }
     renderTabs();
     updateSessionsBadge();
     if (window.Managers) window.Managers.onSessions(ev);
@@ -330,7 +341,8 @@
   function switchTab(key) {
     if (key === state.activeKey) return;
     const t = state.tabs.find((x) => x.key === key);
-    if (t) { t.done = false; t.attn = false; }
+    if (t) t.done = false;
+    state._optimisticUntil = 0; // show the destination tab's real state immediately
     send({ type: 'switch_session', key });
   }
   function closeTab(key) {
@@ -353,12 +365,14 @@
     host.innerHTML = '';
     for (const t of state.tabs) {
       const live = state.sessions.find((s) => s.key === t.key);
+      const waiting = live && live.lastStatus === 'waiting';
+      const working = live && live.busy && !waiting;
       const isActive = t.key === state.activeKey;
       const tab = el('div', 'tab' + (isActive ? ' active' : ''));
       tab.title = t.title;
       const ind = document.createElement('span');
-      if (live && live.busy) ind.className = 'tab-spin';
-      else if (t.attn) { ind.className = 'tab-attn'; ind.textContent = '!'; }
+      if (waiting) { ind.className = 'tab-attn'; ind.textContent = '!'; } // needs you (approval) — over the spinner
+      else if (working) ind.className = 'tab-spin';
       else if (t.done) { ind.className = 'tab-done'; ind.textContent = '✓'; }
       else { ind.className = 'tab-dot'; ind.style.background = t.color; }
       const title = el('span', 'tab-title', t.title);
@@ -368,6 +382,12 @@
       tab.onclick = (e) => { if (e.target === close) return; switchTab(t.key); };
       close.onclick = (e) => { e.stopPropagation(); closeTab(t.key); };
       host.appendChild(tab);
+    }
+    // Bring the active tab into view when it changes, so it (and its ✕) is reachable.
+    if (state.activeKey !== state._lastTabScroll) {
+      state._lastTabScroll = state.activeKey;
+      const a = host.querySelector('.tab.active');
+      if (a && a.scrollIntoView) a.scrollIntoView({ inline: 'nearest', block: 'nearest' });
     }
   }
   function restoreTabs() {
@@ -1613,6 +1633,7 @@
     hideSlashPalette();
     hideMentionPalette();
     setActivity('working', 'Thinking…');
+    state._optimisticUntil = Date.now() + 2000; // don't let a SESSIONS reconcile undo this instant feedback
     const payload = { type: 'user_message', text, images: images.length ? images : undefined };
     requestAnimationFrame(() => send(payload)); // send after the UI has painted
   }
