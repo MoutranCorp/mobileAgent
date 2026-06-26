@@ -42,6 +42,7 @@ export const EventType = Object.freeze({
   CONTROL_STATUS: 'control_status', // { channel, state, detail? }
   METRO_STATUS: 'metro_status', // { running, port, url, projectId }
   APKS: 'apks', // { items: [{ rel, name, size, mtime }] } built Android artifacts (.apk/.aab)
+  RESOURCES: 'resources', // { mem:{totalMb,availMb,usedMb,usedPct}, broker:{rssMb}, agentsRssMb, engines:[{key,projectId,sessionId,pid,rssMb,status,idleMs,pinned,title}], cpu:{load1,cores}, hasProc } device/process sample
   GIT_STATUS: 'git_status', // { ... }
   PROJECTS: 'projects', // { projects: [...], activeProjectId }
   WORKSPACE_BROWSE: 'workspace_browse', // { path, parent, dirs: [{name, isProject}] }
@@ -99,6 +100,8 @@ export const CommandType = Object.freeze({
   SWITCH_SESSION: 'switch_session', // { key } bring a live session to the foreground (no engine stop)
   SESSION_DELETE: 'session_delete', // { id, projectId?, projectDir? } delete a session transcript
   SESSION_RENAME: 'session_rename', // { id, title } set a custom title (sidecar override)
+  SESSION_STOP: 'session_stop', // { key } tear down a live engine (idle/manual eviction), keep its transcript
+  SESSION_PIN: 'session_pin', // { key, pinned } keep-warm override — exempt a session from idle eviction
   COMPACT: 'compact', // { focus? }
   CLEAR: 'clear', // {}
   // Projects

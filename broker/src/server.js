@@ -18,6 +18,7 @@ import { Files } from './controls/files.js';
 import { PromptLibrary } from './controls/prompts.js';
 import { AutoVerify } from './controls/autoverify.js';
 import { UsageLedger } from './controls/usage-ledger.js';
+import { sampleResources, evictionCandidates } from './controls/resources.js';
 import { SessionManager } from './session.js';
 import { EventType, CommandType, event } from './protocol.js';
 
@@ -60,6 +61,7 @@ export class BrokerServer {
       profiles: this.profiles,
       secrets: this.secrets,
       getActiveProject: () => this.projects.getActive(),
+      getProject: (id) => this.projects.get(id), // resolve a session's own folder for cold-resume
       emit,
     });
     this.transcript.setProject(this.session.activeKey); // same key convention as sessions (project.id | '__main__')
@@ -92,6 +94,7 @@ export class BrokerServer {
   }
 
   async stop() {
+    if (this._resTimer) { clearInterval(this._resTimer); this._resTimer = null; } // stop sampling before engines die
     this.transcript.replay(); // flush any pending text record to disk
     this.runner.stopAll();
     // Force-close client sockets (don't wait on a polite close handshake) and
@@ -174,8 +177,38 @@ export class BrokerServer {
     if (ev.sessionKey == null || ev.sessionKey === activeKey) this.broadcast(ev);
   }
 
+  /** A session key is no longer the projectId (a folder can hold several sessions),
+   *  so resolve the engine's own folder via its meta.projectId; fall back to treating
+   *  the key as a projectId for the first/single session (key === projectId). */
   _projectForKey(key) {
-    return key && key !== '__main__' ? this.projects.get(key) : null;
+    if (!key || key === '__main__') return null;
+    const pid = this.session.meta.get(key)?.projectId;
+    return (pid && this.projects.get(pid)) || this.projects.get(key) || null;
+  }
+
+  /** One resource sample + lifecycle pass: broadcast RESOURCES, then idle-evict
+   *  (memory-pressure LRU + 5-min idle) — never a working/focused/pinned session.
+   *  Returns the sample. Exposed so tests can drive a deterministic tick. */
+  _lifecycleTick() {
+    const IDLE_TTL_MS = 5 * 60 * 1000;
+    let sample;
+    try { sample = sampleResources(this.session.liveSessions()); } catch { return null; }
+    try { this.broadcast(event(EventType.RESOURCES, sample)); } catch { /* ignore */ }
+    for (const key of evictionCandidates(sample)) this.session.stopEngineKeepTranscript(key);
+    for (const s of sample.engines) {
+      if (s.status === 'idle' && !s.pinned && !s.active && s.idleMs >= IDLE_TTL_MS) {
+        this.session.stopEngineKeepTranscript(s.key);
+      }
+    }
+    return sample;
+  }
+
+  /** Start the periodic lifecycle sampler. Called by the real entry point (index.js),
+   *  NOT in the constructor, so tests stay deterministic (no surprise evictions). */
+  startLifecycle(intervalMs = 5000) {
+    if (this._resTimer) return;
+    this._resTimer = setInterval(() => this._lifecycleTick(), intervalMs);
+    this._resTimer.unref?.();
   }
 
   /** (Re)send the cross-project sessions list with live-busy overlay. */
@@ -280,6 +313,7 @@ export class BrokerServer {
     }));
     const apks = this._findApks();
     if (apks.length) { this._send(ws, event(EventType.APKS, { items: apks })); this._apkSig = apks.map((a) => a.rel + ':' + a.mtime).join('|'); }
+    this._send(ws, event(EventType.RESOURCES, sampleResources(this.session.liveSessions())));
     // Current effort + whatever model labels we already know (no probe spawn here).
     this._send(ws, event(EventType.EFFORT, { level: this.session.effort }));
     this._send(ws, this._modelsEvent());
@@ -389,9 +423,21 @@ export class BrokerServer {
         return this.broadcast(event(EventType.PERMISSION_MODE, { mode: cmd.mode }));
 
       // session / engine
-      case CommandType.NEW_SESSION:
-        this.transcript.clear();
-        return this.session.newSession();
+      case CommandType.NEW_SESSION: {
+        // A new concurrent session (fresh tab) in the active folder; siblings keep
+        // running. Point the transcript at the new key and start it blank.
+        await this.session.newSession();
+        this.transcript.setProject(this.session.activeKey);
+        this.broadcast(event(EventType.TRANSCRIPT, { events: this.transcript.replay(), reset: true }));
+        this.broadcast(event(EventType.SESSIONS, { items: this.session.liveSessions(), activeKey: this.session.activeKey }));
+        return;
+      }
+      case CommandType.SESSION_STOP:
+        await this.session.stopEngineKeepTranscript(cmd.key);
+        return this.broadcast(event(EventType.SESSIONS, { items: this.session.liveSessions(), activeKey: this.session.activeKey }));
+      case CommandType.SESSION_PIN:
+        this.session.setPinned(cmd.key, cmd.pinned);
+        return this.broadcast(event(EventType.SESSIONS, { items: this.session.liveSessions(), activeKey: this.session.activeKey }));
       case CommandType.RESUME: {
         // Resume a session in ITS OWN project (so the engine spawns with the right
         // cwd and other projects' background engines stay alive — switching project
@@ -400,7 +446,7 @@ export class BrokerServer {
         const meta = all.find((s) => s.id === cmd.sessionId);
         let projectId = cmd.projectId || meta?.projectId || null;
         if (projectId && this.projects.get(projectId)) {
-          if (projectId !== this.session.activeKey) {
+          if (projectId !== this.projects.activeId) {
             this.projects.setActive(projectId);
             this.broadcast(event(EventType.PROJECTS, this.projects.snapshot()));
           }
@@ -459,8 +505,11 @@ export class BrokerServer {
       case CommandType.LIST_LIVE_SESSIONS:
         return this._send(ws, event(EventType.SESSIONS, { items: this.session.liveSessions(), activeKey: this.session.activeKey }));
       case CommandType.SWITCH_SESSION: {
-        if (cmd.key && cmd.key !== '__main__') {
-          this.projects.setActive(cmd.key);
+        // A session key may be suffixed (projA#2), so resolve its folder via meta;
+        // keep projects.activeId synced to the focused session's project.
+        const pid = this.session.meta.get(cmd.key)?.projectId || (cmd.key && cmd.key !== '__main__' ? cmd.key : null);
+        if (pid && this.projects.get(pid) && pid !== this.projects.activeId) {
+          this.projects.setActive(pid);
           this.broadcast(event(EventType.PROJECTS, this.projects.snapshot()));
         }
         await this._switchView(cmd.key);

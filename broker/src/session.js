@@ -18,16 +18,19 @@ const MAIN_KEY = '__main__'; // session key when no project is open
  * active key without stopping the previous engine.
  */
 export class SessionManager {
-  constructor({ config, profiles, secrets, getActiveProject, emit }) {
+  constructor({ config, profiles, secrets, getActiveProject, getProject, emit }) {
     this.config = config;
     this.profiles = profiles;
     this.secrets = secrets;
     this.getActiveProject = getActiveProject;
+    this.getProject = getProject || (() => null); // resolve a project descriptor by id (for cold-resume cwd)
     this.emit = emit;
 
-    this.engines = new Map(); // key -> engine (one live session per project)
-    this.meta = new Map(); // key -> { busy, lastStatus, profileId, model, sessionId, projectId }
-    this.activeKey = this._keyFor(getActiveProject());
+    this.engines = new Map(); // sessionKey -> engine (MANY live sessions, may share a project)
+    this.meta = new Map(); // sessionKey -> { busy, lastStatus, profileId, model, sessionId, projectId, lastActivityTs, pinned, title }
+    this._activeKeyByProject = new Map(); // projectId -> the project's currently-bound session key
+    this._keySeq = 0; // suffix counter for additional concurrent sessions in the same folder
+    this.activeKey = this._sessionKeyFor(getActiveProject());
     this.activeProfileId = config.defaultProfile;
     this.permissionMode = config.permissionMode || 'default'; // global default for new engines
     this.effort = config.effort || 'high'; // low|medium|high|xhigh|max|ultracode (global pref)
@@ -38,7 +41,31 @@ export class SessionManager {
     this.lastCapabilities = null; // mirror of the ACTIVE session
   }
 
-  _keyFor(project) { return project?.id || MAIN_KEY; }
+  /**
+   * The session key bound to a project's foreground session. For the FIRST session
+   * of a project the key === projectId, so all existing project-keyed behavior (and
+   * tests) is unchanged. `fresh` mints an additional suffixed key for a second+
+   * concurrent session in the same folder (`projA#2`), and binds it as the project's
+   * current session.
+   */
+  _sessionKeyFor(project, { fresh = false } = {}) {
+    const pid = project?.id || MAIN_KEY;
+    const bound = this._activeKeyByProject.get(pid);
+    if (!fresh) {
+      if (bound) return bound;
+      this._activeKeyByProject.set(pid, pid); // first session: key === projectId
+      return pid;
+    }
+    // Use the bare projectId only when it's truly unused; otherwise mint a fresh,
+    // non-colliding suffix so a new tab can never overwrite a live engine.
+    if (!bound && !this.meta.has(pid)) { this._activeKeyByProject.set(pid, pid); return pid; }
+    let key;
+    do { key = `${pid}#${++this._keySeq}`; } while (this.meta.has(key));
+    this._activeKeyByProject.set(pid, key);
+    return key;
+  }
+
+  _projectById(id) { return (id && this.getProject(id)) || null; }
 
   /** The engine the UI is currently viewing (back-compat for `session.engine`). */
   get engine() { return this.engines.get(this.activeKey) || null; }
@@ -48,10 +75,31 @@ export class SessionManager {
   async ensureEngine(key = this.activeKey) {
     const e = this.engines.get(key);
     if (e && e.state !== 'stopped') return e;
-    return this.startEngine(this.activeProfileId, {});
+    const m = this.meta.get(key);
+    if (m) {
+      // Cold-resume a previously-live (idle-evicted) session in ITS OWN folder —
+      // never the globally-active project, or it would resume in the wrong cwd.
+      const project = this._projectById(m.projectId);
+      const resumeId = m.sessionId || (m.projectId ? this._sessionByProject[m.projectId] : null);
+      // Pass the stored cwd so a session whose project folder was deleted resumes in
+      // its OWN (now-missing) folder and fails loudly, never silently in another one.
+      return this.startEngine(m.profileId || this.activeProfileId, { key, project, cwd: m.cwd, resumeId });
+    }
+    return this.startEngine(this.activeProfileId, { key });
   }
 
-  async startEngine(profileId, { resumeId, model } = {}) {
+  async startEngine(profileId, opts = {}) {
+    // Serialize engine (re)starts so closely-timed restarts can't overwrite each
+    // other's engine and orphan a child `claude` process.
+    const prev = this._startLock || Promise.resolve();
+    let release;
+    this._startLock = new Promise((r) => { release = r; });
+    try { await prev; return await this._startEngineInner(profileId, opts); }
+    finally { release(); }
+  }
+
+  async _startEngineInner(profileId, opts = {}) {
+    const { resumeId, model } = opts;
     const profile = this.profiles.get(profileId);
     if (!profile) { this._emitError(`No such profile: ${profileId}`); return null; }
     if (!this.secrets.isReady(profile)) {
@@ -61,15 +109,34 @@ export class SessionManager {
       return null;
     }
 
-    const project = this.getActiveProject();
-    const key = this._keyFor(project);
+    // Resolve which session (key) + folder (project) this engine is for.
+    let key, project;
+    if (opts.fresh) {
+      project = opts.project || this.getActiveProject();
+      key = this._sessionKeyFor(project, { fresh: true }); // a NEW concurrent session
+    } else if (opts.key) {
+      key = opts.key;
+      project = opts.project || this._projectById(this.meta.get(key)?.projectId) || this.getActiveProject();
+    } else {
+      // Restart the active session in place (effort/model/permission/profile change),
+      // or first creation. Reuse activeKey ONLY when it belongs to THIS project — else
+      // (e.g. RESUME after setActive desyncs activeKey from the active folder) derive
+      // the project's own key so we never clobber a different folder's live session.
+      project = opts.project || this.getActiveProject();
+      const pid = project?.id ?? null;
+      const canReuse = this.activeKey && this.meta.has(this.activeKey) && (this.meta.get(this.activeKey).projectId ?? null) === pid;
+      key = canReuse ? this.activeKey : this._sessionKeyFor(project);
+    }
+    const prevMeta = this.meta.get(key); // preserve pin/title/projectId/cwd across a restart
     this.activeKey = key;
-    // Replace only THIS key's engine (a fresh/resumed session for the active view).
-    await this.stopEngine(key);
+    await this.stopEngine(key); // replace only THIS key's engine
 
-    const cwd = project?.dir || this.config.projectsDir;
+    // The session's folder: prefer an explicit cwd (cold-resume keeps its OWN folder
+    // even if the project was deleted), then the resolved project, then the prior cwd.
+    const cwd = opts.cwd || project?.dir || prevMeta?.cwd || this.config.projectsDir;
+    const projectId = prevMeta?.projectId ?? project?.id ?? null; // an existing session's own folder id wins (cold-resume after a fallback)
     const env = this.secrets.envForProfile(profile);
-    const resolvedResume = resumeId ?? (project ? this._sessionByProject[project.id] : null) ?? null;
+    const resolvedResume = resumeId ?? prevMeta?.sessionId ?? (projectId ? this._sessionByProject[projectId] : null) ?? null;
 
     // Keep the chosen model across non-model restarts; drop it on a profile change.
     const profileChanged = profileId !== this.activeProfileId;
@@ -88,9 +155,13 @@ export class SessionManager {
       log: (m) => this._log(m),
     });
     this.engines.set(key, engine);
-    this.meta.set(key, { busy: false, lastStatus: StatusState.IDLE, profileId, model: chosen, sessionId: null, projectId: project?.id || null });
+    this.meta.set(key, {
+      busy: false, lastStatus: StatusState.IDLE, profileId, model: chosen,
+      sessionId: resolvedResume || null, projectId, cwd,
+      lastActivityTs: Date.now(), pinned: prevMeta?.pinned || false, title: prevMeta?.title || null,
+    });
 
-    engine.on('event', (ev) => this._onEngineEvent(ev, project, key));
+    engine.on('event', (ev) => this._onEngineEvent(ev, projectId, key));
     engine.on('engine_state', (state) => {
       this.emit(event(EventType.ENGINE_STATE, { state, profileId, model: engine.model, sessionKey: key }));
     });
@@ -118,10 +189,27 @@ export class SessionManager {
     await Promise.all(all.map((e) => e.stop().catch(() => {})));
   }
 
+  /** Idle-evict (or manually stop) a live engine but KEEP its meta + transcript +
+   *  resume hint, so it cold-resumes later on focus/send. */
+  async stopEngineKeepTranscript(key) {
+    if (!this.engines.has(key)) return;
+    await this.stopEngine(key); // deletes the engine; meta (with sessionId) survives
+    this._emitSessions();
+  }
+
+  /** Pin/unpin a session so the memory backstop never evicts it (keep-warm). */
+  setPinned(key, pinned) {
+    const m = this.meta.get(key);
+    if (!m) return;
+    m.pinned = !!pinned;
+    this._emitSessions();
+  }
+
   /** Switch which session the UI is viewing WITHOUT stopping the others. */
   async setActiveKey(key) {
     this.activeKey = key;
     const m = this.meta.get(key);
+    if (m) m.lastActivityTs = Date.now(); // focusing a tab counts as activity (resets its idle timer)
     this._lastStatus = m?.lastStatus || StatusState.IDLE;
     this.currentModel = m?.model || this.currentModel;
     this.lastCapabilities = this.engines.get(key)?._lastCaps || null;
@@ -130,13 +218,23 @@ export class SessionManager {
     return e;
   }
 
-  /** Live sessions (one per project with an engine), for the sessions screen. */
+  /** Live sessions (engines currently running), for the sessions screen + resources. */
   liveSessions() {
+    const now = Date.now();
     const out = [];
     for (const [key, m] of this.meta) {
-      if (!this.engines.has(key)) continue;
-      out.push({ key, projectId: m.projectId, profileId: m.profileId, model: m.model,
-        sessionId: m.sessionId, busy: !!m.busy, lastStatus: m.lastStatus, active: key === this.activeKey });
+      const e = this.engines.get(key);
+      if (!e) continue; // idle-evicted sessions hold no process -> not "live"
+      out.push({
+        key, projectId: m.projectId, profileId: m.profileId, model: m.model,
+        sessionId: m.sessionId, busy: !!m.busy, lastStatus: m.lastStatus,
+        active: key === this.activeKey,
+        pid: e.proc?.pid ?? null,
+        status: m.busy ? 'working' : 'idle',
+        idleMs: m.busy ? 0 : (m.lastActivityTs ? Math.max(0, now - m.lastActivityTs) : 0),
+        pinned: !!m.pinned,
+        title: m.title || null,
+      });
     }
     return out;
   }
@@ -185,11 +283,10 @@ export class SessionManager {
     return this.startEngine(this.activeProfileId, { resumeId });
   }
 
+  /** Start a NEW concurrent session in the active folder (a fresh tab), leaving any
+   *  existing sessions in that folder running in the background. */
   async newSession() {
-    const project = this.getActiveProject();
-    if (project) delete this._sessionByProject[project.id];
-    this._saveSessions();
-    return this.startEngine(this.activeProfileId, { resumeId: null });
+    return this.startEngine(this.activeProfileId, { project: this.getActiveProject(), fresh: true, resumeId: null });
   }
 
   async resume(sessionId) { return this.startEngine(this.activeProfileId, { resumeId: sessionId }); }
@@ -197,8 +294,20 @@ export class SessionManager {
   /** Forget a key's persisted resume id (so a deleted session is never --resume'd)
    *  and tear down its engine if live. Used when a session's .jsonl is deleted. */
   async forgetSession(key) {
-    if (key && key !== MAIN_KEY) { delete this._sessionByProject[key]; this._saveSessions(); }
+    const m = this.meta.get(key);
+    const pid = m?.projectId;
+    // Clear the per-project resume hint only if it pointed at THIS session's id
+    // (don't orphan sibling sessions that share the folder).
+    if (m?.sessionId && pid && this._sessionByProject[pid] === m.sessionId) { delete this._sessionByProject[pid]; this._saveSessions(); }
+    if (key && key !== MAIN_KEY && this._sessionByProject[key]) { delete this._sessionByProject[key]; this._saveSessions(); } // legacy: key may be a projectId
     if (this.engines.has(key)) await this.stopEngine(key);
+    this.meta.delete(key);
+    if (pid && this._activeKeyByProject.get(pid) === key) {
+      // Rebind the project to a surviving sibling session (or drop it if none) so the
+      // bound key never dangles — a later newSession would otherwise collide on `pid`.
+      const sibling = [...this.meta.keys()].find((k) => this.meta.get(k)?.projectId === pid);
+      if (sibling) this._activeKeyByProject.set(pid, sibling); else this._activeKeyByProject.delete(pid);
+    }
     this._emitSessions();
   }
 
@@ -218,17 +327,17 @@ export class SessionManager {
 
   // --- internals --------------------------------------------------------------
 
-  _onEngineEvent(ev, project, key) {
+  _onEngineEvent(ev, projectId, key) {
     ev.sessionKey = key; // every engine event is tagged with its owning session
     const m = this.meta.get(key);
     if (ev.type === EventType.SESSION_META && ev.sessionId) {
-      if (project) { this._sessionByProject[project.id] = ev.sessionId; this._saveSessions(); }
+      if (projectId) { this._sessionByProject[projectId] = ev.sessionId; this._saveSessions(); }
       if (m) m.sessionId = ev.sessionId;
     }
     if (ev.type === EventType.STATUS && ev.state) {
       const busy = ev.state !== StatusState.IDLE && ev.state !== StatusState.ERROR;
       const changed = !m || m.busy !== busy || m.lastStatus !== ev.state;
-      if (m) { m.lastStatus = ev.state; m.busy = busy; }
+      if (m) { m.lastStatus = ev.state; m.busy = busy; m.lastActivityTs = Date.now(); } // any status change = activity (resets idle timer)
       if (key === this.activeKey) this._lastStatus = ev.state;
       // Keep the sessions screen + nav badge live for EVERY session (active too),
       // so a working session always shows its indicator.
@@ -240,7 +349,7 @@ export class SessionManager {
     }
     if (ev.type === EventType.PERMISSION_MODE && ev.mode && key === this.activeKey) this.permissionMode = ev.mode;
     if (ev.type === EventType.SESSION_META && ev.sessionId) this._emitSessions(); // sessionId now known
-    if (ev.type === EventType.RESULT && m && m.busy) { m.busy = false; this._emitSessions(); }
+    if (ev.type === EventType.RESULT && m) { if (m.busy) m.busy = false; m.lastActivityTs = Date.now(); this._emitSessions(); }
     this.emit(ev);
   }
 

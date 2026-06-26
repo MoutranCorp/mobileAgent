@@ -19,6 +19,7 @@ async function main() {
   const config = loadConfig();
   const server = new BrokerServer(config);
   await server.start();
+  server.startLifecycle(); // periodic resource sampling + idle-session eviction (real runtime only)
 
   // Auto-start the engine so the UI is live immediately. For the mock profile
   // this needs nothing; for claude-max it requires a logged-in CLI.
