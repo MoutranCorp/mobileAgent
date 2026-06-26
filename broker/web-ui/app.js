@@ -220,6 +220,7 @@
       case 'control_output': onControlOutput(ev); break;
       case 'control_status': appendTerminalMeta(`[${ev.channel}] ${ev.state}${ev.detail ? ': ' + ev.detail : ''}`); break;
       case 'metro_status': onMetro(ev); break;
+      case 'apks': onApks(ev); break;
       case 'git_status': onGitStatus(ev); break;
       case 'projects': onProjects(ev); break;
       case 'profiles': onProfiles(ev); break;
@@ -303,6 +304,7 @@
     state.toolCards.clear();
     state.approvals.clear();
     if (typeof htmlApps !== 'undefined') htmlApps.clear();
+    if (typeof apkWidgets !== 'undefined') apkWidgets.clear();
     state.pendingSent = [];
     applyActivity();
   }
@@ -582,18 +584,27 @@
   // sandboxed iframe (served from the project via /preview) or opens it full.
   const htmlApps = new Map(); // filePath -> widget state
 
-  function htmlAppUrl(filePath) {
-    // /preview/<rel> serves files RELATIVE to the active project dir, but the
-    // agent often writes an ABSOLUTE file_path (e.g. /root/projects/Test/index.html).
-    // Strip the active project's dir prefix so the path is project-relative.
+  // Agents often write an ABSOLUTE file_path (e.g. /root/projects/Test/index.html);
+  // /preview and /download serve RELATIVE to the active project dir, so strip it.
+  function projectRelPath(filePath) {
     let p = String(filePath).replace(/\\/g, '/');
     const proj = state.projects.find((x) => x.id === state.activeProjectId) || state.projects.find((x) => x.active);
     const dir = proj && proj.dir ? String(proj.dir).replace(/\\/g, '/').replace(/\/+$/, '') : '';
     if (dir && (p === dir || p.startsWith(dir + '/'))) p = p.slice(dir.length).replace(/^\/+/, '');
-    p = p.replace(/^[.]\/+/, '');
-    const abs = p.startsWith('/'); // unmatched absolute path — let the broker's resolve guard it
-    const enc = p.split('/').filter(Boolean).map(encodeURIComponent).join('/');
-    return '/preview/' + (abs ? '/' : '') + enc;
+    return p.replace(/^[.]\/+/, '');
+  }
+  function _previewish(prefix, filePath) {
+    const rel = projectRelPath(filePath);
+    const abs = rel.startsWith('/'); // unmatched absolute — let the broker's resolve guard it
+    return prefix + (abs ? '/' : '') + rel.split('/').filter(Boolean).map(encodeURIComponent).join('/');
+  }
+  function htmlAppUrl(filePath) { return _previewish('/preview/', filePath); }
+  function downloadFile(filePath, name) {
+    const url = _previewish('/download/', filePath);
+    const fname = name || String(filePath).split(/[\\/]/).pop();
+    if (native.has('openExternal')) { native.openExternal(location.origin + url); toast('Opening to download…', 'info'); return; }
+    const a = document.createElement('a'); a.href = url; a.download = fname || ''; a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); a.remove();
   }
   function addHtmlAppWidget(filePath) {
     hideEmpty();
@@ -606,26 +617,48 @@
       scrollDown();
       return;
     }
+    const fname = String(filePath).split(/[\\/]/).pop();
     const card = el('div', 'html-app');
     const head = el('div', 'html-app-head');
     const icon = el('span', 'html-app-icon', '📱');
-    const name = el('span', 'html-app-name', String(filePath).split(/[\\/]/).pop());
+    const name = el('span', 'html-app-name', fname);
     const runBtn = el('button', 'ghost small', 'Hide');
+    const codeBtn = el('button', 'ghost small', '</> Code');
+    const dlBtn = el('button', 'ghost small', '⬇');
     const openBtn = el('button', 'primary small', '⤢ Open');
+    codeBtn.title = 'View source'; dlBtn.title = 'Download'; openBtn.title = 'Open full screen';
     const actions = el('div', 'html-app-actions');
-    actions.appendChild(runBtn); actions.appendChild(openBtn);
+    actions.appendChild(runBtn); actions.appendChild(codeBtn); actions.appendChild(dlBtn); actions.appendChild(openBtn);
     head.appendChild(icon); head.appendChild(name); head.appendChild(actions);
     const bodyEl = el('div', 'html-app-body');
-    card.appendChild(head); card.appendChild(bodyEl);
+    const codeEl = el('div', 'html-app-code hidden');
+    card.appendChild(head); card.appendChild(bodyEl); card.appendChild(codeEl);
     $('transcript').appendChild(card);
-    w = { card, body: bodyEl, runBtn, url, running: false, frame: null };
+    w = { card, body: bodyEl, code: codeEl, runBtn, codeBtn, url, filePath, running: false, frame: null, codeShown: false };
     htmlApps.set(filePath, w);
     runBtn.onclick = () => (w.running ? hideHtmlApp(w) : runHtmlApp(w));
+    codeBtn.onclick = () => toggleHtmlCode(w);
+    dlBtn.onclick = () => downloadFile(filePath, fname);
     openBtn.onclick = () => {
       const full = location.origin + w.url;
       if (native.has('openExternal')) native.openExternal(full); else window.open(full, '_blank', 'noopener');
     };
     runHtmlApp(w); // show it immediately
+    scrollDown();
+  }
+  async function toggleHtmlCode(w) {
+    if (w.codeShown) { w.code.classList.add('hidden'); w.codeShown = false; w.codeBtn.classList.remove('on'); return; }
+    w.codeShown = true; w.codeBtn.classList.add('on'); w.code.classList.remove('hidden');
+    w.code.innerHTML = '<button class="code-copy" type="button">Copy</button><pre><code></code></pre>';
+    const codeNode = w.code.querySelector('code');
+    codeNode.textContent = 'Loading…';
+    try {
+      const r = await fetch(w.url, { cache: 'no-store' });
+      const text = await r.text();
+      codeNode.textContent = text;
+      // Reuse the delegated .code-copy handler (it reads dataset.copy verbatim).
+      w.code.querySelector('.code-copy').dataset.copy = text;
+    } catch (e) { codeNode.textContent = '(could not load source: ' + (e.message || e) + ')'; }
     scrollDown();
   }
   function runHtmlApp(w) {
@@ -641,6 +674,44 @@
   }
   function hideHtmlApp(w) {
     w.body.innerHTML = ''; w.frame = null; w.running = false; w.runBtn.textContent = 'Run';
+  }
+
+  // ---- APK / build-artifact widget ----------------------------------------
+  // Files live in the proot rootfs (invisible to the phone's Files app). When a
+  // build produces an .apk/.aab, surface a one-tap "Save to Downloads" — the
+  // browser's download lands it in the real Downloads folder the user can see.
+  const apkWidgets = new Map(); // rel -> { card, mtime, sub }
+  function humanSize(n) {
+    n = Number(n) || 0;
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return Math.round(n / 1024) + ' KB';
+    return (n / 1048576).toFixed(1) + ' MB';
+  }
+  function onApks(ev) { for (const a of (ev.items || [])) addApkWidget(a); }
+  function addApkWidget(a) {
+    hideEmpty();
+    let w = apkWidgets.get(a.rel);
+    if (w) {
+      if (w.mtime === a.mtime) return; // unchanged — don't churn the UI
+      w.mtime = a.mtime;
+      w.sub.textContent = humanSize(a.size) + ' · updated · ' + a.rel;
+      $('transcript').appendChild(w.card); // bump a rebuilt artifact to the bottom
+      w.card.classList.remove('flash'); void w.card.offsetWidth; w.card.classList.add('flash');
+      scrollDown();
+      return;
+    }
+    const card = el('div', 'apk-app flash');
+    const icon = el('span', 'apk-icon', '📦');
+    const info = el('div', 'apk-info');
+    const name = el('div', 'apk-name', a.name);
+    const sub = el('div', 'apk-sub', humanSize(a.size) + ' · ' + a.rel);
+    info.appendChild(name); info.appendChild(sub);
+    const dl = el('button', 'primary small', '⬇ Save to Downloads');
+    dl.onclick = () => downloadFile(a.rel, a.name);
+    card.appendChild(icon); card.appendChild(info); card.appendChild(dl);
+    $('transcript').appendChild(card);
+    apkWidgets.set(a.rel, { card, mtime: a.mtime, sub });
+    scrollDown();
   }
 
   // ---- approvals -----------------------------------------------------------

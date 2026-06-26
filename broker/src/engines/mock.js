@@ -108,6 +108,7 @@ export class MockEngine extends EngineAdapter {
       return this._finish(false);
     }
 
+    const wantsApk = /\b(apk|aab|gradle|sideload|android build|release build|assemble)\b/i.test(text);
     const wantsHtml = /\b(html|website|web ?app|micro ?app|landing|web ?page)\b/i.test(text);
     const wantsScreen = /\b(screen|component|button|build|make|create|add)\b/i.test(text);
     const wantsRun = /\b(run|test|start|install|npm|expo)\b/i.test(text);
@@ -126,6 +127,8 @@ export class MockEngine extends EngineAdapter {
 
     if (wantsAgent) {
       await this._simulateSubagent(text);
+    } else if (wantsApk) {
+      await this._simulateApkBuild(text);
     } else if (wantsHtml) {
       await this._simulateHtmlWrite(text);
     } else if (wantsScreen) {
@@ -330,6 +333,25 @@ export class MockEngine extends EngineAdapter {
     await delay(120);
     this.emitEvent(EventType.TOOL_RESULT, { id, status: 'ok', output: `Wrote ${after.split('\n').length} lines to ${rel}` });
     await this._streamText(`\nDone — your **${rel}** microapp is ready. Run it in the widget above, or open it in a new window.`);
+  }
+
+  /** Simulate a release build that drops an .apk artifact (for the APK widget). */
+  async _simulateApkBuild(userText) {
+    const id = `tool_${this._stableId()}`;
+    const rel = 'android/app/build/outputs/apk/release/app-release.apk';
+    const abs = path.join(this.cwd, rel);
+    this.emitEvent(EventType.TOOL_CALL, { id, name: 'Bash', input: { command: './gradlew assembleRelease' } });
+    this.emitEvent(EventType.CONTROL_STATUS, { channel: 'build', state: 'running', detail: 'assembleRelease' });
+    this.emitStatus(StatusState.RUNNING, 'Building release APK');
+    await delay(220);
+    await fs.mkdir(path.dirname(abs), { recursive: true });
+    // A small fake binary so the scan + download + widget have a real artifact.
+    const bytes = Buffer.concat([Buffer.from('PK\x03\x04mock-apk\n'), Buffer.alloc(2048, 7)]);
+    await fs.writeFile(abs, bytes);
+    await delay(80);
+    this.emitEvent(EventType.TOOL_RESULT, { id, status: 'ok', output: `BUILD SUCCESSFUL in 12s\nAPK: ${rel} (${bytes.length} bytes)` });
+    this.emitEvent(EventType.CONTROL_STATUS, { channel: 'build', state: 'done', detail: rel });
+    await this._streamText(`\nBuild succeeded — **${rel.split('/').pop()}** is ready. Tap **Save to Downloads** in the widget above.`);
   }
 
   _requestPermission(action, detail, extra = {}) {

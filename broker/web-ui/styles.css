@@ -342,6 +342,27 @@ svg { display: block; }
 .html-app-body { background: #fff; }
 .html-app-iframe { display: block; width: 100%; height: 420px; border: none; background: #fff; }
 @media (max-width: 720px) { .html-app-iframe { height: 68dvh; } }
+.html-app-actions .ghost.small.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.html-app-code { position: relative; max-height: 360px; overflow: auto; background: var(--sys-bg-1);
+  border-top: .5px solid var(--separator); }
+.html-app-code.hidden { display: none; }
+.html-app-code pre { margin: 0; padding: 12px 12px 14px; }
+.html-app-code pre code { font-family: var(--mono); font-size: 12px; line-height: 1.5; color: var(--label);
+  white-space: pre; display: block; }
+.html-app-code .code-copy { opacity: .9; }
+
+/* ===================== APK / build-artifact widget ===================== */
+.apk-app { display: flex; align-items: center; gap: 11px; padding: 12px 13px; background: var(--sys-bg-2);
+  border: .5px solid var(--separator); border-radius: var(--r-md); box-shadow: var(--sh-1); flex: 0 0 auto; }
+.apk-icon { font-size: 22px; flex: 0 0 auto; }
+.apk-info { flex: 1; min-width: 0; }
+.apk-name { font-family: var(--mono); font-size: 13px; font-weight: 640; color: var(--label);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.apk-sub { font-size: 11px; color: var(--label-3); margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.apk-app .primary.small { flex: 0 0 auto; white-space: nowrap; }
+.apk-app.flash { animation: apk-flash 1.1s ease-out; }
+@keyframes apk-flash { 0% { box-shadow: 0 0 0 2px var(--accent); } 100% { box-shadow: var(--sh-1); } }
 
 /* =============================== tool cards ============================= */
 .tool-card {

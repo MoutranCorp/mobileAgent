@@ -161,6 +161,11 @@ export class BrokerServer {
           // Self-healing verify runs for the foreground session only (Phase 1).
           if (key === activeKey) this.autoverify.onTurnComplete(proj.dir);
         }
+        this._maybeBroadcastApks();
+      }
+      // A build (run/eas/gradle) finishing may have produced an .apk/.aab.
+      if (ev.type === EventType.CONTROL_STATUS && (ev.state === 'done' || ev.state === 'exited')) {
+        this._maybeBroadcastApks();
       }
     } catch {
       /* never let bookkeeping break the stream */
@@ -273,6 +278,8 @@ export class BrokerServer {
       enabled: this.autoverify.enabled, command: this.autoverify.command,
       maxIterations: this.autoverify.maxIterations, iteration: this.autoverify.iteration,
     }));
+    const apks = this._findApks();
+    if (apks.length) { this._send(ws, event(EventType.APKS, { items: apks })); this._apkSig = apks.map((a) => a.rel + ':' + a.mtime).join('|'); }
     // Current effort + whatever model labels we already know (no probe spawn here).
     this._send(ws, event(EventType.EFFORT, { level: this.session.effort }));
     this._send(ws, this._modelsEvent());
@@ -677,6 +684,8 @@ export class BrokerServer {
       }
 
       // controls
+      case CommandType.LIST_APKS:
+        return this._send(ws, event(EventType.APKS, { items: this._findApks() }));
       case CommandType.START_METRO:
         return this.devtools.startMetro(cmd.projectId);
       case CommandType.STOP_METRO:
@@ -707,6 +716,11 @@ export class BrokerServer {
     // previewed in an iframe. Path-guarded to the project dir.
     if (urlPath === '/preview' || urlPath.startsWith('/preview/')) {
       return this._servePreview(urlPath, res);
+    }
+    // /download/* serves an active-project file as an attachment (browser saves
+    // it to the Downloads folder, which IS visible in the phone's Files app).
+    if (urlPath.startsWith('/download/')) {
+      return this._serveDownload(urlPath, res);
     }
     let rel = urlPath === '/' ? 'index.html' : urlPath.replace(/^\/+/, '');
     // Prevent path traversal (require a separator so a sibling dir sharing the
@@ -755,6 +769,63 @@ export class BrokerServer {
     });
   }
 
+  _serveDownload(urlPath, res) {
+    const project = this.projects.getActive();
+    if (!project) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('no active project'); }
+    const root = path.resolve(project.dir);
+    const rel = urlPath.replace(/^\/download\/?/, '');
+    const filePath = path.resolve(root, rel);
+    if (filePath !== root && !filePath.startsWith(root + path.sep)) { res.writeHead(403); return res.end('forbidden'); }
+    fs.readFile(filePath, (err, data) => {
+      if (err) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('not found: ' + rel); }
+      const name = path.basename(filePath).replace(/[\r\n"]/g, '');
+      res.writeHead(200, {
+        'content-type': contentType(filePath),
+        'content-disposition': `attachment; filename="${name}"`,
+        'content-length': data.length,
+        'cache-control': 'no-cache',
+      });
+      res.end(data);
+    });
+  }
+
+  /** Find built Android artifacts (.apk/.aab) in the active project (bounded). */
+  _findApks() {
+    const project = this.projects.getActive();
+    if (!project) return [];
+    const root = path.resolve(project.dir);
+    const SKIP = new Set(['node_modules', '.git', '.expo', '.gradle', 'ios', 'Pods']);
+    const out = [];
+    const walk = (dir, depth) => {
+      if (depth > 7 || out.length >= 30) return;
+      let entries;
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        if (out.length >= 30) break;
+        if (e.isDirectory()) {
+          if (!SKIP.has(e.name) && !e.name.startsWith('.')) walk(path.join(dir, e.name), depth + 1);
+        } else if (/\.(apk|aab)$/i.test(e.name)) {
+          const full = path.join(dir, e.name);
+          try {
+            const st = fs.statSync(full);
+            out.push({ rel: path.relative(root, full).split(path.sep).join('/'), name: e.name, size: st.size, mtime: st.mtimeMs });
+          } catch { /* ignore */ }
+        }
+      }
+    };
+    walk(root, 0);
+    return out.sort((a, b) => b.mtime - a.mtime);
+  }
+
+  /** Scan for APKs and broadcast only when the set/mtimes changed. */
+  _maybeBroadcastApks() {
+    const items = this._findApks();
+    const sig = items.map((a) => a.rel + ':' + a.mtime).join('|');
+    if (sig === this._apkSig) return;
+    this._apkSig = sig;
+    if (items.length) this.broadcast(event(EventType.APKS, { items }));
+  }
+
   _log(message) {
     if (this.config.verbose) process.stderr.write(`[broker] ${message}\n`);
   }
@@ -779,6 +850,8 @@ function contentType(file) {
       '.woff2': 'font/woff2',
       '.ttf': 'font/ttf',
       '.wasm': 'application/wasm',
+      '.apk': 'application/vnd.android.package-archive',
+      '.aab': 'application/octet-stream',
       '.map': 'application/json',
       '.txt': 'text/plain; charset=utf-8',
       '.mjs': 'text/javascript; charset=utf-8',

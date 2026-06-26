@@ -116,7 +116,28 @@ try {
   console.log('CHECK html-app iframe present:', await page.evaluate(() => !!document.querySelector('.html-app .html-app-iframe')));
   console.log('CHECK html-app height:', await page.evaluate(() => { const a = document.querySelector('.html-app'); return a ? Math.round(a.getBoundingClientRect().height) : 0; }));
   await shot('08-html-app');
+  // View-source toggle on the HTML widget.
+  const codeBtn = page.locator('.html-app-actions .ghost.small', { hasText: 'Code' });
+  if (await codeBtn.count()) {
+    await codeBtn.first().click(); await sleep(700);
+    console.log('CHECK html-app source shown:', await page.evaluate(() => { const c = document.querySelector('.html-app-code'); return !!c && !c.classList.contains('hidden') && (c.querySelector('code')?.textContent || '').length > 10; }));
+    await page.evaluate(() => { const a = document.querySelector('.html-app'); if (a) a.scrollIntoView({ block: 'center' }); });
+    await shot('08b-html-code');
+  }
 } catch (e) { console.log('html-app err', e.message); }
+
+// APK build widget (mock writes android/.../app-release.apk for a build prompt)
+try {
+  await page.fill('#input', 'build the release apk');
+  await page.dispatchEvent('#input', 'input');
+  await page.click('#sendBtn');
+  await sleep(2600);
+  await page.evaluate(() => { const a = document.querySelector('.apk-app'); if (a) a.scrollIntoView({ block: 'center' }); });
+  await sleep(500);
+  console.log('CHECK apk widget present:', await page.evaluate(() => !!document.querySelector('.apk-app')));
+  console.log('CHECK apk save button:', await page.evaluate(() => { const b = document.querySelector('.apk-app .primary'); return b ? b.textContent : null; }));
+  await shot('09-apk');
+} catch (e) { console.log('apk err', e.message); }
 
 await browser.close();
 if (errors.length) { console.error('\n*** JS ERRORS ***'); errors.forEach((e) => console.error('  -', e)); process.exit(1); }

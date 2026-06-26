@@ -41,6 +41,7 @@ export const EventType = Object.freeze({
   CONTROL_OUTPUT: 'control_output', // { channel, stream: 'stdout'|'stderr', data }
   CONTROL_STATUS: 'control_status', // { channel, state, detail? }
   METRO_STATUS: 'metro_status', // { running, port, url, projectId }
+  APKS: 'apks', // { items: [{ rel, name, size, mtime }] } built Android artifacts (.apk/.aab)
   GIT_STATUS: 'git_status', // { ... }
   PROJECTS: 'projects', // { projects: [...], activeProjectId }
   WORKSPACE_BROWSE: 'workspace_browse', // { path, parent, dirs: [{name, isProject}] }
@@ -145,6 +146,7 @@ export const CommandType = Object.freeze({
   // Checkpoint review
   CHECKPOINT_DIFF: 'checkpoint_diff', // { id } changes since a checkpoint
   // Controls
+  LIST_APKS: 'list_apks', // {} scan the project for built .apk/.aab artifacts
   START_METRO: 'start_metro', // { projectId? }
   STOP_METRO: 'stop_metro', // { projectId? }
   GIT: 'git', // { op: 'status'|'commit'|'push'|'log'|'diff'|'init', ...args }
