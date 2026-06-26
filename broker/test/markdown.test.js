@@ -60,6 +60,41 @@ test('fenced code blocks get a copy button whose data-copy round-trips the raw t
   assert.equal(decoded, code, 'copy text equals the original including quotes, &, <> and newlines');
 });
 
+test('renders a GFM pipe table with header, body and a scroll wrapper', () => {
+  const h = MD.render('| Name | Age |\n| --- | --- |\n| Ann | 30 |\n| Bob | 25 |');
+  assert.match(h, /<div class="md-table-wrap"><table>/);
+  assert.match(h, /<thead><tr><th>Name<\/th><th>Age<\/th><\/tr><\/thead>/);
+  assert.match(h, /<tbody><tr><td>Ann<\/td><td>30<\/td><\/tr><tr><td>Bob<\/td><td>25<\/td><\/tr><\/tbody>/);
+});
+
+test('table column alignment from the delimiter row becomes text-align', () => {
+  const h = MD.render('| L | C | R |\n| :-- | :-: | --: |\n| a | b | c |');
+  assert.match(h, /<th style="text-align:left">L<\/th>/);
+  assert.match(h, /<th style="text-align:center">C<\/th>/);
+  assert.match(h, /<th style="text-align:right">R<\/th>/);
+  assert.match(h, /<td style="text-align:center">b<\/td>/);
+});
+
+test('table cells render inline markdown and stay XSS-safe', () => {
+  const h = MD.render('| a | b |\n|---|---|\n| **bold** | <img src=x> |');
+  assert.match(h, /<td><strong>bold<\/strong><\/td>/);
+  assert.ok(!/<img/.test(h), 'HTML inside cells must be escaped');
+  assert.match(h, /&lt;img/);
+});
+
+test('tolerates ragged rows and missing/extra leading pipes', () => {
+  // header has 3 cols; rows are short / long / pipe-less-edges — must not throw
+  const h = MD.render('| a | b | c |\n| - | - | - |\nx | y\n| p | q | r | s |');
+  assert.doesNotThrow(() => MD.render('| a | b |\n| - | - |\n| 1 |'));
+  assert.match(h, /<td>x<\/td><td>y<\/td><td><\/td>/); // short row padded
+});
+
+test('a pipe line without a delimiter row is NOT a table', () => {
+  const h = MD.render('use a | b in prose\nand more text');
+  assert.ok(!/<table>/.test(h), 'plain text with pipes stays a paragraph');
+  assert.match(h, /<p>/);
+});
+
 test('partial input mid-stream does not throw (unterminated fence)', () => {
   assert.doesNotThrow(() => MD.render('intro\n\n```js\nconst a ='));
   const h = MD.render('intro\n\n```js\nconst a =');

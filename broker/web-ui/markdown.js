@@ -3,8 +3,9 @@
  * assistant messages. It escapes all HTML first, then layers Markdown on top, so
  * model output can never inject markup. Covers the elements chat replies use:
  * headings, bold/italic/strike, inline + fenced code, ordered/unordered lists
- * (one nesting level), blockquotes, links/autolinks, horizontal rules,
- * paragraphs and line breaks. Tolerant of partial input so it works mid-stream
+ * (one nesting level), blockquotes, links/autolinks, horizontal rules, GFM pipe
+ * tables (with column alignment), paragraphs and line breaks. Tolerant of
+ * partial input so it works mid-stream
  * (an unterminated ``` fence renders as an open code block).
  *
  * Exposed as window.MD.render(src) -> html string.
@@ -55,6 +56,66 @@
       /^\s*[-*+]\s+/.test(line) ||
       /^\s*\d+[.)]\s+/.test(line) ||
       line.indexOf(FENCE) !== -1;
+  }
+
+  // ---- GFM pipe tables --------------------------------------------------
+  // Split a table row into cell strings, honoring \| escapes and dropping the
+  // optional leading/trailing pipes.
+  function splitRow(line) {
+    var s = line.trim();
+    if (s.charAt(0) === '|') s = s.slice(1);
+    if (s.charAt(s.length - 1) === '|') s = s.slice(0, -1);
+    var cells = [];
+    var cur = '';
+    for (var k = 0; k < s.length; k++) {
+      var ch = s.charAt(k);
+      if (ch === '\\' && s.charAt(k + 1) === '|') { cur += '|'; k++; continue; }
+      if (ch === '|') { cells.push(cur); cur = ''; continue; }
+      cur += ch;
+    }
+    cells.push(cur);
+    return cells;
+  }
+  // A delimiter row is all dash-cells with optional alignment colons (| :--- | -: |).
+  function isDelimiterRow(line) {
+    if (line.indexOf('|') === -1 && !/^\s*:?-+:?\s*$/.test(line)) return false;
+    var cells = splitRow(line);
+    if (!cells.length) return false;
+    return cells.every(function (c) { return /^:?-+:?$/.test(c.trim()); });
+  }
+  // A table starts where a header line (containing a pipe) is followed by a
+  // delimiter row with a matching column count.
+  function isTableStart(lines, i) {
+    if (i + 1 >= lines.length) return false;
+    if (lines[i].indexOf('|') === -1) return false;
+    if (!isDelimiterRow(lines[i + 1])) return false;
+    return splitRow(lines[i]).length === splitRow(lines[i + 1]).length;
+  }
+  function renderTable(lines, start) {
+    var heads = splitRow(lines[start]);
+    var aligns = splitRow(lines[start + 1]).map(function (d) {
+      d = d.trim();
+      var l = d.charAt(0) === ':', r = d.charAt(d.length - 1) === ':';
+      return l && r ? 'center' : r ? 'right' : l ? 'left' : '';
+    });
+    function cell(tag, text, c) {
+      var a = aligns[c] ? ' style="text-align:' + aligns[c] + '"' : '';
+      return '<' + tag + a + '>' + inline(escapeHtml(String(text).trim())) + '</' + tag + '>';
+    }
+    var html = '<div class="md-table-wrap"><table><thead><tr>';
+    for (var c = 0; c < heads.length; c++) html += cell('th', heads[c], c);
+    html += '</tr></thead><tbody>';
+    var i = start + 2;
+    while (i < lines.length && lines[i].indexOf('|') !== -1 &&
+           !/^\s*$/.test(lines[i]) && !isDelimiterRow(lines[i])) {
+      var cells = splitRow(lines[i]);
+      html += '<tr>';
+      for (var d = 0; d < heads.length; d++) html += cell('td', cells[d] == null ? '' : cells[d], d);
+      html += '</tr>';
+      i++;
+    }
+    html += '</tbody></table></div>';
+    return { html: html, next: i };
   }
 
   // Group consecutive list lines into <ul>/<ol>, supporting one indented level.
@@ -119,10 +180,11 @@
       }
       if (/^\s*[-*+]\s+/.test(line)) { var ru = renderList(lines, i, false); html += ru.html; i = ru.next; continue; }
       if (/^\s*\d+[.)]\s+/.test(line)) { var ro = renderList(lines, i, true); html += ro.html; i = ro.next; continue; }
+      if (isTableStart(lines, i)) { var rt = renderTable(lines, i); html += rt.html; i = rt.next; continue; }
 
       // paragraph — gather until a blank line or the next block element
       var p = [];
-      while (i < lines.length && !/^\s*$/.test(lines[i]) && !isBlockStart(lines[i])) { p.push(lines[i]); i++; }
+      while (i < lines.length && !/^\s*$/.test(lines[i]) && !isBlockStart(lines[i]) && !isTableStart(lines, i)) { p.push(lines[i]); i++; }
       html += '<p>' + inline(escapeHtml(p.join('\n'))).replace(/\n/g, '<br>') + '</p>';
     }
     return html;

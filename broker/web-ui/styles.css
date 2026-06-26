@@ -443,8 +443,15 @@ svg { display: block; }
 .bubble.md hr { border: none; border-top: .5px solid var(--separator); margin: 13px 0; }
 .bubble.md strong { font-weight: 680; }
 .bubble.md del { opacity: .65; }
-.bubble.md table { border-collapse: collapse; margin: 8px 0; font-size: .94em; }
-.bubble.md th, .bubble.md td { border: .5px solid var(--separator); padding: 6px 10px; text-align: left; }
+/* tables: wrap in a horizontal scroller so wide tables don't overflow the phone */
+.bubble.md .md-table-wrap, .nested-text .md-table-wrap { margin: 9px 0; max-width: 100%; overflow-x: auto;
+  -webkit-overflow-scrolling: touch; border: .5px solid var(--separator); border-radius: 10px; }
+.bubble.md table, .nested-text table { border-collapse: collapse; margin: 0; font-size: .94em; width: 100%; }
+.bubble.md th, .bubble.md td, .nested-text th, .nested-text td {
+  border: .5px solid var(--separator); padding: 6px 10px; text-align: left; white-space: nowrap; }
+.bubble.md thead th, .nested-text thead th { background: var(--fill-4); font-weight: 640; }
+.bubble.md tbody tr:nth-child(even) td, .nested-text tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--label) 3%, transparent); }
 @keyframes blink { 0%,50% { opacity: 1; } 51%,100% { opacity: 0; } }
 
 .thinking {

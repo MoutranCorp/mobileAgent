@@ -82,8 +82,10 @@ are cache-busted with `?v=__VER__` rewritten to a mtime-derived version at serve
   Prompts, Usage, Update**. UI-created skills/commands/agents/MCP hot-reload via
   engine re-spawn (resume) + toast.
 - **Transcript:** persistence + replay; Markdown rendering (`web-ui/markdown.js`,
-  dependency-free, XSS-safe, tolerant of partial mid-stream input; raw md kept on
-  `dataset.md` for export/search); export-to-Markdown.
+  dependency-free, XSS-safe, tolerant of partial mid-stream input; supports GFM
+  pipe tables with column alignment, rendered in a horizontal scroller so wide
+  tables don't overflow the phone; raw md kept on `dataset.md` for
+  export/search); export-to-Markdown.
 - **Live feedback:** single `state.activity` (idle/working/waiting) drives an
   iMessage typing-dots bubble labelled with the live action; thinking traces in a
   collapsible pulsing card; send button morphs to **Stop** (interrupt) while working.
