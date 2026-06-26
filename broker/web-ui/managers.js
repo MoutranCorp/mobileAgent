@@ -536,7 +536,10 @@
         name.appendChild(document.createTextNode(s.summary || s.id));
         info.appendChild(name);
         const tag = isActive ? ' · viewing' : busy ? ' · working…' : isLive ? ' · live' : '';
-        info.appendChild(el('div', 'mgr-row-desc', relTime(s.mtime) + ' · ' + s.id.slice(0, 8) + tag + (!s.projectId ? ' · folder unknown' : '')));
+        // The folder is already shown in the group header above; only flag the case
+        // where resuming can't reopen the original folder (it's not a tracked project,
+        // so --resume falls back to the active folder).
+        info.appendChild(el('div', 'mgr-row-desc', relTime(s.mtime) + ' · ' + s.id.slice(0, 8) + tag + (!s.projectId && !isLive ? ' · opens in active folder' : '')));
         row.appendChild(info);
 
         const actions = el('div', 'mgr-row-actions');

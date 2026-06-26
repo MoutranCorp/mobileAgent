@@ -918,6 +918,9 @@
     const working = state.activity === 'working';
     const composer = document.querySelector('.composer');
     if (composer) composer.classList.toggle('busy', working); // Stop button only while actively working
+    // Freeze the plan's in-progress spinner when not actively working, so a paused/
+    // abandoned plan doesn't keep implying live progress.
+    const tp = $('todoPanel'); if (tp && !tp.classList.contains('hidden')) tp.classList.toggle('idle', !working);
     // The typing dots only fill the pure gap — once a thinking trace or assistant
     // text is streaming, those are the "alive" cue and the dots would be redundant.
     const showRow = working && !state.activeAssistant && !state.activeThinking;
@@ -1520,17 +1523,33 @@
 
   function renderTodos(todos) {
     const panel = $('todoPanel');
-    if (!todos || !todos.length) { panel.classList.add('hidden'); panel.innerHTML = ''; return; }
-    const done = todos.filter((t) => t.status === 'completed').length;
+    // An explicit call (TodoWrite/clear) updates the model; a no-arg call just
+    // re-renders the current plan (e.g. when the agent goes idle, to freeze the
+    // in-progress spinner so an abandoned plan stops implying active work).
+    if (todos !== undefined) {
+      state._todos = (todos && todos.length) ? todos : null;
+      const allDone = state._todos && state._todos.every((t) => t.status === 'completed');
+      state._todoCollapsed = !!allDone; // expand an active plan; auto-collapse a finished one
+    }
+    const list = state._todos;
+    if (!list || !list.length) { panel.classList.add('hidden'); panel.innerHTML = ''; return; }
+    const done = list.filter((t) => t.status === 'completed').length;
+    const collapsed = !!state._todoCollapsed;
     panel.innerHTML = '';
-    const head = el('div', 'todo-head', `Plan — ${done}/${todos.length} done`);
+    const head = el('div', 'todo-head');
+    head.innerHTML = `<span class="todo-caret">${collapsed ? '▸' : '▾'}</span> Plan — ${done}/${list.length} done`;
+    head.onclick = () => { state._todoCollapsed = !state._todoCollapsed; renderTodos(); };
     panel.appendChild(head);
-    todos.forEach((t) => {
-      const row = el('div', 'todo-item ' + (t.status || 'pending'));
-      // The status marker is drawn by CSS (::before circle/check/spinner).
-      row.textContent = t.status === 'in_progress' && t.activeForm ? t.activeForm : t.content;
-      panel.appendChild(row);
-    });
+    if (!collapsed) {
+      list.forEach((t) => {
+        const row = el('div', 'todo-item ' + (t.status || 'pending'));
+        // The status marker is drawn by CSS (::before circle/check/spinner).
+        row.textContent = t.status === 'in_progress' && t.activeForm ? t.activeForm : t.content;
+        panel.appendChild(row);
+      });
+    }
+    panel.classList.toggle('done', done === list.length);
+    panel.classList.toggle('idle', state.activity !== 'working'); // freezes the in-progress spinner
     panel.classList.remove('hidden');
   }
   function clearTodos() { renderTodos([]); }

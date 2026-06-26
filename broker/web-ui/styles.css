@@ -758,7 +758,12 @@ svg { display: block; }
   border-bottom: .5px solid var(--separator); padding: 11px 16px; display: flex; flex-direction: column; gap: 6px;
   max-height: 30vh; overflow-y: auto; }
 .todo-head { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
-  color: var(--label-3); margin-bottom: 3px; }
+  color: var(--label-3); margin-bottom: 3px; cursor: pointer; user-select: none; }
+.todo-caret { display: inline-block; width: 11px; color: var(--label-4); }
+.todo-panel.done .todo-head { color: var(--green); }
+/* When the agent isn't actively working, stop the in-progress ring from spinning
+   (a paused/abandoned plan shouldn't imply live progress). */
+.todo-panel.idle .todo-item.in_progress::before { animation: none; opacity: .55; }
 .todo-item { font-size: 14.5px; color: var(--label-2); padding-left: 24px; position: relative; }
 .todo-item::before { content: ""; position: absolute; left: 2px; top: 50%; width: 15px; height: 15px;
   margin-top: -7.5px; border-radius: 50%; border: 1.5px solid var(--label-4); }
@@ -772,10 +777,13 @@ svg { display: block; }
 .find-bar { display: flex; gap: 8px; align-items: center; background: var(--mat-bar);
   -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
   border-bottom: .5px solid var(--separator); padding: 8px 12px; }
-.find-bar input { flex: 1; background: var(--fill-3); color: var(--label); border: none;
+/* min-width:0 lets the input shrink so the trailing ✕/↑/↓ buttons stay on-screen
+   on narrow phones (default min-width:auto kept them overflowing past the edge). */
+.find-bar input { flex: 1; min-width: 0; background: var(--fill-3); color: var(--label); border: none;
   border-radius: var(--r-sm); padding: 9px 12px; font-size: 15px; }
 .find-bar input:focus { outline: none; }
-.find-count { font-size: 12px; color: var(--label-3); font-family: var(--mono); min-width: 42px; text-align: center; }
+.find-bar .ghost.small { flex: 0 0 auto; }
+.find-count { font-size: 12px; color: var(--label-3); font-family: var(--mono); min-width: 32px; text-align: center; flex: 0 0 auto; }
 mark.find-hit { background: color-mix(in srgb, var(--accent) 38%, transparent); color: var(--label); border-radius: 3px; }
 mark.find-hit.current { background: var(--orange); color: #000; }
 
