@@ -318,9 +318,11 @@ export class MockEngine extends EngineAdapter {
     let before = '';
     try { before = await fs.readFile(abs, 'utf8'); } catch { before = ''; }
     const after = renderHtmlApp(userText);
-    this.emitEvent(EventType.TOOL_CALL, { id, name: before ? 'Edit' : 'Write', input: { file_path: rel, before, after } });
+    // Use the ABSOLUTE path in file_path (real claude-code does), so the inline
+    // microapp widget exercises its project-relative URL mapping.
+    this.emitEvent(EventType.TOOL_CALL, { id, name: before ? 'Edit' : 'Write', input: { file_path: abs, before, after } });
     const decision = await this._requestPermission(
-      'write_file', `${before ? 'Edit' : 'Create'} ${rel}`, { toolName: before ? 'Edit' : 'Write', input: { file_path: rel } }
+      'write_file', `${before ? 'Edit' : 'Create'} ${rel}`, { toolName: before ? 'Edit' : 'Write', input: { file_path: abs } }
     );
     if (decision === 'deny') { this.emitEvent(EventType.TOOL_RESULT, { id, status: 'error', output: 'Denied by user' }); return; }
     this.emitStatus(StatusState.RUNNING, `Writing ${rel}`);

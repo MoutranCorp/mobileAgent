@@ -583,8 +583,17 @@
   const htmlApps = new Map(); // filePath -> widget state
 
   function htmlAppUrl(filePath) {
-    const clean = String(filePath).replace(/^[.][\\/]+/, '').replace(/^[\\/]+/, '').replace(/\\/g, '/');
-    return '/preview/' + clean.split('/').map(encodeURIComponent).join('/');
+    // /preview/<rel> serves files RELATIVE to the active project dir, but the
+    // agent often writes an ABSOLUTE file_path (e.g. /root/projects/Test/index.html).
+    // Strip the active project's dir prefix so the path is project-relative.
+    let p = String(filePath).replace(/\\/g, '/');
+    const proj = state.projects.find((x) => x.id === state.activeProjectId) || state.projects.find((x) => x.active);
+    const dir = proj && proj.dir ? String(proj.dir).replace(/\\/g, '/').replace(/\/+$/, '') : '';
+    if (dir && (p === dir || p.startsWith(dir + '/'))) p = p.slice(dir.length).replace(/^\/+/, '');
+    p = p.replace(/^[.]\/+/, '');
+    const abs = p.startsWith('/'); // unmatched absolute path — let the broker's resolve guard it
+    const enc = p.split('/').filter(Boolean).map(encodeURIComponent).join('/');
+    return '/preview/' + (abs ? '/' : '') + enc;
   }
   function addHtmlAppWidget(filePath) {
     hideEmpty();
