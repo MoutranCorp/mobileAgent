@@ -100,6 +100,24 @@ catch (e) { console.log('palette err', e.message); }
 try { await page.click('#termBtn'); await sleep(500); await shot('07-terminal'); await page.click('#termClose'); }
 catch (e) { console.log('term err', e.message); }
 
+// HTML microapp widget (needs an active project so /preview can serve the file)
+try {
+  await page.evaluate(() => window.Agent.send({ type: 'open_project', projectId: 'demo' }));
+  await sleep(1000);
+  await page.fill('#input', 'build me an html microapp');
+  await page.dispatchEvent('#input', 'input');
+  await page.click('#sendBtn');
+  await sleep(1600);
+  const ap = page.locator('.approval-actions button.accent');
+  if (await ap.count()) await ap.first().click();
+  await sleep(2600);
+  await page.evaluate(() => { const a = document.querySelector('.html-app'); if (a) a.scrollIntoView({ block: 'center' }); });
+  await sleep(800);
+  console.log('CHECK html-app iframe present:', await page.evaluate(() => !!document.querySelector('.html-app .html-app-iframe')));
+  console.log('CHECK html-app height:', await page.evaluate(() => { const a = document.querySelector('.html-app'); return a ? Math.round(a.getBoundingClientRect().height) : 0; }));
+  await shot('08-html-app');
+} catch (e) { console.log('html-app err', e.message); }
+
 await browser.close();
 if (errors.length) { console.error('\n*** JS ERRORS ***'); errors.forEach((e) => console.error('  -', e)); process.exit(1); }
 console.log('\nNo JS console errors. ->', OUT);

@@ -108,21 +108,26 @@ export class MockEngine extends EngineAdapter {
       return this._finish(false);
     }
 
+    const wantsHtml = /\b(html|website|web ?app|micro ?app|landing|web ?page)\b/i.test(text);
     const wantsScreen = /\b(screen|component|button|build|make|create|add)\b/i.test(text);
     const wantsRun = /\b(run|test|start|install|npm|expo)\b/i.test(text);
     const wantsAgent = /\b(research|explore|investigate|agent|subagent|audit)\b/i.test(text);
 
     // 1) Stream some assistant reasoning text.
     await this._streamText(
-      wantsScreen
-        ? `I'll build that for you. Let me create a new screen component and wire it in.\n\n`
-        : `Got it. Let me take a look and respond.\n\n`
+      wantsHtml
+        ? `I'll build a self-contained HTML microapp you can run right here.\n\n`
+        : wantsScreen
+          ? `I'll build that for you. Let me create a new screen component and wire it in.\n\n`
+          : `Got it. Let me take a look and respond.\n\n`
     );
 
     if (this._interrupted) return this._finish(true);
 
     if (wantsAgent) {
       await this._simulateSubagent(text);
+    } else if (wantsHtml) {
+      await this._simulateHtmlWrite(text);
     } else if (wantsScreen) {
       await this._simulateTodos();
       await this._simulateFileWrite(text);
@@ -305,6 +310,26 @@ export class MockEngine extends EngineAdapter {
     });
   }
 
+  /** Write a self-contained interactive HTML microapp (for the inline-app widget). */
+  async _simulateHtmlWrite(userText) {
+    const id = `tool_${this._stableId()}`;
+    const rel = 'microapp.html';
+    const abs = path.join(this.cwd, rel);
+    let before = '';
+    try { before = await fs.readFile(abs, 'utf8'); } catch { before = ''; }
+    const after = renderHtmlApp(userText);
+    this.emitEvent(EventType.TOOL_CALL, { id, name: before ? 'Edit' : 'Write', input: { file_path: rel, before, after } });
+    const decision = await this._requestPermission(
+      'write_file', `${before ? 'Edit' : 'Create'} ${rel}`, { toolName: before ? 'Edit' : 'Write', input: { file_path: rel } }
+    );
+    if (decision === 'deny') { this.emitEvent(EventType.TOOL_RESULT, { id, status: 'error', output: 'Denied by user' }); return; }
+    this.emitStatus(StatusState.RUNNING, `Writing ${rel}`);
+    await fs.writeFile(abs, after, 'utf8');
+    await delay(120);
+    this.emitEvent(EventType.TOOL_RESULT, { id, status: 'ok', output: `Wrote ${after.split('\n').length} lines to ${rel}` });
+    await this._streamText(`\nDone — your **${rel}** microapp is ready. Run it in the widget above, or open it in a new window.`);
+  }
+
   _requestPermission(action, detail, extra = {}) {
     const id = `perm_${this._stableId()}`;
     // Register the resolver BEFORE emitting: emit() is synchronous, so a
@@ -359,6 +384,37 @@ const styles = StyleSheet.create({
 
 function delay(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/** A self-contained, interactive single-file HTML microapp. */
+function renderHtmlApp(prompt) {
+  const title = (prompt || 'Microapp').replace(/[<>]/g, '').slice(0, 48);
+  const lines = [
+    '<!doctype html>',
+    '<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Microapp</title>',
+    '<style>',
+    '  *{box-sizing:border-box} body{margin:0;font-family:-apple-system,system-ui,Segoe UI,Roboto,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(160deg,#2a96ff,#5e5ce6 60%,#bf5af2);color:#fff}',
+    '  .card{background:rgba(255,255,255,.14);backdrop-filter:blur(12px);padding:30px 34px;border-radius:22px;text-align:center;box-shadow:0 14px 50px rgba(0,0,0,.35)}',
+    '  h1{margin:0 0 4px;font-size:20px;font-weight:680} p{margin:0 0 16px;opacity:.85;font-size:13px}',
+    '  #clock{font-size:42px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:1px;margin:6px 0 18px}',
+    '  button{background:#fff;color:#0a6bff;border:none;border-radius:14px;padding:13px 26px;font-size:16px;font-weight:700;cursor:pointer;transition:transform .1s}',
+    '  button:active{transform:scale(.95)} #n{font-size:26px;font-weight:800;margin-top:16px}',
+    '</style></head><body>',
+    '  <div class="card">',
+    '    <h1>' + title + '</h1>',
+    '    <p>a live single-file microapp</p>',
+    '    <div id="clock">--:--:--</div>',
+    '    <button id="b">Tap me</button>',
+    '    <div id="n">0 taps</div>',
+    '  </div>',
+    '  <script>',
+    '    var pad=function(x){return String(x).padStart(2,"0")};',
+    '    setInterval(function(){var d=new Date();document.getElementById("clock").textContent=pad(d.getHours())+":"+pad(d.getMinutes())+":"+pad(d.getSeconds())},250);',
+    '    var n=0;document.getElementById("b").onclick=function(){n++;document.getElementById("n").textContent=n+" tap"+(n===1?"":"s")};',
+    '  </script>',
+    '</body></html>',
+  ];
+  return lines.join('\n');
 }
 
 // A rich-markdown reply used to exercise the UI's markdown rendering.

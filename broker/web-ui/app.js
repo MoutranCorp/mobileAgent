@@ -302,6 +302,7 @@
     clearTodos();
     state.toolCards.clear();
     state.approvals.clear();
+    if (typeof htmlApps !== 'undefined') htmlApps.clear();
     state.pendingSent = [];
     applyActivity();
   }
@@ -544,7 +545,11 @@
 
     const host = nestedContainerFor(ev.parentToolUseId) || $('transcript');
     host.appendChild(card);
-    state.toolCards.set(ev.id, { el: card, head, body, name: ev.name, isDiff, nested: null });
+    const filePath = (ev.input && ev.input.file_path) || '';
+    state.toolCards.set(ev.id, {
+      el: card, head, body, name: ev.name, isDiff, nested: null,
+      filePath, isHtmlApp: isDiff && /\.html?$/i.test(filePath),
+    });
     scrollDown();
   }
 
@@ -567,7 +572,66 @@
       }
     }
     if (ev.status !== 'error' && !card.isDiff && card.name !== 'Agent') card.body.classList.add('collapsed');
+    // A written HTML file becomes a runnable inline microapp widget.
+    if (card.isHtmlApp && ev.status !== 'error' && card.filePath) addHtmlAppWidget(card.filePath);
     scrollDown();
+  }
+
+  // ---- HTML microapp widget ------------------------------------------------
+  // When the agent writes a .html file, show a card that runs it live in a
+  // sandboxed iframe (served from the project via /preview) or opens it full.
+  const htmlApps = new Map(); // filePath -> widget state
+
+  function htmlAppUrl(filePath) {
+    const clean = String(filePath).replace(/^[.][\\/]+/, '').replace(/^[\\/]+/, '').replace(/\\/g, '/');
+    return '/preview/' + clean.split('/').map(encodeURIComponent).join('/');
+  }
+  function addHtmlAppWidget(filePath) {
+    hideEmpty();
+    const url = htmlAppUrl(filePath);
+    let w = htmlApps.get(filePath);
+    if (w) { // re-written: move to bottom and refresh a running preview
+      w.url = url;
+      $('transcript').appendChild(w.card);
+      if (w.running) runHtmlApp(w);
+      scrollDown();
+      return;
+    }
+    const card = el('div', 'html-app');
+    const head = el('div', 'html-app-head');
+    const icon = el('span', 'html-app-icon', '📱');
+    const name = el('span', 'html-app-name', String(filePath).split(/[\\/]/).pop());
+    const runBtn = el('button', 'ghost small', 'Hide');
+    const openBtn = el('button', 'primary small', '⤢ Open');
+    const actions = el('div', 'html-app-actions');
+    actions.appendChild(runBtn); actions.appendChild(openBtn);
+    head.appendChild(icon); head.appendChild(name); head.appendChild(actions);
+    const bodyEl = el('div', 'html-app-body');
+    card.appendChild(head); card.appendChild(bodyEl);
+    $('transcript').appendChild(card);
+    w = { card, body: bodyEl, runBtn, url, running: false, frame: null };
+    htmlApps.set(filePath, w);
+    runBtn.onclick = () => (w.running ? hideHtmlApp(w) : runHtmlApp(w));
+    openBtn.onclick = () => {
+      const full = location.origin + w.url;
+      if (native.has('openExternal')) native.openExternal(full); else window.open(full, '_blank', 'noopener');
+    };
+    runHtmlApp(w); // show it immediately
+    scrollDown();
+  }
+  function runHtmlApp(w) {
+    const f = document.createElement('iframe');
+    f.className = 'html-app-iframe';
+    // The microapp is the user's own local file; sandbox keeps it from touching
+    // the broker UI while still allowing scripts/forms/storage to make it work.
+    f.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox');
+    f.setAttribute('allow', 'autoplay; clipboard-write');
+    f.src = w.url + (w.url.includes('?') ? '&' : '?') + 'r=' + Date.now();
+    w.body.innerHTML = ''; w.body.appendChild(f);
+    w.frame = f; w.running = true; w.runBtn.textContent = 'Hide';
+  }
+  function hideHtmlApp(w) {
+    w.body.innerHTML = ''; w.frame = null; w.running = false; w.runBtn.textContent = 'Run';
   }
 
   // ---- approvals -----------------------------------------------------------

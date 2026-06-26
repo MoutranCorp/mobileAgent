@@ -331,6 +331,18 @@ svg { display: block; }
 @keyframes dot { 0%, 60%, 100% { transform: translateY(0); opacity: .5; } 30% { transform: translateY(-5px); opacity: 1; } }
 .activity-label { font-size: 14px; color: var(--label-2); }
 
+/* ===================== HTML microapp widget ============================ */
+.html-app { background: var(--sys-bg-2); border: .5px solid var(--separator); border-radius: var(--r-md);
+  overflow: hidden; box-shadow: var(--sh-1); flex: 0 0 auto; }/* don't let the iframe get flex-shrunk to 0 */
+.html-app-head { display: flex; align-items: center; gap: 9px; padding: 10px 12px; border-bottom: .5px solid var(--separator); }
+.html-app-icon { font-size: 16px; flex: 0 0 auto; }
+.html-app-name { font-family: var(--mono); font-size: 13px; font-weight: 620; color: var(--label);
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.html-app-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+.html-app-body { background: #fff; }
+.html-app-iframe { display: block; width: 100%; height: 420px; border: none; background: #fff; }
+@media (max-width: 720px) { .html-app-iframe { height: 68dvh; } }
+
 /* =============================== tool cards ============================= */
 .tool-card {
   background: var(--sys-bg-2); border: .5px solid var(--separator); border-radius: var(--r-md);
