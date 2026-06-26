@@ -17,8 +17,62 @@ import { parseFrontmatter, stringifyFrontmatter } from './frontmatter.js';
  * See docs/claude-code-surface.md for the authoritative file formats.
  */
 export class ClaudeConfig {
-  constructor({ getProjectDir }) {
+  constructor({ getProjectDir, getProjects, stateDir } = {}) {
     this.getProjectDir = getProjectDir;
+    this.getProjects = getProjects || (() => []); // [{ id, dir }] for session<->project mapping
+    this._titlesFile = stateDir ? path.join(stateDir, 'session-titles.json') : null;
+  }
+
+  // --- session title overrides (sidecar; Claude owns the .jsonl) --------------
+  _readTitles() {
+    try { if (this._titlesFile && fs.existsSync(this._titlesFile)) return JSON.parse(read(this._titlesFile)); } catch { /* ignore */ }
+    return {};
+  }
+  _writeTitles(map) {
+    if (!this._titlesFile) return;
+    try { ensureDir(path.dirname(this._titlesFile)); fs.writeFileSync(this._titlesFile, JSON.stringify(map, null, 2)); } catch { /* ignore */ }
+  }
+  renameSession(sessionId, title) {
+    const t = this._readTitles();
+    if (title && title.trim()) t[sessionId] = title.trim().slice(0, 120); else delete t[sessionId];
+    this._writeTitles(t);
+    return { ok: true };
+  }
+
+  // --- session <-> project resolution -----------------------------------------
+  // Re-encode every known project dir the way Claude encodes cwd, so a session's
+  // encoded folder maps back to a real project id. Ambiguous encodings -> null.
+  _projectIndex() {
+    const byEnc = new Map();
+    const seen = new Set();
+    for (const p of this.getProjects()) {
+      if (!p || !p.dir) continue;
+      const enc = encodeCwd(p.dir);
+      if (byEnc.has(enc)) { byEnc.set(enc, null); seen.add(enc); } // collision -> unknown
+      else if (!seen.has(enc)) byEnc.set(enc, p.id);
+    }
+    return byEnc;
+  }
+  _dirForProject(projectId) {
+    if (!projectId) return null;
+    const p = this.getProjects().find((x) => x.id === projectId);
+    return p && p.dir ? path.join(os.homedir(), '.claude', 'projects', encodeCwd(p.dir)) : null;
+  }
+  sessionsDirForProject(projectId) { return this._dirForProject(projectId); }
+
+  /** Delete a session .jsonl, most precisely by its literal encoded folder. */
+  deleteSession(sessionId, { projectId = null, projectDir = null } = {}) {
+    let base = null;
+    if (projectDir) base = path.join(os.homedir(), '.claude', 'projects', projectDir);
+    else base = this._dirForProject(projectId) || this._sessionsDir();
+    const file = path.join(base, `${sessionId}.jsonl`);
+    try {
+      if (!fs.existsSync(file)) return { error: 'session file not found' };
+      fs.rmSync(file, { force: true });
+    } catch (e) { return { error: e.message }; }
+    const t = this._readTitles();
+    if (t[sessionId]) { delete t[sessionId]; this._writeTitles(t); }
+    return { ok: true, file };
   }
 
   _baseFor(scope) {
@@ -244,21 +298,23 @@ export class ClaudeConfig {
   _sessionsDir() {
     const proj = this._projectDir();
     // Claude stores transcripts under ~/.claude/projects/<cwd with sep -> ->.
-    const encoded = proj.replace(/[/\\:]+/g, '-').replace(/^-+/, '-');
-    return path.join(os.homedir(), '.claude', 'projects', encoded);
+    return path.join(os.homedir(), '.claude', 'projects', encodeCwd(proj));
   }
 
   _listSessions() {
     const dir = this._sessionsDir();
     if (!fs.existsSync(dir)) return [];
+    const titles = this._readTitles();
     return safeReaddir(dir)
       .filter((n) => n.endsWith('.jsonl'))
       .map((n) => {
         const full = path.join(dir, n);
         const stat = fs.statSync(full);
+        const id = n.replace(/\.jsonl$/, '');
         return {
-          id: n.replace(/\.jsonl$/, ''),
-          summary: firstUserText(full),
+          id,
+          summary: titles[id] || firstUserText(full),
+          titled: !!titles[id],
           mtime: stat.mtimeMs,
           size: stat.size,
         };
@@ -276,21 +332,26 @@ export class ClaudeConfig {
   listAllSessions({ max = 120 } = {}) {
     const root = path.join(os.homedir(), '.claude', 'projects');
     if (!fs.existsSync(root)) return [];
+    const byEnc = this._projectIndex();
+    const titles = this._readTitles();
     const out = [];
     for (const enc of safeReaddir(root)) {
       const dir = path.join(root, enc);
       let isDir = false;
       try { isDir = fs.statSync(dir).isDirectory(); } catch { /* ignore */ }
       if (!isDir) continue;
-      // The encoded dir is the cwd with path separators turned into '-'; the last
-      // segment is a decent project label.
-      const project = enc.split('-').filter(Boolean).pop() || enc;
+      const projectId = byEnc.get(enc) || null;
+      // Prefer the real project's name; else best-effort from the encoded folder.
+      const known = projectId && this.getProjects().find((p) => p.id === projectId);
+      const project = (known && (known.name || known.id)) || enc.split('-').filter(Boolean).pop() || enc;
       for (const n of safeReaddir(dir)) {
         if (!n.endsWith('.jsonl')) continue;
         const full = path.join(dir, n);
         let stat;
         try { stat = fs.statSync(full); } catch { continue; }
-        out.push({ id: n.replace(/\.jsonl$/, ''), summary: firstUserText(full), mtime: stat.mtimeMs, size: stat.size, project, projectDir: enc });
+        const id = n.replace(/\.jsonl$/, '');
+        out.push({ id, summary: titles[id] || firstUserText(full), titled: !!titles[id],
+          mtime: stat.mtimeMs, size: stat.size, project, projectDir: enc, projectId });
       }
     }
     return out.sort((a, b) => b.mtime - a.mtime).slice(0, max);
@@ -302,8 +363,8 @@ export class ClaudeConfig {
    * Claude's `--resume` restores context for the model but does NOT re-emit past
    * turns to the stream, so without this a resumed session shows up blank.
    */
-  readSessionTranscript(sessionId, { max = 1500 } = {}) {
-    const file = path.join(this._sessionsDir(), `${sessionId}.jsonl`);
+  readSessionTranscript(sessionId, { max = 1500, dir = null } = {}) {
+    const file = path.join(dir || this._sessionsDir(), `${sessionId}.jsonl`);
     let lines;
     try {
       lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
@@ -519,6 +580,11 @@ export class ClaudeConfig {
   }
 }
 
+// How Claude encodes a cwd into its ~/.claude/projects/<dir> folder name. Used to
+// map a session's folder back to a known project (and vice-versa).
+function encodeCwd(dir) {
+  return String(dir).replace(/[/\\:]+/g, '-').replace(/^-+/, '-');
+}
 function read(file) {
   try {
     return fs.readFileSync(file, 'utf8');

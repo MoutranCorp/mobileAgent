@@ -194,6 +194,14 @@ export class SessionManager {
 
   async resume(sessionId) { return this.startEngine(this.activeProfileId, { resumeId: sessionId }); }
 
+  /** Forget a key's persisted resume id (so a deleted session is never --resume'd)
+   *  and tear down its engine if live. Used when a session's .jsonl is deleted. */
+  async forgetSession(key) {
+    if (key && key !== MAIN_KEY) { delete this._sessionByProject[key]; this._saveSessions(); }
+    if (this.engines.has(key)) await this.stopEngine(key);
+    this._emitSessions();
+  }
+
   get snapshot() {
     return {
       activeProfileId: this.activeProfileId,

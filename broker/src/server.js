@@ -52,7 +52,7 @@ export class BrokerServer {
     const getProjectDir = () => this.projects.getActive()?.dir || config.projectsDir;
     this.files = new Files({ getProjectDir });
     this.devtools = new DevTools({ config, runner: this.runner, projects: this.projects, emit });
-    this.claudeConfig = new ClaudeConfig({ getProjectDir });
+    this.claudeConfig = new ClaudeConfig({ getProjectDir, getProjects: () => this.projects.list(), stateDir: config.stateDir });
     this.modelResolver = new ModelResolver({ stateDir: config.stateDir, claudeBin: config.claudeBin });
     this.updater = new Updater();
     this.session = new SessionManager({
@@ -171,6 +171,15 @@ export class BrokerServer {
 
   _projectForKey(key) {
     return key && key !== '__main__' ? this.projects.get(key) : null;
+  }
+
+  /** (Re)send the cross-project sessions list with live-busy overlay. */
+  _sendSessionsList(ws) {
+    const items = this.claudeConfig.listAllSessions();
+    const liveBusy = {};
+    for (const s of this.session.liveSessions()) if (s.sessionId) liveBusy[s.sessionId] = s.busy;
+    const ev = event(EventType.CONFIG, { kind: 'sessions', scope: 'all', items, liveBusy, activeSessionId: this.session.engine?.sessionId || null });
+    if (ws) this._send(ws, ev); else this.broadcast(ev);
   }
 
   /** Bring a session to the foreground WITHOUT stopping the previous one (it keeps
@@ -377,13 +386,59 @@ export class BrokerServer {
         this.transcript.clear();
         return this.session.newSession();
       case CommandType.RESUME: {
-        // Claude's --resume restores model context but does NOT re-stream past
-        // turns, so the UI would stay blank. Parse the session's own .jsonl into
-        // canonical records, seed the transcript store, and replay to clients.
-        const past = this.claudeConfig.readSessionTranscript(cmd.sessionId);
+        // Resume a session in ITS OWN project (so the engine spawns with the right
+        // cwd and other projects' background engines stay alive — switching project
+        // here uses setActive, not a manager-wide stop).
+        const all = this.claudeConfig.listAllSessions();
+        const meta = all.find((s) => s.id === cmd.sessionId);
+        let projectId = cmd.projectId || meta?.projectId || null;
+        if (projectId && this.projects.get(projectId)) {
+          if (projectId !== this.session.activeKey) {
+            this.projects.setActive(projectId);
+            this.broadcast(event(EventType.PROJECTS, this.projects.snapshot()));
+          }
+        } else {
+          if (projectId) projectId = null;
+          this.broadcast(event(EventType.TOAST, { message: 'Couldn’t match this session to a known folder — resuming in the active one.' }));
+        }
+        // Point the transcript store at the (now) active session key and seed it
+        // from the CORRECT project's .jsonl. Claude's --resume restores model
+        // context but doesn't re-stream past turns, so we replay them ourselves.
+        const targetKey = this.projects.getActive()?.id || '__main__';
+        this.transcript.setProject(targetKey);
+        const dir = projectId ? this.claudeConfig.sessionsDirForProject(projectId) : null;
+        const past = this.claudeConfig.readSessionTranscript(cmd.sessionId, { dir });
         const seeded = this.transcript.replace(past);
         this.broadcast(event(EventType.TRANSCRIPT, { events: seeded, reset: true }));
-        return this.session.resume(cmd.sessionId);
+        // resume() restarts ONLY the active project's engine (siblings untouched).
+        await this.session.resume(cmd.sessionId);
+        const p = this.projects.getActive();
+        if (p) this.broadcast(event(EventType.CHECKPOINTS, this.checkpoints.list(p.id, p.dir)));
+        return;
+      }
+      case CommandType.SESSION_RENAME: {
+        this.claudeConfig.renameSession(cmd.id, cmd.title);
+        return this._sendSessionsList(ws);
+      }
+      case CommandType.SESSION_DELETE: {
+        const liveEntry = this.session.liveSessions().find((s) => s.sessionId === cmd.id);
+        const res = this.claudeConfig.deleteSession(cmd.id, { projectId: cmd.projectId, projectDir: cmd.projectDir });
+        if (res.error) { this.broadcast(event(EventType.ERROR, { message: `Delete failed: ${res.error}` })); return; }
+        this.broadcast(event(EventType.TOAST, { message: 'Session deleted.' }));
+        // If a live engine was using this session, don't leave it pointed at a now
+        // -missing file (a later restart would --resume a deleted id and fail).
+        if (liveEntry) {
+          if (liveEntry.key === this.session.activeKey) {
+            this.transcript.clear();
+            await this.session.newSession(); // fresh session for the foreground
+            this.broadcast(event(EventType.TRANSCRIPT, { events: this.transcript.replay(), reset: true }));
+          } else {
+            await this.session.forgetSession(liveEntry.key); // drop the dead id + engine
+          }
+        }
+        this._sendSessionsList(ws);
+        this.broadcast(event(EventType.SESSIONS, { items: this.session.liveSessions(), activeKey: this.session.activeKey }));
+        return;
       }
       case CommandType.LIST_SESSIONS: {
         const items = cmd.scope === 'all' ? this.claudeConfig.listAllSessions() : this.claudeConfig.list('sessions');

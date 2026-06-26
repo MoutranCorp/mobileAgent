@@ -756,6 +756,10 @@
       handleEvent(rec);
     }
     finalizeAssistant();
+    // A replay is historical — replayed tool_call records call setActivity('working'),
+    // which would leave the UI stuck "working" (Stop button, send blocked). Reset to
+    // idle; live status events for the (re)started engine drive the real state.
+    setActivity('idle');
   }
 
   function onCheckpoints(ev) {

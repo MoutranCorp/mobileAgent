@@ -96,6 +96,8 @@ export const CommandType = Object.freeze({
   LIST_SESSIONS: 'list_sessions', // { scope?: 'all' } on-disk session list
   LIST_LIVE_SESSIONS: 'list_live_sessions', // {} currently-running engines
   SWITCH_SESSION: 'switch_session', // { key } bring a live session to the foreground (no engine stop)
+  SESSION_DELETE: 'session_delete', // { id, projectId?, projectDir? } delete a session transcript
+  SESSION_RENAME: 'session_rename', // { id, title } set a custom title (sidecar override)
   COMPACT: 'compact', // { focus? }
   CLEAR: 'clear', // {}
   // Projects

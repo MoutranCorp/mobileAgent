@@ -409,6 +409,18 @@
   }
   function nowMs() { return new Date().getTime(); }
   function workingDots() { const s = el('span', 'sess-dots'); s.innerHTML = '<i></i><i></i><i></i>'; return s; }
+  function startRename(nameEl, s) {
+    const input = el('input', 'mgr-input');
+    input.value = s.summary || '';
+    input.placeholder = 'Session title';
+    input.style.flex = '1';
+    nameEl.replaceWith(input);
+    input.focus(); input.select();
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); send({ type: 'session_rename', id: s.id, title: input.value.trim() }); }
+      else if (e.key === 'Escape') { e.preventDefault(); renderPane(); }
+    });
+  }
 
   function renderSessions(pane) {
     pane.appendChild(el('p', 'mgr-hint', 'Your sessions, newest first, grouped by project. A pulsing dot means the agent is working there. Tap to open.'));
@@ -448,19 +460,32 @@
         name.appendChild(document.createTextNode(s.summary || s.id));
         info.appendChild(name);
         const tag = isActive ? ' · viewing' : busy ? ' · working…' : isLive ? ' · live' : '';
-        info.appendChild(el('div', 'mgr-row-desc', relTime(s.mtime) + ' · ' + s.id.slice(0, 8) + tag));
+        info.appendChild(el('div', 'mgr-row-desc', relTime(s.mtime) + ' · ' + s.id.slice(0, 8) + tag + (!s.projectId ? ' · folder unknown' : '')));
         row.appendChild(info);
+
+        const actions = el('div', 'mgr-row-actions');
         if (isActive) {
-          row.appendChild(el('span', 'badge flat', 'viewing'));
+          actions.appendChild(el('span', 'badge flat', 'viewing'));
         } else {
-          const btn = el('button', 'ghost small', isLive ? 'Open' : 'Resume');
-          btn.onclick = () => {
+          const open = el('button', 'ghost small', isLive ? 'Open' : 'Resume');
+          open.onclick = () => {
             if (isLive && keyById.has(s.id)) send({ type: 'switch_session', key: keyById.get(s.id) });
-            else send({ type: 'resume', sessionId: s.id });
+            else send({ type: 'resume', sessionId: s.id, projectId: s.projectId || undefined, projectDir: s.projectDir });
             close();
           };
-          row.appendChild(btn);
+          actions.appendChild(open);
         }
+        const editBtn = el('button', 'icon-mini', '✎'); editBtn.title = 'Rename';
+        editBtn.onclick = () => startRename(name, s);
+        actions.appendChild(editBtn);
+        const del = el('button', 'icon-mini danger', '🗑'); del.title = 'Delete session';
+        del.onclick = () => {
+          if (confirm('Delete this session? Its conversation transcript is removed permanently. This can’t be undone.')) {
+            send({ type: 'session_delete', id: s.id, projectId: s.projectId || undefined, projectDir: s.projectDir });
+          }
+        };
+        actions.appendChild(del);
+        row.appendChild(actions);
         list.appendChild(row);
       }
       pane.appendChild(list);
