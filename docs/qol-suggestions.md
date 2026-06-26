@@ -36,8 +36,17 @@
 ## Dev/test notes
 
 - Live UI testing runs against the **mock engine** (`npm run dev`), which costs no
-  model tokens — exercise it freely. The "use sonnet / low effort" cost guidance
-  only applies when driving the **real** `claude` engine (needs creds, not present
-  on this box).
+  model tokens — exercise it freely.
+- **The real `claude` engine IS runnable from a Claude-Code-on-the-web box**: a
+  `claude` CLI is on PATH and authenticated via the ambient OAuth env, and
+  `claude-max` needs no token (`authRef: null`). Boot it with
+  `EFFORT=medium node src/index.js --profile claude-max --port 8798 --projects <dir>`
+  and drive it over the WS. **Test against it** — the mock only emits one clean
+  `think→text` shape and ignores `--resume`, so it cannot surface real-engine bugs.
+  Two such bugs were found this way (thinking fragmented by interleaved
+  status/context events; the prompt mis-sorted below thinking on reload because
+  `--replay-user-messages` echoes it late). Use sonnet + low/medium effort + tiny
+  prompts to keep token cost down; prefer a **fresh project dir** per run so an old
+  `claude` session isn't `--resume`d into the new turn.
 
 <!-- More items appended as live testing surfaces them. -->

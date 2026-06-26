@@ -88,9 +88,16 @@ export class TranscriptStore {
       }
       return;
     }
+    // Transient bookkeeping events (status/context/usage/session_meta/permission_*
+    // request) are NOT recorded and must NOT flush the streaming buffers — the real
+    // engine interleaves them between thinking/text deltas, and flushing here would
+    // shatter one reasoning/reply run into many tiny records (the mock never emits
+    // them mid-stream, so this only bites against the real CLI). Only a KEPT event is
+    // a genuine run boundary.
+    if (!KEEP.has(ev.type)) return;
     this._flushText(b);
     this._flushThink(b);
-    if (KEEP.has(ev.type)) this._commit(b, ev);
+    this._commit(b, ev);
   }
 
   _flushText(b) { if (b.pendText && b.pendText.delta) this._commit(b, b.pendText); b.pendText = null; }

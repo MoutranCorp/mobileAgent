@@ -141,6 +141,8 @@ export class BrokerServer {
     try {
       // Stamp the turn/checkpoint id onto the active turn's user_echo (FIFO, one in
       // flight) so its bubble can be reverted later. Must precede transcript.record.
+      // (The engine emits this echo up front now — see claude-code `send()` — so it
+      // records ABOVE the agent's response and replays in order.)
       if (ev.type === EventType.USER_ECHO && this._pendingTurn && key === activeKey) {
         ev.turnId = this._pendingTurn.turnId;
         ev.checkpointId = this._pendingTurn.checkpointId;
@@ -232,7 +234,7 @@ export class BrokerServer {
     if (this.session.lastCapabilities) this.broadcast(this.session.lastCapabilities);
     const p = this.projects.getActive();
     if (p) this.broadcast(event(EventType.CHECKPOINTS, this.checkpoints.list(p.id, p.dir)));
-    this.broadcast(event(EventType.SESSIONS, { items: this.session.liveSessions(), activeKey: this.session.activeKey }));
+    this.broadcast(event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
   }
 
   _emitTurnChanges(key, proj) {
@@ -299,7 +301,7 @@ export class BrokerServer {
     }));
     this._send(ws, event(EventType.PERMISSION_MODE, { mode: this.session.permissionMode }));
     // Live sessions (so a reconnecting client restores the background busy badges).
-    this._send(ws, event(EventType.SESSIONS, { items: this.session.liveSessions(), activeKey: this.session.activeKey }));
+    this._send(ws, event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
     if (this.session.lastCapabilities) this._send(ws, this.session.lastCapabilities);
     // Replay the recorded conversation so reloads/reconnects don't lose history.
     // reset:true makes it idempotent — the server greets with a snapshot AND the
@@ -402,6 +404,8 @@ export class BrokerServer {
         }
         // Tag the upcoming user_echo so its bubble can be reverted to here later.
         // Set even when not a git repo (checkpointId null -> conversation-only revert).
+        // The engine emits the echo up front (claude-code `send()` / mock), so it
+        // records ABOVE the agent's response and replays in chronological order.
         this._turnSeq = (this._turnSeq || 0) + 1;
         this._pendingTurn = { turnId: `t${this._turnSeq}`, checkpointId, text: cmd.text || '' };
         return this.session.sendUserMessage(cmd.text || '', cmd.images);
@@ -432,15 +436,15 @@ export class BrokerServer {
         await this.session.newSession();
         this.transcript.setProject(this.session.activeKey);
         this.broadcast(event(EventType.TRANSCRIPT, { events: this.transcript.replay(), reset: true }));
-        this.broadcast(event(EventType.SESSIONS, { items: this.session.liveSessions(), activeKey: this.session.activeKey }));
+        this.broadcast(event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
         return;
       }
       case CommandType.SESSION_STOP:
         await this.session.stopEngineKeepTranscript(cmd.key);
-        return this.broadcast(event(EventType.SESSIONS, { items: this.session.liveSessions(), activeKey: this.session.activeKey }));
+        return this.broadcast(event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
       case CommandType.SESSION_PIN:
         this.session.setPinned(cmd.key, cmd.pinned);
-        return this.broadcast(event(EventType.SESSIONS, { items: this.session.liveSessions(), activeKey: this.session.activeKey }));
+        return this.broadcast(event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
       case CommandType.RESUME: {
         // Resume a session in ITS OWN project (so the engine spawns with the right
         // cwd and other projects' background engines stay alive — switching project
@@ -494,7 +498,7 @@ export class BrokerServer {
           }
         }
         this._sendSessionsList(ws);
-        this.broadcast(event(EventType.SESSIONS, { items: this.session.liveSessions(), activeKey: this.session.activeKey }));
+        this.broadcast(event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
         return;
       }
       case CommandType.LIST_SESSIONS: {
@@ -507,7 +511,7 @@ export class BrokerServer {
         }));
       }
       case CommandType.LIST_LIVE_SESSIONS:
-        return this._send(ws, event(EventType.SESSIONS, { items: this.session.liveSessions(), activeKey: this.session.activeKey }));
+        return this._send(ws, event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
       case CommandType.SWITCH_SESSION: {
         // A session key may be suffixed (projA#2), so resolve its folder via meta;
         // keep projects.activeId synced to the focused session's project.

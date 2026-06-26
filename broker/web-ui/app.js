@@ -280,10 +280,17 @@
     const prev = state._prevBusy || {};
     state.sessions = ev.items || [];
     if (ev.activeKey) state.activeKey = ev.activeKey;
-    // The focused session always has a tab.
+    // The focused session is never "dismissed" — re-surface it if it was.
+    undismissSession(state.activeKey);
+    // Give EVERY broker-known session a tab (live or sleeping) so a dormant/idle-
+    // evicted session never silently vanishes from the workspace — except ones the
+    // user explicitly closed (dismissed; still on disk, resumable via Sessions).
+    for (const s of state.sessions) {
+      if (s.key !== state.activeKey && isDismissed(s.key)) continue;
+      ensureTab({ key: s.key, projectId: s.projectId, title: s.title });
+    }
     const act = state.sessions.find((s) => s.key === state.activeKey);
-    if (act) ensureTab({ key: act.key, projectId: act.projectId, title: act.title });
-    else if (state.activeKey) ensureTab({ key: state.activeKey, projectId: state.activeProjectId });
+    if (!act && state.activeKey) ensureTab({ key: state.activeKey, projectId: state.activeProjectId });
     // Keep the focused tab synced to the broker's active session — unless the user is
     // currently on a FILE tab (a client-only view; don't yank them back to chat).
     const curTab = state.activeTabId ? tabById(state.activeTabId) : null;
@@ -336,6 +343,13 @@
     const suffix = String(key).includes('#') ? ' ' + String(key).slice(String(key).indexOf('#')) : '';
     return base + suffix;
   }
+  // Sessions the user explicitly closed (✕). Persisted so a reload doesn't re-add
+  // their tabs from the SESSIONS list. They stay on disk (resumable via Sessions).
+  function dismissedSet() { if (!state.dismissed) { try { state.dismissed = new Set(JSON.parse(localStorage.getItem('agentDismissed') || '[]')); } catch { state.dismissed = new Set(); } } return state.dismissed; }
+  function saveDismissed() { try { localStorage.setItem('agentDismissed', JSON.stringify([...dismissedSet()])); } catch { /* ignore */ } }
+  function isDismissed(key) { return dismissedSet().has(key); }
+  function dismissSession(key) { dismissedSet().add(key); saveDismissed(); }
+  function undismissSession(key) { if (dismissedSet().delete(key)) saveDismissed(); }
   function loadTabs() { try { return JSON.parse(localStorage.getItem('agentTabs') || '[]'); } catch { return []; } }
   function saveTabs() {
     try {
@@ -374,7 +388,10 @@
     const t = state.tabs[idx];
     state.tabs.splice(idx, 1);
     saveTabs();
-    if (t.kind !== 'file') send({ type: 'session_stop', key: t.key }); // free the process; transcript kept
+    if (t.kind !== 'file') {
+      dismissSession(t.key); // user explicitly removed it — don't let SESSIONS re-add the tab
+      send({ type: 'session_stop', key: t.key }); // free the process; transcript kept (resumable via Sessions)
+    }
     if (t.id === state.activeTabId) {
       if (state.tabs.length) switchTab(state.tabs[Math.min(idx, state.tabs.length - 1)].id);
       else { state.activeTabId = null; applyViewMode(); send({ type: 'new_session' }); }
@@ -403,10 +420,15 @@
         const live = state.sessions.find((s) => s.key === t.key);
         const waiting = live && live.lastStatus === 'waiting';
         const working = live && live.busy && !waiting;
+        // Sleeping = the broker reports it dormant, or it's not in the live set at all
+        // (idle-evicted / pre-reconnect). Dimmed 💤 — tapping it cold-resumes.
+        const sleeping = (live && live.sleeping) || (!live && t.key !== state.activeKey);
         if (waiting) { ind.className = 'tab-attn'; ind.textContent = '!'; } // needs you (approval) — over the spinner
         else if (working) ind.className = 'tab-spin';
         else if (t.done) { ind.className = 'tab-done'; ind.textContent = '✓'; }
+        else if (sleeping) { ind.className = 'tab-sleep'; ind.textContent = '💤'; }
         else { ind.className = 'tab-dot'; ind.style.background = t.color; }
+        tab.classList.toggle('sleeping', !!sleeping && !isActive);
       }
       const title = el('span', 'tab-title', t.title);
       const close = el('button', 'tab-close', '✕');
@@ -871,6 +893,7 @@
     det.classList.remove('live');
     const title = det.querySelector('.think-title');
     if (title) title.textContent = 'Thought process';
+    det.open = false; // auto-collapse the finished trace (one tap to reopen) so long convos stay scannable
     state.activeThinking = null;
   }
 
@@ -1538,6 +1561,17 @@
         // Prefer the original Markdown source (assistant bubbles render to HTML).
         const text = (bubble && (bubble.dataset.md ?? bubble.textContent)) || '';
         md += `**${role}:** ${text}\n\n`;
+      } else if (node.classList.contains('thinking')) {
+        // Include the reasoning trace as a blockquote (source kept on the body's _md).
+        const body = node.querySelector('.think-body');
+        const text = (body && (body.dataset.md ?? body.textContent)) || '';
+        if (text.trim()) md += `> 💭 ${text.trim().replace(/\n/g, '\n> ')}\n\n`;
+      } else if (node.classList.contains('html-app')) {
+        const name = node.querySelector('.html-app-name')?.textContent || 'file';
+        md += `\`📎 ${name}\` _(generated file)_\n\n`;
+      } else if (node.classList.contains('apk-app')) {
+        const name = node.querySelector('.apk-name')?.textContent || 'artifact';
+        md += `\`📦 ${name}\` _(build artifact)_\n\n`;
       } else if (node.classList.contains('tool-card')) {
         const name = node.querySelector('.tool-name')?.textContent || 'tool';
         const target = node.querySelector('.tool-target')?.textContent || '';

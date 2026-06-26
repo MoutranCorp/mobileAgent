@@ -245,6 +245,29 @@ export class SessionManager {
     return out;
   }
 
+  /** Live sessions PLUS "sleeping" ones — idle-evicted sessions whose engine was
+   *  torn down but whose meta + transcript survive (cold-resumable). The workspace
+   *  UI uses this so a dormant session stays in the tab strip as a 💤 tab instead of
+   *  silently vanishing; tapping it cold-resumes. (`liveSessions()` stays live-only
+   *  for resources/eviction.) */
+  uiSessions() {
+    const live = this.liveSessions();
+    const liveKeys = new Set(live.map((s) => s.key));
+    const now = Date.now();
+    const out = live.slice();
+    for (const [key, m] of this.meta) {
+      if (liveKeys.has(key) || key === MAIN_KEY) continue; // already live, or the no-project scratch key
+      out.push({
+        key, projectId: m.projectId, profileId: m.profileId, model: m.model,
+        sessionId: m.sessionId, busy: false, lastStatus: 'idle',
+        active: key === this.activeKey, pid: null, status: 'sleeping',
+        idleMs: m.lastActivityTs ? Math.max(0, now - m.lastActivityTs) : 0,
+        pinned: !!m.pinned, title: m.title || null, sleeping: true,
+      });
+    }
+    return out;
+  }
+
   async sendUserMessage(text, images) {
     const engine = await this.ensureEngine();
     if (!engine) return;
@@ -360,7 +383,7 @@ export class SessionManager {
     this.emit(ev);
   }
 
-  _emitSessions() { this.emit(event(EventType.SESSIONS, { items: this.liveSessions(), activeKey: this.activeKey })); }
+  _emitSessions() { this.emit(event(EventType.SESSIONS, { items: this.uiSessions(), activeKey: this.activeKey })); }
 
   _emitError(message) { this.emit(event(EventType.ERROR, { message })); }
   _log(message) {

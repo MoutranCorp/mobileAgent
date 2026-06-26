@@ -304,6 +304,9 @@ export class ClaudeCodeEngine extends EngineAdapter {
         // nested under a subagent (parentToolUseId set) is internal relay, not a
         // prompt — emitting it as USER_ECHO renders agent/relay text as a fake user
         // bubble. Guard it so only real prompts echo into the transcript.
+        // Drop the --replay-user-messages echo of the prompt we already emitted up
+        // front in _writeUser (else the prompt appears twice / misordered on reload).
+        if (this._pendingEcho != null && block.text === this._pendingEcho) { this._pendingEcho = null; continue; }
         this.emitEvent(EventType.USER_ECHO, { text: block.text });
       }
     }
@@ -427,6 +430,11 @@ export class ClaudeCodeEngine extends EngineAdapter {
     if (!content.length) content.push({ type: 'text', text: ' ' });
     const line = JSON.stringify({ type: 'user', message: { role: 'user', content } });
     this.proc.stdin.write(line + '\n');
+    // Echo the prompt NOW, up front, so it records ABOVE the agent's response and
+    // replays in order. --replay-user-messages echoes it back too, but only AFTER
+    // the model has begun thinking (mid-stream), which would sort the prompt below
+    // the first thinking trace on reload. We drop that late duplicate in _handleUser.
+    if (text) { this._pendingEcho = text; this.emitEvent(EventType.USER_ECHO, { text }); }
     this.emitStatus(StatusState.THINKING);
   }
 
