@@ -35,6 +35,12 @@ await page.goto(URL, { waitUntil: 'networkidle' });
 await sleep(900);
 await shot('01-empty');
 
+// Tabbed shell: strip under the title bar; folder/access moved into the composer.
+console.log('CHECK tab strip present:', await page.evaluate(() => !!document.getElementById('tabStrip')));
+console.log('CHECK folder pill in composer:', await page.evaluate(() => !!document.querySelector('.composer .folder-pill #projectSelect')));
+console.log('CHECK access pill in composer:', await page.evaluate(() => !!document.querySelector('.composer .access-pill #permModeSelect')));
+console.log('CHECK old context-bar removed:', await page.evaluate(() => !document.querySelector('.context-bar')));
+
 await page.fill('#input', 'Build a polished counter screen with a + button');
 await page.dispatchEvent('#input', 'input');
 await sleep(400);

@@ -25,6 +25,7 @@
     { id: 'output-styles', label: 'Output styles', kind: 'output-styles' },
     { id: 'memory', label: 'Memory', kind: 'memory' },
     { id: 'permissions', label: 'Permissions', kind: 'settings' },
+    { id: 'engine', label: 'Engine' },
     { id: 'hooks', label: 'Hooks' },
     { id: 'sessions', label: 'Sessions', kind: 'sessions' },
     { id: 'projects', label: 'Projects' },
@@ -158,6 +159,7 @@
       case 'output-styles': return renderResourceList(pane, 'output-styles', 'output style');
       case 'memory': return renderMemory(pane);
       case 'permissions': return renderPermissions(pane);
+      case 'engine': return renderEngine(pane);
       case 'hooks': return renderHooks(pane);
       case 'sessions': return renderSessions(pane);
       case 'projects': return renderProjects(pane);
@@ -165,6 +167,25 @@
       case 'usage': return renderUsage(pane);
       case 'mcp': return renderMcp(pane);
     }
+  }
+
+  // ---- engine picker (relocated here from the old top context bar) ---------
+
+  function renderEngine(pane) {
+    const st = (window.Agent && window.Agent.state) || {};
+    const profiles = (st.profiles && st.profiles.length ? st.profiles : m.profiles) || [];
+    const active = st.activeProfileId || null;
+    pane.appendChild(el('p', 'mgr-hint', 'Which agent engine drives your sessions (Claude Code, OpenCode, …).'));
+    const list = el('div', 'engine-list');
+    for (const p of profiles) {
+      const row = el('button', 'engine-row' + (p.id === active ? ' active' : ''), '');
+      row.appendChild(el('span', 'engine-name', p.label + (p.ready ? '' : ' ⚠')));
+      if (p.id === active) row.appendChild(el('span', 'engine-check', '✓'));
+      row.onclick = () => { send({ type: 'switch_engine', profileId: p.id }); setTimeout(renderPane, 120); };
+      list.appendChild(row);
+    }
+    if (!profiles.length) list.appendChild(el('p', 'mgr-hint', 'No engines configured.'));
+    pane.appendChild(list);
   }
 
   // ---- scope switch --------------------------------------------------------
@@ -1091,7 +1112,7 @@
   function onContext(ev) { m.lastContext = ev; if (m.tab === 'context') renderPane(); }
   function onProjects(ev) { m.projects = ev.projects || []; if (m.tab === 'projects') renderPane(); }
   function onWorkspaceBrowse(ev) { m.browse = ev; if (!root.classList.contains('hidden') && m.tab === 'projects') renderPane(); }
-  function onProfiles(ev) { m.profiles = ev.profiles || []; }
+  function onProfiles(ev) { m.profiles = ev.profiles || []; if (!root.classList.contains('hidden') && m.tab === 'engine') renderPane(); }
   function onCheckpoints(ev) { m.checkpoints = { items: ev.items || [], enabled: !!ev.enabled }; if (m.tab === 'checkpoints') renderPane(); }
   function onFiles(ev) {
     m.filePath = ev.path || '.';

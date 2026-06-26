@@ -31,6 +31,8 @@
     activityLabel: 'Thinking…',
     sessions: [], // live sessions [{ key, busy, active, ... }]
     activeKey: null,
+    tabs: [], // [{ key, projectId, title, color, done, attn }] persisted session tabs
+    _prevBusy: {}, // key -> busy, to detect a background session finishing
   };
   // exposed for managers.js (toast attached after its definition below)
   window.Agent = { send, state, esc };
@@ -266,10 +268,114 @@
   }
 
   function onSessions(ev) {
+    const prev = state._prevBusy || {};
     state.sessions = ev.items || [];
     if (ev.activeKey) state.activeKey = ev.activeKey;
+    // The focused session always has a tab.
+    const act = state.sessions.find((s) => s.key === state.activeKey);
+    if (act) ensureTab({ key: act.key, projectId: act.projectId, title: act.title });
+    else if (state.activeKey) ensureTab({ key: state.activeKey, projectId: state.activeProjectId });
+    // Per-tab indicators: a background session that finished -> "done"; one waiting on
+    // a permission prompt -> "needs you". The focused tab clears both.
+    const nowBusy = {};
+    for (const s of state.sessions) {
+      nowBusy[s.key] = s.busy;
+      const t = state.tabs.find((x) => x.key === s.key);
+      if (!t || s.key === state.activeKey) continue;
+      if (s.lastStatus === 'waiting') t.attn = true;
+      else if (prev[s.key] && !s.busy) t.done = true; // just finished while unfocused
+    }
+    state._prevBusy = nowBusy;
+    const at = state.tabs.find((x) => x.key === state.activeKey);
+    if (at) { at.done = false; at.attn = false; }
+    renderTabs();
     updateSessionsBadge();
     if (window.Managers) window.Managers.onSessions(ev);
+  }
+
+  // ---- session tabs ---------------------------------------------------------
+  const TAB_COLORS = ['#7F77DD', '#1D9E75', '#D85A30', '#378ADD', '#D4537E', '#BA7517', '#639922', '#5DCAA5'];
+  function tabColorFor(projectId) {
+    const s = String(projectId || 'main');
+    let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return TAB_COLORS[h % TAB_COLORS.length];
+  }
+  function projectName(projectId) {
+    const p = state.projects.find((x) => x.id === projectId);
+    return p ? p.name : null;
+  }
+  function tabTitleFor(key, projectId, title) {
+    if (title) return title;
+    const base = projectName(projectId) || (projectId ? String(projectId) : 'Session');
+    const suffix = String(key).includes('#') ? ' ' + String(key).slice(String(key).indexOf('#')) : '';
+    return base + suffix;
+  }
+  function loadTabs() { try { return JSON.parse(localStorage.getItem('agentTabs') || '[]'); } catch { return []; } }
+  function saveTabs() {
+    try { localStorage.setItem('agentTabs', JSON.stringify(state.tabs.map((t) => ({ key: t.key, projectId: t.projectId, title: t.userTitle || null })))); } catch { /* ignore */ }
+  }
+  function ensureTab({ key, projectId, title }) {
+    let t = state.tabs.find((x) => x.key === key);
+    if (!t) {
+      t = { key, projectId: projectId ?? null, userTitle: title || null, title: '', color: tabColorFor(projectId), done: false, attn: false };
+      state.tabs.push(t);
+    } else if (projectId != null && t.projectId == null) {
+      t.projectId = projectId; t.color = tabColorFor(projectId);
+    }
+    if (title) t.userTitle = title;
+    t.title = tabTitleFor(t.key, t.projectId, t.userTitle);
+    saveTabs();
+    return t;
+  }
+  function switchTab(key) {
+    if (key === state.activeKey) return;
+    const t = state.tabs.find((x) => x.key === key);
+    if (t) { t.done = false; t.attn = false; }
+    send({ type: 'switch_session', key });
+  }
+  function closeTab(key) {
+    const idx = state.tabs.findIndex((t) => t.key === key);
+    if (idx < 0) return;
+    state.tabs.splice(idx, 1);
+    saveTabs();
+    send({ type: 'session_stop', key }); // free the process; transcript kept (resumable via Sessions)
+    if (key === state.activeKey && state.tabs.length) {
+      switchTab(state.tabs[Math.min(idx, state.tabs.length - 1)].key);
+    } else if (!state.tabs.length) {
+      send({ type: 'new_session' });
+    }
+    renderTabs();
+  }
+  function renderTabs() {
+    const host = $('tabs'); if (!host) return;
+    // keep titles fresh as project names arrive
+    for (const t of state.tabs) t.title = tabTitleFor(t.key, t.projectId, t.userTitle);
+    host.innerHTML = '';
+    for (const t of state.tabs) {
+      const live = state.sessions.find((s) => s.key === t.key);
+      const isActive = t.key === state.activeKey;
+      const tab = el('div', 'tab' + (isActive ? ' active' : ''));
+      tab.title = t.title;
+      const ind = document.createElement('span');
+      if (live && live.busy) ind.className = 'tab-spin';
+      else if (t.attn) { ind.className = 'tab-attn'; ind.textContent = '!'; }
+      else if (t.done) { ind.className = 'tab-done'; ind.textContent = '✓'; }
+      else { ind.className = 'tab-dot'; ind.style.background = t.color; }
+      const title = el('span', 'tab-title', t.title);
+      const close = el('button', 'tab-close', '✕');
+      close.title = 'Close tab';
+      tab.appendChild(ind); tab.appendChild(title); tab.appendChild(close);
+      tab.onclick = (e) => { if (e.target === close) return; switchTab(t.key); };
+      close.onclick = (e) => { e.stopPropagation(); closeTab(t.key); };
+      host.appendChild(tab);
+    }
+  }
+  function restoreTabs() {
+    state.tabs = loadTabs().map((t) => ({
+      key: t.key, projectId: t.projectId ?? null, userTitle: t.title || null,
+      title: '', color: tabColorFor(t.projectId), done: false, attn: false,
+    }));
+    renderTabs();
   }
   // Show a "background sessions working" indicator in the nav when another session
   // (not the one you're viewing) has a turn in progress.
@@ -1312,6 +1418,7 @@
       const o = document.createElement('option'); o.value = v; o.textContent = label; og.appendChild(o);
     });
     sel.appendChild(og);
+    if (typeof renderTabs === 'function') renderTabs(); // project names just arrived -> refresh tab titles
     if (window.Managers) window.Managers.onProjects(ev);
   }
 
@@ -1837,6 +1944,8 @@
       s.onclick = () => { $('input').value = s.textContent; autoGrow(); $('input').focus(); };
     });
 
+    $('tabNew') && ($('tabNew').onclick = () => send({ type: 'new_session' })); // tap = new session in current folder
+    restoreTabs(); // show persisted tabs immediately; SESSIONS reconciles liveness
     connect();
     // Reserve transcript space under the floating composer (after first layout).
     requestAnimationFrame(syncComposerInset);

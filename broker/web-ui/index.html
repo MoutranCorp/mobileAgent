@@ -56,20 +56,16 @@
         </div>
       </header>
 
-      <!-- Context chips -->
-      <div class="context-bar">
-        <div class="selectors">
-          <label class="sel"><span class="sel-label">Folder</span><select id="projectSelect"></select></label>
-          <label class="sel"><span class="sel-label">Engine</span><select id="engineSelect"></select></label>
-          <label class="sel"><span class="sel-label">Access</span>
-            <select id="permModeSelect" title="Permission mode">
-              <option value="default">ask</option>
-              <option value="acceptEdits">accept edits</option>
-              <option value="plan">plan</option>
-              <option value="bypassPermissions" selected>⚠ bypass all</option>
-            </select>
-          </label>
-        </div>
+      <!-- Session tab strip (folder/access selectors moved into the composer) -->
+      <div class="tab-strip" id="tabStrip">
+        <div class="tabs" id="tabs"></div>
+        <button class="tab-new" id="tabNew" title="New session · long-press to pick a folder" aria-label="New session">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+      </div>
+      <!-- Engine selector now lives in ☰ Settings; kept here (hidden) for populate + wiring. -->
+      <div id="hiddenControls" hidden aria-hidden="true">
+        <select id="engineSelect"></select>
       </div>
 
       <!-- Find-in-conversation bar -->
@@ -126,18 +122,30 @@
                   <path d="M21 11.5l-8.4 8.4a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.6 1.6 0 0 1-2.3-2.3l7.8-7.8"/>
                 </svg>
               </button>
-              <div class="model-pill" title="Model · reasoning effort">
-                <select id="modelSelect"></select>
-                <select id="effortSelect" title="Reasoning effort">
-                  <option value="low">low</option>
-                  <option value="medium">medium</option>
-                  <option value="high" selected>high</option>
-                  <option value="xhigh">xhigh</option>
-                  <option value="max">max</option>
-                  <option value="ultracode" id="ultracodeOpt">ultracode ✦</option>
-                </select>
+              <div class="composer-pills">
+                <div class="model-pill" title="Model · reasoning effort">
+                  <select id="modelSelect"></select>
+                  <select id="effortSelect" title="Reasoning effort">
+                    <option value="low">low</option>
+                    <option value="medium">medium</option>
+                    <option value="high" selected>high</option>
+                    <option value="xhigh">xhigh</option>
+                    <option value="max">max</option>
+                    <option value="ultracode" id="ultracodeOpt">ultracode ✦</option>
+                  </select>
+                </div>
+                <div class="cpill folder-pill" title="Working folder">
+                  <span class="cpill-ico" aria-hidden="true">📁</span><select id="projectSelect"></select>
+                </div>
+                <div class="cpill access-pill" title="Permission mode">
+                  <select id="permModeSelect">
+                    <option value="default">ask</option>
+                    <option value="acceptEdits">accept edits</option>
+                    <option value="plan">plan</option>
+                    <option value="bypassPermissions" selected>⚠ bypass</option>
+                  </select>
+                </div>
               </div>
-              <span class="spacer"></span>
               <button id="voiceBtn" class="icon-btn" title="Voice input" aria-label="Voice">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><line x1="12" y1="17.5" x2="12" y2="21"/>
@@ -157,7 +165,6 @@
               <button id="previewBtn" class="ghost" title="Preview the project (static/web) in an iframe">Preview</button>
               <button id="exportBtn" class="ghost" title="Export conversation to Markdown">Export</button>
               <span id="metroBadge" class="metro-badge hidden"></span>
-              <span id="permModeBadge" class="perm-badge bypassPermissions">bypass all</span>
               <span class="spacer"></span>
               <button id="termBtn" class="ghost" title="Toggle terminal drawer">Terminal</button>
             </div>

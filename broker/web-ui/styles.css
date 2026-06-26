@@ -183,35 +183,66 @@ svg { display: block; }
 .bg-sessions .bg-dots i:nth-child(3) { animation-delay: .4s; }
 .bg-sessions .bg-count { font-size: 12px; font-weight: 700; }
 
-/* =========================== context chip bar =========================== */
-.context-bar {
-  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+/* ============================== tab strip ============================== */
+.tab-strip {
+  display: flex; align-items: stretch; gap: 6px; padding: 6px 8px;
   background: var(--mat-bar); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
-  border-bottom: .5px solid var(--separator);
-  overflow-x: auto; scrollbar-width: none; white-space: nowrap;
+  border-bottom: .5px solid var(--separator); min-height: 44px;
 }
-.context-bar::-webkit-scrollbar { display: none; }
-.selectors { display: flex; gap: 8px; min-width: 0; flex: 0 0 auto; }
-.sel {
-  position: relative; display: inline-flex; align-items: center; flex: 0 0 auto;
-  background: var(--fill-3); border-radius: var(--r-pill); padding: 0 26px 0 6px; height: 32px;
+.tabs { display: flex; align-items: stretch; gap: 6px; flex: 1; min-width: 0;
+  overflow-x: auto; scrollbar-width: none; }
+.tabs::-webkit-scrollbar { display: none; }
+.tab {
+  position: relative; display: inline-flex; align-items: center; gap: 7px; flex: 0 0 auto;
+  max-width: 60vw; padding: 0 9px 0 11px; height: 32px; cursor: pointer;
+  background: var(--fill-3); border: .5px solid transparent; border-radius: var(--r-md);
+  font-size: 13px; color: var(--label-2); transition: background .15s, border-color .15s, color .15s;
 }
-.sel-label {
-  font-size: 11px; font-weight: 600; color: var(--label-3); text-transform: uppercase;
-  letter-spacing: .03em; padding: 0 2px 0 6px;
-}
-.sel::after { /* chevron.down */
-  content: ""; position: absolute; right: 11px; top: 50%; width: 8px; height: 8px;
-  margin-top: -5px; border-right: 2px solid var(--label-3); border-bottom: 2px solid var(--label-3);
-  transform: rotate(45deg); pointer-events: none;
-}
-.sel select {
-  appearance: none; -webkit-appearance: none; background: transparent; color: var(--label);
-  border: none; padding: 6px 6px; font-size: 14px; font-weight: 560; font-family: inherit;
-  max-width: 46vw; cursor: pointer;
-}
-.sel select:focus { outline: none; }
-.sel select option { background: var(--sys-bg-2); color: var(--label); }
+.tab:hover { background: var(--fill-2); }
+.tab.active { background: var(--sys-bg-2); border-color: var(--separator-2); color: var(--label);
+  box-shadow: var(--sh-1); }
+.tab-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--label-3); }
+.tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 520; }
+.tab.active .tab-title { font-weight: 600; }
+/* indicators */
+.tab-spin { width: 11px; height: 11px; flex: 0 0 auto; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--orange) 35%, transparent); border-top-color: var(--orange);
+  animation: spin .8s linear infinite; }
+.tab-done { width: 14px; height: 14px; flex: 0 0 auto; border-radius: 50%; display: grid; place-items: center;
+  background: var(--green); color: #fff; font-size: 10px; font-weight: 800; }
+.tab-attn { width: 14px; height: 14px; flex: 0 0 auto; border-radius: 50%; display: grid; place-items: center;
+  background: var(--orange); color: #fff; font-size: 11px; font-weight: 800; }
+.tab-close { width: 16px; height: 16px; flex: 0 0 auto; border: none; background: transparent; cursor: pointer;
+  color: var(--label-3); border-radius: 50%; display: grid; place-items: center; font-size: 14px; line-height: 1; }
+.tab-close:hover { background: var(--fill-2); color: var(--label); }
+.tab-new { flex: 0 0 auto; width: 34px; border: .5px solid var(--separator); border-radius: var(--r-md);
+  background: var(--fill-3); color: var(--label-2); display: grid; place-items: center; cursor: pointer; }
+.tab-new:hover { background: var(--fill-2); color: var(--label); }
+.tab-new svg { width: 17px; height: 17px; }
+
+/* composer pills (folder · access · model·effort all live in the composer now) */
+.composer-pills { display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0;
+  overflow-x: auto; scrollbar-width: none; }
+.composer-pills::-webkit-scrollbar { display: none; }
+.composer-pills > * { flex: 0 0 auto; } /* pills keep their size; the group scrolls instead of overlapping */
+.cpill { position: relative; display: inline-flex; align-items: center; flex: 0 0 auto;
+  height: 36px; background: var(--fill-3); border-radius: var(--r-pill); padding: 0 6px; }
+.cpill-ico { font-size: 13px; padding-left: 3px; flex: 0 0 auto; }
+.cpill select { appearance: none; -webkit-appearance: none; background: transparent; border: none;
+  color: var(--label); font-family: inherit; font-size: 13px; font-weight: 560; padding: 0 3px; cursor: pointer;
+  max-width: 34vw; text-overflow: ellipsis; }
+.cpill select:focus { outline: none; }
+.cpill select option { background: var(--sys-bg-2); color: var(--label); }
+.access-pill select { color: var(--red); font-weight: 620; max-width: 28vw; }
+
+/* engine picker (☰ → Engine) */
+.engine-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.engine-row { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 13px 15px; background: var(--sys-bg-2); border: .5px solid var(--separator);
+  border-radius: var(--r-md); color: var(--label); cursor: pointer; font-size: 15px; text-align: left; }
+.engine-row:hover { background: var(--fill-3); }
+.engine-row.active { border-color: var(--accent); }
+.engine-check { color: var(--accent); font-weight: 700; }
 
 /* =============================== transcript ============================== */
 .transcript {
@@ -514,7 +545,7 @@ svg { display: block; }
 .composer-row .icon-btn:hover { background: var(--fill-2); }
 .composer-row .icon-btn svg { width: 21px; height: 21px; color: var(--accent); }
 /* model · effort selector, combined into one pill inside the composer */
-.model-pill { display: inline-flex; align-items: center; flex: 0 1 auto; min-width: 0;
+.model-pill { display: inline-flex; align-items: center; flex: 0 0 auto;
   height: 36px; background: var(--fill-3); border-radius: var(--r-pill); padding: 0 6px; }
 .model-pill select { appearance: none; -webkit-appearance: none; background: transparent; border: none;
   color: var(--label); font-family: inherit; font-size: 14px; font-weight: 560; padding: 0 3px;
