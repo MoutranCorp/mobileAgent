@@ -303,7 +303,7 @@
     clearTodos();
     state.toolCards.clear();
     state.approvals.clear();
-    if (typeof htmlApps !== 'undefined') htmlApps.clear();
+    if (typeof fileWidgets !== 'undefined') fileWidgets.clear();
     if (typeof apkWidgets !== 'undefined') apkWidgets.clear();
     state.pendingSent = [];
     applyActivity();
@@ -550,7 +550,8 @@
     const filePath = (ev.input && ev.input.file_path) || '';
     state.toolCards.set(ev.id, {
       el: card, head, body, name: ev.name, isDiff, nested: null,
-      filePath, isHtmlApp: isDiff && /\.html?$/i.test(filePath),
+      // Any generated viewable file (html/svg/image/markdown) gets an inline viewer.
+      filePath, fileKind: isDiff ? fileKind(filePath) : null,
     });
     scrollDown();
   }
@@ -574,15 +575,26 @@
       }
     }
     if (ev.status !== 'error' && !card.isDiff && card.name !== 'Agent') card.body.classList.add('collapsed');
-    // A written HTML file becomes a runnable inline microapp widget.
-    if (card.isHtmlApp && ev.status !== 'error' && card.filePath) addHtmlAppWidget(card.filePath);
+    // A generated viewable file becomes an inline viewer (html app / svg / image / md).
+    if (card.fileKind && ev.status !== 'error' && card.filePath) addFileWidget(card.filePath, card.fileKind);
     scrollDown();
   }
 
-  // ---- HTML microapp widget ------------------------------------------------
-  // When the agent writes a .html file, show a card that runs it live in a
-  // sandboxed iframe (served from the project via /preview) or opens it full.
-  const htmlApps = new Map(); // filePath -> widget state
+  // ---- inline file viewer --------------------------------------------------
+  // When the agent generates a viewable file, show a card that renders it inline
+  // (served from the project via /preview): html runs in a sandboxed iframe, svg/
+  // images render as <img>, markdown renders rich. Each gets View source / Download
+  // / Open-full controls. See [[implemented-features]] HTML microapp widget.
+  const fileWidgets = new Map(); // filePath -> widget state
+  // What renderer a generated file maps to (null = not viewable).
+  function fileKind(filePath) {
+    const ext = (String(filePath).split('.').pop() || '').toLowerCase();
+    if (/^html?$/.test(ext)) return 'html';
+    if (ext === 'svg') return 'svg';
+    if (/^(png|jpe?g|gif|webp|avif|bmp|ico)$/.test(ext)) return 'image';
+    if (/^(md|markdown)$/.test(ext)) return 'markdown';
+    return null;
+  }
 
   // Agents often write an ABSOLUTE file_path (e.g. /root/projects/Test/index.html);
   // /preview and /download serve RELATIVE to the active project dir, so strip it.
@@ -606,60 +618,103 @@
     const a = document.createElement('a'); a.href = url; a.download = fname || ''; a.rel = 'noopener';
     document.body.appendChild(a); a.click(); a.remove();
   }
-  function addHtmlAppWidget(filePath) {
+  const KIND_ICON = { html: '📱', svg: '🎨', image: '🖼️', markdown: '📄' };
+  function addFileWidget(filePath, kind) {
+    kind = kind || fileKind(filePath);
+    if (!kind) return;
     hideEmpty();
-    const url = htmlAppUrl(filePath);
-    let w = htmlApps.get(filePath);
-    if (w) { // re-written: move to bottom and refresh a running preview
-      w.url = url;
+    const url = htmlAppUrl(filePath); // /preview/<rel>
+    let w = fileWidgets.get(filePath);
+    if (w) { // file re-written: refresh in place + bump to the bottom
+      w.url = url; w.kind = kind;
       $('transcript').appendChild(w.card);
-      if (w.running) runHtmlApp(w);
+      renderFileBody(w);
+      if (w.codeShown) refreshFileCode(w);
+      w.card.classList.remove('flash'); void w.card.offsetWidth; w.card.classList.add('flash');
       scrollDown();
       return;
     }
     const fname = String(filePath).split(/[\\/]/).pop();
     const card = el('div', 'html-app');
     const head = el('div', 'html-app-head');
-    const icon = el('span', 'html-app-icon', '📱');
+    const icon = el('span', 'html-app-icon', KIND_ICON[kind] || '📄');
     const name = el('span', 'html-app-name', fname);
-    const runBtn = el('button', 'ghost small', 'Hide');
-    const codeBtn = el('button', 'ghost small', '</> Code');
-    const dlBtn = el('button', 'ghost small', '⬇');
-    const openBtn = el('button', 'primary small', '⤢ Open');
-    codeBtn.title = 'View source'; dlBtn.title = 'Download'; openBtn.title = 'Open full screen';
     const actions = el('div', 'html-app-actions');
-    actions.appendChild(runBtn); actions.appendChild(codeBtn); actions.appendChild(dlBtn); actions.appendChild(openBtn);
     head.appendChild(icon); head.appendChild(name); head.appendChild(actions);
     const bodyEl = el('div', 'html-app-body');
     const codeEl = el('div', 'html-app-code hidden');
     card.appendChild(head); card.appendChild(bodyEl); card.appendChild(codeEl);
     $('transcript').appendChild(card);
-    w = { card, body: bodyEl, code: codeEl, runBtn, codeBtn, url, filePath, running: false, frame: null, codeShown: false };
-    htmlApps.set(filePath, w);
-    runBtn.onclick = () => (w.running ? hideHtmlApp(w) : runHtmlApp(w));
-    codeBtn.onclick = () => toggleHtmlCode(w);
+    w = { card, body: bodyEl, code: codeEl, url, filePath, fname, kind, running: kind === 'html', frame: null, codeShown: false };
+    fileWidgets.set(filePath, w);
+
+    // Run/Hide only makes sense for the interactive html app.
+    if (kind === 'html') {
+      const runBtn = el('button', 'ghost small', 'Hide'); w.runBtn = runBtn;
+      runBtn.onclick = () => (w.running ? hideHtmlApp(w) : runHtmlApp(w));
+      actions.appendChild(runBtn);
+    }
+    // View source for text-based kinds (binary images have no useful source).
+    if (kind === 'html' || kind === 'svg' || kind === 'markdown') {
+      const codeBtn = el('button', 'ghost small', '</> Code'); codeBtn.title = 'View source'; w.codeBtn = codeBtn;
+      codeBtn.onclick = () => toggleFileCode(w);
+      actions.appendChild(codeBtn);
+    }
+    const dlBtn = el('button', 'ghost small', '⬇'); dlBtn.title = 'Download';
     dlBtn.onclick = () => downloadFile(filePath, fname);
+    actions.appendChild(dlBtn);
+    const openBtn = el('button', 'primary small', '⤢ Open'); openBtn.title = 'Open full screen';
     openBtn.onclick = () => {
       const full = location.origin + w.url;
       if (native.has('openExternal')) native.openExternal(full); else window.open(full, '_blank', 'noopener');
     };
-    runHtmlApp(w); // show it immediately
+    actions.appendChild(openBtn);
+
+    renderFileBody(w); // show it immediately
     scrollDown();
   }
-  async function toggleHtmlCode(w) {
+  function _bust(url) { return url + (url.includes('?') ? '&' : '?') + 'r=' + Date.now(); }
+  function renderFileBody(w) {
+    w.body.className = 'html-app-body'; // reset; each kind re-applies its own modifiers
+    if (w.kind === 'html') { runHtmlApp(w); return; }
+    if (w.kind === 'svg' || w.kind === 'image') {
+      // <img> renders svg WITHOUT executing its scripts — safe for agent output.
+      w.body.classList.add('media', 'checker');
+      const img = document.createElement('img');
+      img.className = 'html-app-img'; img.alt = w.fname; img.loading = 'lazy';
+      // Guard against a stale detached <img> firing error after a re-render replaced it.
+      img.onerror = () => { if (w.body.querySelector('img') === img) { w.body.classList.remove('checker'); w.body.innerHTML = '<div class="html-app-empty">Could not load ' + esc(w.fname) + '</div>'; } };
+      img.src = _bust(w.url);
+      w.body.innerHTML = ''; w.body.appendChild(img);
+      return;
+    }
+    if (w.kind === 'markdown') {
+      w.body.className = 'html-app-body mdbody';
+      w.body.innerHTML = '<div class="html-app-empty">Loading…</div>';
+      fetch(_bust(w.url), { cache: 'no-store' }).then((r) => r.text()).then((t) => {
+        const html = (window.MD && window.MD.render) ? window.MD.render(t) : esc(t);
+        w.body.innerHTML = '<div class="bubble md">' + html + '</div>';
+      }).catch((e) => { w.body.innerHTML = '<div class="html-app-empty">Could not load source: ' + esc(e.message || String(e)) + '</div>'; });
+      return;
+    }
+  }
+  async function toggleFileCode(w) {
     if (w.codeShown) { w.code.classList.add('hidden'); w.codeShown = false; w.codeBtn.classList.remove('on'); return; }
     w.codeShown = true; w.codeBtn.classList.add('on'); w.code.classList.remove('hidden');
+    await refreshFileCode(w);
+    scrollDown();
+  }
+  async function refreshFileCode(w) {
     w.code.innerHTML = '<button class="code-copy" type="button">Copy</button><pre><code></code></pre>';
     const codeNode = w.code.querySelector('code');
     codeNode.textContent = 'Loading…';
     try {
-      const r = await fetch(w.url, { cache: 'no-store' });
+      const r = await fetch(_bust(w.url), { cache: 'no-store' });
       const text = await r.text();
       codeNode.textContent = text;
       // Reuse the delegated .code-copy handler (it reads dataset.copy verbatim).
       w.code.querySelector('.code-copy').dataset.copy = text;
     } catch (e) { codeNode.textContent = '(could not load source: ' + (e.message || e) + ')'; }
-    scrollDown();
   }
   function runHtmlApp(w) {
     const f = document.createElement('iframe');

@@ -97,3 +97,48 @@ test('a build that emits an .apk auto-broadcasts an APKS event after the turn', 
     await server.stop();
   }
 });
+
+test('/preview serves svg/markdown/png with correct content-types (inline file viewer)', async () => {
+  const dir = await tmpDir('pv-');
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" fill="#34d399"/></svg>';
+  await fs.writeFile(path.join(dir, 'icon.svg'), svg);
+  await fs.writeFile(path.join(dir, 'NOTES.md'), '# Title\n\nBody **bold**.');
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  await fs.writeFile(path.join(dir, 'pixel.png'), png);
+  const { server, ws, port } = await boot(dir);
+  try {
+    const svgRes = await fetch(`http://127.0.0.1:${port}/preview/icon.svg`);
+    assert.equal(svgRes.status, 200);
+    assert.equal(svgRes.headers.get('content-type'), 'image/svg+xml');
+    assert.equal(await svgRes.text(), svg);
+
+    const mdRes = await fetch(`http://127.0.0.1:${port}/preview/NOTES.md`);
+    assert.equal(mdRes.status, 200);
+    assert.match(mdRes.headers.get('content-type') || '', /^text\/markdown/);
+
+    const pngRes = await fetch(`http://127.0.0.1:${port}/preview/pixel.png`);
+    assert.equal(pngRes.headers.get('content-type'), 'image/png');
+    assert.ok(Buffer.from(await pngRes.arrayBuffer()).equals(png), 'png bytes round-trip');
+  } finally {
+    ws.close();
+    await server.stop();
+  }
+});
+
+test('the mock writes a viewable svg that /preview can render', async () => {
+  const dir = await tmpDir('pv-svg-');
+  const { server, ws, port, waitFor } = await boot(dir);
+  try {
+    ws.send(JSON.stringify({ type: 'user_message', text: 'create an svg icon for the app' }));
+    const pr = await waitFor((e) => e.type === 'permission_request', 8000);
+    ws.send(JSON.stringify({ type: 'approve', id: pr.id }));
+    await waitFor((e) => e.type === 'result', 12000);
+    const res = await fetch(`http://127.0.0.1:${port}/preview/icon.svg`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'image/svg+xml');
+    assert.match(await res.text(), /<svg[\s>]/);
+  } finally {
+    ws.close();
+    await server.stop();
+  }
+});

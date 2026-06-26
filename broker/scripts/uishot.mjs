@@ -145,6 +145,45 @@ try {
   }
 } catch (e) { console.log('html-app err', e.message); }
 
+// SVG / image / markdown inline viewer (mock writes icon.svg for an "svg icon" prompt)
+try {
+  await page.fill('#input', 'create an svg icon for the app');
+  await page.dispatchEvent('#input', 'input');
+  await page.click('#sendBtn');
+  await sleep(1400);
+  const ap2 = page.locator('.approval-actions button.accent');
+  if (await ap2.count()) await ap2.first().click();
+  await sleep(2200);
+  await page.evaluate(() => { const imgs = [...document.querySelectorAll('.html-app')]; const a = imgs[imgs.length - 1]; if (a) a.scrollIntoView({ block: 'center' }); });
+  await sleep(700);
+  const svgCardOf = () => `[...document.querySelectorAll('.html-app')].find(c => c.querySelector('.html-app-name')?.textContent === 'icon.svg')`;
+  console.log('CHECK svg viewer img present:', await page.evaluate(`(${svgCardOf()})?.querySelector('.html-app-body.media img.html-app-img') ? true : false`));
+  console.log('CHECK svg viewer checker bg:', await page.evaluate(`(${svgCardOf()})?.querySelector('.html-app-body.media.checker') ? true : false`));
+  console.log('CHECK svg viewer loaded ok:', await page.evaluate(`(() => { const i = (${svgCardOf()})?.querySelector('img.html-app-img'); return !!i && i.complete && i.naturalWidth > 0; })()`));
+  await shot('10-svg-viewer');
+  // Click View source on the icon.svg card specifically (state replay can add others).
+  await page.evaluate(`(() => { const card = ${svgCardOf()}; const btn = [...(card?.querySelectorAll('.html-app-actions .ghost.small')||[])].find(b => /Code/.test(b.textContent)); btn && btn.click(); })()`);
+  await sleep(1000);
+  console.log('CHECK svg source shown:', await page.evaluate(`(() => { const card = ${svgCardOf()}; const panel = card?.querySelector('.html-app-code'); return !!panel && !panel.classList.contains('hidden') && (panel.querySelector('code')?.textContent || '').includes('<svg'); })()`));
+  await page.evaluate(`(${svgCardOf()})?.scrollIntoView({ block: 'center' })`);
+  await shot('10b-svg-code');
+} catch (e) { console.log('svg-viewer err', e.message); }
+
+// Markdown file viewer (mock writes NOTES.md for a "readme" prompt)
+try {
+  await page.fill('#input', 'write a readme for this project');
+  await page.dispatchEvent('#input', 'input');
+  await page.click('#sendBtn');
+  await sleep(1400);
+  const ap3 = page.locator('.approval-actions button.accent');
+  if (await ap3.count()) await ap3.first().click();
+  await sleep(2200);
+  await page.evaluate(() => { const a = [...document.querySelectorAll('.html-app')].pop(); if (a) a.scrollIntoView({ block: 'center' }); });
+  await sleep(700);
+  console.log('CHECK md viewer rendered:', await page.evaluate(() => !!document.querySelector('.html-app-body.mdbody .bubble.md h1')));
+  await shot('11-md-viewer');
+} catch (e) { console.log('md-viewer err', e.message); }
+
 // APK build widget (mock writes android/.../app-release.apk for a build prompt)
 try {
   await page.fill('#input', 'build the release apk');
