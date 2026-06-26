@@ -458,13 +458,17 @@ svg { display: block; }
    frosted card (backdrop-filter blurs it) and fades into the scrim above. */
 .composer {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 25;
-  padding: 0 10px; padding-bottom: max(8px, var(--safe-bot));
+  /* Side gutter scales with the viewport so the card is slightly inset on any
+     screen, clamped so it's never cramped on tiny phones nor huge on desktop. */
+  --composer-gutter: clamp(16px, 5.5vw, 96px);
+  padding: 0 var(--composer-gutter); padding-bottom: max(8px, var(--safe-bot));
   pointer-events: none; /* let the side gutters click through to the transcript */
 }
 .composer > * { pointer-events: auto; }
-.composer-scrim { height: 34px; margin: 0 -10px; pointer-events: none;
+.composer-scrim { height: 34px; margin: 0 calc(-1 * var(--composer-gutter)); pointer-events: none;
   background: linear-gradient(to bottom, transparent 0%, var(--sys-bg) 92%); }
-.composer-dock { display: flex; flex-direction: column; gap: 8px; }
+/* Cap + center on very wide screens; on phones the gutter clamp governs width. */
+.composer-dock { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 680px; margin-inline: auto; }
 .composer-card {
   background: var(--mat-bar); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
   border: .5px solid var(--separator); border-radius: var(--r-xl);
