@@ -39,7 +39,26 @@ await page.fill('#input', 'Build a polished counter screen with a + button');
 await page.dispatchEvent('#input', 'input');
 await sleep(400);
 console.log('CHECK has-text:', await page.evaluate(() => document.querySelector('.composer')?.classList.contains('has-text')));
+console.log('CHECK model pill in composer:', await page.evaluate(() => !!document.querySelector('.composer-card .model-pill #modelSelect')));
+console.log('CHECK transcript inset reserved:', await page.evaluate(() => parseInt(getComputedStyle(document.getElementById('transcript')).paddingBottom) > 60));
 await shot('02-composer');
+
+// Expand button + fullscreen editor (appears once the draft passes ~5 lines).
+await page.fill('#input', 'line1\nline2\nline3\nline4\nline5\nline6 of a long prompt');
+await page.dispatchEvent('#input', 'input');
+await sleep(300);
+console.log('CHECK expand button visible:', await page.evaluate(() => { const b = document.getElementById('expandBtn'); return !!b && !b.classList.contains('hidden'); }));
+await shot('02c-expand-affordance');
+await page.click('#expandBtn');
+await sleep(400);
+console.log('CHECK fullscreen editor open:', await page.evaluate(() => { const f = document.getElementById('fullEditor'); return !!f && !f.classList.contains('hidden'); }));
+console.log('CHECK fullscreen carries text:', await page.evaluate(() => (document.getElementById('fullEditorText').value || '').includes('line6')));
+await shot('02d-fullscreen');
+await page.click('#fullEditorClose');
+await sleep(250);
+await page.fill('#input', 'Build a polished counter screen with a + button');
+await page.dispatchEvent('#input', 'input');
+await sleep(200);
 
 await page.click('#sendBtn');
 await sleep(120);

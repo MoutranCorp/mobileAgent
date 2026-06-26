@@ -1446,6 +1446,25 @@
     requestAnimationFrame(() => send(payload)); // send after the UI has painted
   }
 
+  // ---- fullscreen prompt editor --------------------------------------------
+
+  function openFullEditor() {
+    const fe = $('fullEditor');
+    const fet = $('fullEditorText');
+    fet.value = $('input').value;
+    fe.classList.remove('hidden');
+    setTimeout(() => { fet.focus(); try { fet.setSelectionRange(fet.value.length, fet.value.length); } catch {} }, 20);
+  }
+  // sendAfter=true: collapse, sync text back, and fire the send.
+  function closeFullEditor(sendAfter) {
+    const fe = $('fullEditor');
+    $('input').value = $('fullEditorText').value;
+    fe.classList.add('hidden');
+    autoGrow();
+    if (sendAfter) { requestNotify(); doSend(); }
+    else $('input').focus();
+  }
+
   // ---- image attachments ----------------------------------------------------
 
   function addImageFile(file) {
@@ -1538,10 +1557,25 @@
   function autoGrow() {
     const ta = $('input');
     ta.style.height = 'auto';
-    ta.style.height = Math.min(ta.scrollHeight, 160) + 'px';
+    ta.style.height = Math.min(ta.scrollHeight, 168) + 'px';
     // Light up the circular send button when there's something to send (iMessage).
     const composer = document.querySelector('.composer');
     if (composer) composer.classList.toggle('has-text', !!ta.value.trim() || state.attachments.length > 0);
+    // Offer the fullscreen editor once the draft grows past ~5 lines.
+    const expand = $('expandBtn');
+    if (expand) expand.classList.toggle('hidden', (ta.value.match(/\n/g) || []).length < 5);
+    syncComposerInset();
+  }
+
+  // The composer floats over the transcript; reserve room so the last message
+  // can scroll clear of the card (which is taller when the draft/attachments grow).
+  function syncComposerInset() {
+    const dock = document.querySelector('.composer-dock');
+    const tr = $('transcript');
+    if (!dock || !tr) return;
+    const inset = Math.round(dock.getBoundingClientRect().height) + 34; // + scrim
+    tr.style.paddingBottom = inset + 'px';
+    tr.style.scrollPaddingBottom = inset + 'px';
   }
 
   // slash command palette
@@ -1577,6 +1611,16 @@
       requestNotify(); doSend();
     };
     $('sendBtn').onclick = sendOrStop;
+    // Fullscreen editor (expand button appears once the draft passes ~5 lines).
+    $('expandBtn').onclick = openFullEditor;
+    $('fullEditorClose').onclick = () => closeFullEditor(false);
+    $('fullEditorSend').onclick = () => closeFullEditor(true);
+    $('fullEditorText').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); closeFullEditor(true); }
+      if (e.key === 'Escape') { e.preventDefault(); closeFullEditor(false); }
+    });
+    // Keep the transcript inset correct when the keyboard/viewport resizes.
+    window.addEventListener('resize', syncComposerInset);
     $('input').addEventListener('keydown', (e) => {
       // Enter inserts a newline (phone keyboards have no Shift+Enter). Send is the
       // button; Ctrl/Cmd+Enter also sends for desktop keyboards.
@@ -1730,6 +1774,8 @@
     });
 
     connect();
+    // Reserve transcript space under the floating composer (after first layout).
+    requestAnimationFrame(syncComposerInset);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
