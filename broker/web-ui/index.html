@@ -186,6 +186,22 @@
         <input id="imageInput" type="file" accept="image/*" multiple style="display:none" />
       </footer>
 
+      <!-- File-tab view: takes over the area below the tab strip when a file tab is open -->
+      <section id="fileView" class="file-view-pane hidden">
+        <div class="fv-toolbar">
+          <span id="fvName" class="fv-name">file</span>
+          <div class="fv-modes">
+            <button id="fvRendered" class="fv-mode active" type="button">Rendered</button>
+            <button id="fvSource" class="fv-mode" type="button">Source</button>
+          </div>
+          <span class="spacer"></span>
+          <button id="fvSave" class="ghost small hidden" type="button" title="Save changes">Save</button>
+          <button id="fvDownload" class="ghost small" type="button" title="Download">⬇</button>
+          <button id="fvClose" class="ghost small" type="button" title="Close file tab">✕</button>
+        </div>
+        <div id="fvBody" class="fv-body"></div>
+      </section>
+
       <!-- Web preview drawer -->
       <section id="preview" class="preview hidden">
         <div class="preview-head">

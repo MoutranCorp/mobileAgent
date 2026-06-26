@@ -192,6 +192,18 @@ try {
   console.log('CHECK svg source shown:', await page.evaluate(`(() => { const card = ${svgCardOf()}; const panel = card?.querySelector('.html-app-code'); return !!panel && !panel.classList.contains('hidden') && (panel.querySelector('code')?.textContent || '').includes('<svg'); })()`));
   await page.evaluate(`(${svgCardOf()})?.scrollIntoView({ block: 'center' })`);
   await shot('10b-svg-code');
+  // File tab (Phase 3): open the svg as an editable tab via the widget Edit button.
+  const editBtn = page.locator('.html-app-actions .ghost.small', { hasText: 'Edit' });
+  if (await editBtn.count()) {
+    await editBtn.last().click(); await sleep(800);
+    console.log('CHECK file view opens:', await page.evaluate(() => !document.getElementById('fileView').classList.contains('hidden')));
+    console.log('CHECK file tab in strip:', await page.evaluate(() => document.querySelectorAll('#tabs .tab.file-tab').length > 0));
+    await shot('10c-file-tab');
+    await page.click('#fvSource'); await sleep(600);
+    console.log('CHECK file source editable:', await page.evaluate(() => { const t = document.querySelector('#fvBody .fv-source'); return !!t && !t.disabled; }));
+    await page.click('#fvClose'); await sleep(400);
+    console.log('CHECK back to chat after close:', await page.evaluate(() => document.getElementById('transcript').style.display !== 'none'));
+  }
 } catch (e) { console.log('svg-viewer err', e.message); }
 
 // Markdown file viewer (mock writes NOTES.md for a "readme" prompt)

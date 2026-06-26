@@ -815,9 +815,11 @@
         pane.appendChild(pre);
         const edit = el('button', 'ghost small', 'Edit');
         edit.onclick = () => { m.editingFile = true; renderPane(); };
+        const asTab = el('button', 'ghost small', '↗ Open as tab');
+        asTab.onclick = () => { close(); if (window.Agent && window.Agent.openFileTab) window.Agent.openFileTab(m.openFile.path); };
         const ref = el('button', 'ghost small', 'Reference (@)');
         ref.onclick = () => { const inp = document.getElementById('input'); inp.value += (inp.value && !inp.value.endsWith(' ') ? ' ' : '') + '@' + m.openFile.path + ' '; close(); inp.focus(); };
-        pane.appendChild(edit); pane.appendChild(ref);
+        pane.appendChild(edit); pane.appendChild(asTab); pane.appendChild(ref);
       }
       return;
     }

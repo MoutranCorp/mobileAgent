@@ -31,12 +31,13 @@
     activityLabel: 'Thinking…',
     sessions: [], // live sessions [{ key, busy, active, ... }]
     activeKey: null,
-    tabs: [], // [{ key, projectId, title, color, done, attn }] persisted session tabs
+    tabs: [], // [{ id, kind:'session'|'file', key?, projectId?, filePath?, title, color, done }] persisted
+    activeTabId: null, // the focused tab's id (a session key, or 'file:<path>') — decoupled from broker activeKey
     _prevBusy: {}, // key -> busy, to detect a background session finishing
     resources: null, // latest RESOURCES sample (device RAM + per-engine RSS) for the System tab
   };
   // exposed for managers.js (toast attached after its definition below)
-  window.Agent = { send, state, esc };
+  window.Agent = { send, state, esc, openFileTab };
 
   // Native bridge: inside the Android WebView, window.AndroidAgent is injected by
   // the Kotlin host. On desktop browsers it's absent and we use the web APIs.
@@ -277,6 +278,10 @@
     const act = state.sessions.find((s) => s.key === state.activeKey);
     if (act) ensureTab({ key: act.key, projectId: act.projectId, title: act.title });
     else if (state.activeKey) ensureTab({ key: state.activeKey, projectId: state.activeProjectId });
+    // Keep the focused tab synced to the broker's active session — unless the user is
+    // currently on a FILE tab (a client-only view; don't yank them back to chat).
+    const curTab = state.activeTabId ? tabById(state.activeTabId) : null;
+    if (!curTab || curTab.kind !== 'file') { state.activeTabId = state.activeKey; applyViewMode(); }
     // "Done" nudge: a background session that finished a turn (busy -> idle) while
     // unfocused. (working/waiting indicators are derived live in renderTabs.)
     const nowBusy = {};
@@ -327,12 +332,16 @@
   }
   function loadTabs() { try { return JSON.parse(localStorage.getItem('agentTabs') || '[]'); } catch { return []; } }
   function saveTabs() {
-    try { localStorage.setItem('agentTabs', JSON.stringify(state.tabs.map((t) => ({ key: t.key, projectId: t.projectId, title: t.userTitle || null })))); } catch { /* ignore */ }
+    try {
+      localStorage.setItem('agentTabs', JSON.stringify(state.tabs.map((t) => t.kind === 'file'
+        ? { kind: 'file', id: t.id, filePath: t.filePath, fileKind: t.fileKind, title: t.userTitle || null }
+        : { kind: 'session', key: t.key, projectId: t.projectId, title: t.userTitle || null })));
+    } catch { /* ignore */ }
   }
   function ensureTab({ key, projectId, title }) {
-    let t = state.tabs.find((x) => x.key === key);
+    let t = state.tabs.find((x) => x.kind !== 'file' && x.key === key);
     if (!t) {
-      t = { key, projectId: projectId ?? null, userTitle: title || null, title: '', color: tabColorFor(projectId), done: false, attn: false };
+      t = { id: key, key, kind: 'session', projectId: projectId ?? null, userTitle: title || null, title: '', color: tabColorFor(projectId), done: false, attn: false };
       state.tabs.push(t);
     } else if (projectId != null && t.projectId == null) {
       t.projectId = projectId; t.color = tabColorFor(projectId);
@@ -342,65 +351,148 @@
     saveTabs();
     return t;
   }
-  function switchTab(key) {
-    if (key === state.activeKey) return;
-    const t = state.tabs.find((x) => x.key === key);
-    if (t) t.done = false;
+  function tabById(id) { return state.tabs.find((t) => t.id === id) || state.tabs.find((t) => t.key === id); }
+  function switchTab(id) {
+    const t = tabById(id); if (!t) return;
+    t.done = false;
+    state.activeTabId = t.id;
+    if (t.kind === 'file') { applyViewMode(); renderFileView(t); renderTabs(); return; } // client-only, no broker switch
     state._optimisticUntil = 0; // show the destination tab's real state immediately
-    send({ type: 'switch_session', key });
+    applyViewMode();
+    if (t.key !== state.activeKey) send({ type: 'switch_session', key: t.key });
+    else renderTabs();
   }
-  function closeTab(key) {
-    const idx = state.tabs.findIndex((t) => t.key === key);
+  function closeTab(id) {
+    const idx = state.tabs.findIndex((t) => t.id === id);
     if (idx < 0) return;
+    const t = state.tabs[idx];
     state.tabs.splice(idx, 1);
     saveTabs();
-    send({ type: 'session_stop', key }); // free the process; transcript kept (resumable via Sessions)
-    if (key === state.activeKey && state.tabs.length) {
-      switchTab(state.tabs[Math.min(idx, state.tabs.length - 1)].key);
-    } else if (!state.tabs.length) {
-      send({ type: 'new_session' });
-    }
-    renderTabs();
+    if (t.kind !== 'file') send({ type: 'session_stop', key: t.key }); // free the process; transcript kept
+    if (t.id === state.activeTabId) {
+      if (state.tabs.length) switchTab(state.tabs[Math.min(idx, state.tabs.length - 1)].id);
+      else { state.activeTabId = null; applyViewMode(); send({ type: 'new_session' }); }
+    } else { renderTabs(); applyViewMode(); }
   }
   function renderTabs() {
     const host = $('tabs'); if (!host) return;
-    // keep titles fresh as project names arrive
-    for (const t of state.tabs) t.title = tabTitleFor(t.key, t.projectId, t.userTitle);
+    // keep session-tab titles fresh as project names arrive (file tabs keep their own)
+    for (const t of state.tabs) if (t.kind !== 'file') t.title = tabTitleFor(t.key, t.projectId, t.userTitle);
     host.innerHTML = '';
     for (const t of state.tabs) {
-      const live = state.sessions.find((s) => s.key === t.key);
-      const waiting = live && live.lastStatus === 'waiting';
-      const working = live && live.busy && !waiting;
-      const isActive = t.key === state.activeKey;
-      const tab = el('div', 'tab' + (isActive ? ' active' : ''));
+      const isActive = t.id === state.activeTabId;
+      const tab = el('div', 'tab' + (isActive ? ' active' : '') + (t.kind === 'file' ? ' file-tab' : ''));
       tab.title = t.title;
       const ind = document.createElement('span');
-      if (waiting) { ind.className = 'tab-attn'; ind.textContent = '!'; } // needs you (approval) — over the spinner
-      else if (working) ind.className = 'tab-spin';
-      else if (t.done) { ind.className = 'tab-done'; ind.textContent = '✓'; }
-      else { ind.className = 'tab-dot'; ind.style.background = t.color; }
+      if (t.kind === 'file') { ind.className = 'tab-ico'; ind.textContent = KIND_ICON[t.fileKind] || '📄'; }
+      else {
+        const live = state.sessions.find((s) => s.key === t.key);
+        const waiting = live && live.lastStatus === 'waiting';
+        const working = live && live.busy && !waiting;
+        if (waiting) { ind.className = 'tab-attn'; ind.textContent = '!'; } // needs you (approval) — over the spinner
+        else if (working) ind.className = 'tab-spin';
+        else if (t.done) { ind.className = 'tab-done'; ind.textContent = '✓'; }
+        else { ind.className = 'tab-dot'; ind.style.background = t.color; }
+      }
       const title = el('span', 'tab-title', t.title);
       const close = el('button', 'tab-close', '✕');
       close.title = 'Close tab';
       tab.appendChild(ind); tab.appendChild(title); tab.appendChild(close);
-      tab.onclick = (e) => { if (e.target === close) return; switchTab(t.key); };
-      close.onclick = (e) => { e.stopPropagation(); closeTab(t.key); };
+      tab.onclick = (e) => { if (e.target === close) return; switchTab(t.id); };
+      close.onclick = (e) => { e.stopPropagation(); closeTab(t.id); };
       host.appendChild(tab);
     }
     // Bring the active tab into view when it changes, so it (and its ✕) is reachable.
-    if (state.activeKey !== state._lastTabScroll) {
-      state._lastTabScroll = state.activeKey;
+    if (state.activeTabId !== state._lastTabScroll) {
+      state._lastTabScroll = state.activeTabId;
       const a = host.querySelector('.tab.active');
       if (a && a.scrollIntoView) a.scrollIntoView({ inline: 'nearest', block: 'nearest' });
     }
   }
   function restoreTabs() {
-    state.tabs = loadTabs().map((t) => ({
-      key: t.key, projectId: t.projectId ?? null, userTitle: t.title || null,
-      title: '', color: tabColorFor(t.projectId), done: false, attn: false,
-    }));
+    state.tabs = loadTabs().map((t) => t.kind === 'file'
+      ? { id: t.id || ('file:' + t.filePath), kind: 'file', filePath: t.filePath, fileKind: t.fileKind || fileKind(t.filePath),
+          userTitle: t.title || null, title: t.title || String(t.filePath).split(/[\\/]/).pop(), color: '#8a8a8a' }
+      : { id: t.key, key: t.key, kind: 'session', projectId: t.projectId ?? null, userTitle: t.title || null,
+          title: '', color: tabColorFor(t.projectId), done: false });
+    renderTabs();
+    applyViewMode();
+  }
+
+  // ---- file tabs (Phase 3): open a project file as a tab, view + edit + save -
+  function openFileTab(filePath, kind) {
+    hideEmpty();
+    const id = 'file:' + projectRelPath(filePath);
+    const fname = String(filePath).split(/[\\/]/).pop();
+    let t = state.tabs.find((x) => x.id === id);
+    if (!t) {
+      t = { id, kind: 'file', filePath, fileKind: kind || fileKind(filePath), userTitle: null, title: fname, color: '#8a8a8a' };
+      state.tabs.push(t); saveTabs();
+    }
+    t._content = null; t._dirty = false; // reload fresh each open
+    state.activeTabId = id;
+    applyViewMode();
+    renderFileView(t);
     renderTabs();
   }
+  function applyViewMode() {
+    const t = state.activeTabId ? tabById(state.activeTabId) : null;
+    const fileMode = !!(t && t.kind === 'file');
+    const tr = $('transcript'), comp = document.querySelector('.composer'), fv = $('fileView');
+    if (tr) tr.style.display = fileMode ? 'none' : '';
+    if (comp) comp.style.display = fileMode ? 'none' : '';
+    if (fv) fv.classList.toggle('hidden', !fileMode);
+  }
+  function renderFileView(t) {
+    if (!t || t.kind !== 'file') return;
+    const fk = t.fileKind;
+    const canRender = fk === 'html' || fk === 'svg' || fk === 'image' || fk === 'markdown';
+    const canSource = fk !== 'image';
+    if (!t._mode) t._mode = canRender ? 'rendered' : 'source';
+    if (!canRender) t._mode = 'source';
+    if (!canSource) t._mode = 'rendered';
+    $('fvName').textContent = t.title;
+    $('fvRendered').classList.toggle('hidden', !canRender);
+    $('fvSource').classList.toggle('hidden', !canSource);
+    $('fvRendered').classList.toggle('active', t._mode === 'rendered');
+    $('fvSource').classList.toggle('active', t._mode === 'source');
+    $('fvSave').classList.toggle('hidden', t._mode !== 'source');
+    $('fvSave').classList.toggle('dirty', !!t._dirty);
+    const body = $('fvBody'); body.className = 'fv-body'; body.innerHTML = '';
+    const url = htmlAppUrl(t.filePath);
+    if (t._mode === 'rendered') {
+      if (fk === 'html') {
+        const f = document.createElement('iframe'); f.className = 'fv-iframe';
+        f.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox');
+        f.src = _bust(url); body.appendChild(f);
+      } else if (fk === 'svg' || fk === 'image') {
+        const wrap = el('div', 'fv-rendered media'); const img = document.createElement('img');
+        img.className = 'fv-img'; img.alt = t.title; img.src = _bust(url); wrap.appendChild(img); body.appendChild(wrap);
+      } else if (fk === 'markdown') {
+        const wrap = el('div', 'fv-rendered fv-md'); wrap.innerHTML = '<div class="fv-empty">Loading…</div>'; body.appendChild(wrap);
+        fetch(_bust(url), { cache: 'no-store' }).then((r) => r.text()).then((txt) => {
+          wrap.innerHTML = '<div class="bubble md">' + ((window.MD && window.MD.render) ? window.MD.render(txt) : esc(txt)) + '</div>';
+        }).catch(() => { wrap.innerHTML = '<div class="fv-empty">Could not load.</div>'; });
+      }
+    } else {
+      const ta = document.createElement('textarea'); ta.className = 'fv-source'; ta.spellcheck = false;
+      if (t._content != null) { ta.value = t._content; } else { ta.value = ''; ta.placeholder = 'Loading…'; ta.disabled = true; }
+      body.appendChild(ta);
+      if (t._content == null) {
+        fetch(_bust(url), { cache: 'no-store' }).then((r) => r.text()).then((txt) => {
+          t._content = txt; ta.value = txt; ta.disabled = false;
+        }).catch(() => { ta.value = '(could not load file)'; ta.disabled = false; });
+      }
+      ta.oninput = () => { t._content = ta.value; t._dirty = true; $('fvSave').classList.add('dirty'); };
+    }
+  }
+  function saveFileTab(t) {
+    if (!t || t.kind !== 'file' || t._content == null) return;
+    send({ type: 'files_write', path: projectRelPath(t.filePath), content: t._content });
+    t._dirty = false; $('fvSave').classList.remove('dirty');
+    toast('Saved ' + t.title, 'info');
+  }
+  function activeFileTab() { const t = state.activeTabId ? tabById(state.activeTabId) : null; return t && t.kind === 'file' ? t : null; }
 
   // ---- folder switcher sheet (folder pill tap · + long-press) ---------------
   function updateFolderPill() {
@@ -854,6 +946,9 @@
     const dlBtn = el('button', 'ghost small', '⬇'); dlBtn.title = 'Download';
     dlBtn.onclick = () => downloadFile(filePath, fname);
     actions.appendChild(dlBtn);
+    const editBtn = el('button', 'ghost small', '✎ Edit'); editBtn.title = 'Open as an editable tab';
+    editBtn.onclick = () => openFileTab(filePath, kind);
+    actions.appendChild(editBtn);
     const openBtn = el('button', 'primary small', '⤢ Open'); openBtn.title = 'Open full screen';
     openBtn.onclick = () => {
       const full = location.origin + w.url;
@@ -2027,6 +2122,12 @@
     if ($('tabNew')) onLongPress($('tabNew'), openFolderSheet, () => send({ type: 'new_session' }));
     $('folderPill') && ($('folderPill').onclick = openFolderSheet);
     $('folderSheetScrim') && ($('folderSheetScrim').onclick = closeFolderSheet);
+    // File-tab view toolbar.
+    $('fvRendered') && ($('fvRendered').onclick = () => { const t = activeFileTab(); if (t) { t._mode = 'rendered'; renderFileView(t); } });
+    $('fvSource') && ($('fvSource').onclick = () => { const t = activeFileTab(); if (t) { t._mode = 'source'; renderFileView(t); } });
+    $('fvSave') && ($('fvSave').onclick = () => { const t = activeFileTab(); if (t) saveFileTab(t); });
+    $('fvDownload') && ($('fvDownload').onclick = () => { const t = activeFileTab(); if (t) downloadFile(t.filePath, t.title); });
+    $('fvClose') && ($('fvClose').onclick = () => { const t = activeFileTab(); if (t) closeTab(t.id); });
     restoreTabs(); // show persisted tabs immediately; SESSIONS reconciles liveness
     connect();
     // Reserve transcript space under the floating composer (after first layout).
