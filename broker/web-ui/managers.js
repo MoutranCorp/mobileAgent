@@ -26,6 +26,7 @@
     { id: 'memory', label: 'Memory', kind: 'memory' },
     { id: 'permissions', label: 'Permissions', kind: 'settings' },
     { id: 'engine', label: 'Engine' },
+    { id: 'system', label: 'System' },
     { id: 'hooks', label: 'Hooks' },
     { id: 'sessions', label: 'Sessions', kind: 'sessions' },
     { id: 'projects', label: 'Projects' },
@@ -160,6 +161,7 @@
       case 'memory': return renderMemory(pane);
       case 'permissions': return renderPermissions(pane);
       case 'engine': return renderEngine(pane);
+      case 'system': return renderSystem(pane);
       case 'hooks': return renderHooks(pane);
       case 'sessions': return renderSessions(pane);
       case 'projects': return renderProjects(pane);
@@ -187,6 +189,59 @@
     if (!profiles.length) list.appendChild(el('p', 'mgr-hint', 'No engines configured.'));
     pane.appendChild(list);
   }
+
+  // ---- System: device RAM + live engines (off the RESOURCES stream) --------
+
+  function fmtIdle(ms) {
+    const s = Math.floor((ms || 0) / 1000);
+    if (s < 60) return s + 's';
+    return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+  }
+  function renderSystem(pane) {
+    const r = (window.Agent && window.Agent.state.resources) || null;
+    if (!r) { pane.appendChild(el('p', 'mgr-hint', 'Gathering resource metrics…')); return; }
+    const mem = r.mem || {};
+    const card = el('div', 'sys-card');
+    card.appendChild(el('div', 'sys-label', 'Device memory' + (r.hasProc ? '' : ' (approx — no /proc here)')));
+    const bar = el('div', 'sys-bar');
+    const fill = el('div', 'sys-bar-fill' + (mem.usedPct >= 88 ? ' hot' : mem.usedPct >= 70 ? ' warm' : ''));
+    fill.style.width = Math.max(2, Math.min(100, mem.usedPct || 0)) + '%';
+    bar.appendChild(fill); card.appendChild(bar);
+    card.appendChild(el('div', 'sys-sub', `${mem.usedMb || 0} MB used · ${mem.availMb || 0} MB free · ${mem.totalMb || 0} MB total · ${mem.usedPct || 0}%`));
+    const meta = el('div', 'sys-meta');
+    meta.appendChild(el('span', '', `broker ${r.broker?.rssMb ?? '—'} MB`));
+    meta.appendChild(el('span', '', `agents ${r.agentsRssMb ?? 0} MB`));
+    if (r.cpu) meta.appendChild(el('span', '', `load ${r.cpu.load1}`));
+    card.appendChild(meta);
+    pane.appendChild(card);
+
+    pane.appendChild(el('div', 'sys-heading', `Live agents (${(r.engines || []).length})`));
+    const list = el('div', 'sys-engines');
+    for (const e of r.engines || []) {
+      const row = el('div', 'sys-engine' + (e.active ? ' active' : ''));
+      const info = el('div', 'sys-engine-info');
+      const pn = (m.projects || []).find((p) => p.id === e.projectId)?.name;
+      const label = e.title || pn || e.projectId || (e.key === '__main__' || /^__main__/.test(e.key) ? 'No folder' : e.key);
+      const name = el('div', 'sys-engine-name', label + (e.pinned ? ' 📌' : ''));
+      const sub = el('div', 'sys-engine-sub',
+        `${e.status === 'working' ? '● working' : '○ idle ' + fmtIdle(e.idleMs)} · ${e.rssMb != null ? e.rssMb + ' MB' : '—'}` + (e.active ? ' · focused' : ''));
+      info.appendChild(name); info.appendChild(sub);
+      const acts = el('div', 'sys-engine-acts');
+      const pin = el('button', 'ghost small', e.pinned ? 'Unpin' : 'Pin');
+      pin.title = e.pinned ? 'Allow idle eviction' : 'Keep warm (never idle-evict)';
+      pin.onclick = () => send({ type: 'session_pin', key: e.key, pinned: !e.pinned });
+      const stop = el('button', 'ghost small', 'Stop');
+      stop.title = 'Free this agent’s process (transcript kept; resumes on use)';
+      stop.disabled = !!e.active;
+      stop.onclick = () => send({ type: 'session_stop', key: e.key });
+      acts.appendChild(pin); acts.appendChild(stop);
+      row.appendChild(info); row.appendChild(acts);
+      list.appendChild(row);
+    }
+    if (!(r.engines || []).length) list.appendChild(el('p', 'mgr-hint', 'No live agents.'));
+    pane.appendChild(list);
+  }
+  function onResources() { if (!root.classList.contains('hidden') && m.tab === 'system') renderPane(); }
 
   // ---- scope switch --------------------------------------------------------
 
@@ -1162,7 +1217,7 @@
   }
 
   window.Managers = {
-    open, openTab, close, onConfig, onCapabilities, onContext, onProjects, onProfiles,
+    open, openTab, close, onConfig, onCapabilities, onContext, onProjects, onProfiles, onResources,
     onCheckpoints, onFiles, onFile, onFileDiff, onFileGrep, onPrompts, onScripts,
     onAutoVerify, onUsageStats, onCheckpointDiff, onWorkspaceBrowse,
     onAppVersion, onAppUpdate, onSessions,

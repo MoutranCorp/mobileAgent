@@ -63,9 +63,21 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         </button>
       </div>
-      <!-- Engine selector now lives in ☰ Settings; kept here (hidden) for populate + wiring. -->
+      <!-- Engine + folder selectors are now surfaced as the ☰ Engine tab and the
+           composer folder pill / folder sheet; kept here (hidden) for populate + wiring. -->
       <div id="hiddenControls" hidden aria-hidden="true">
         <select id="engineSelect"></select>
+        <select id="projectSelect"></select>
+      </div>
+
+      <!-- Folder switcher sheet (folder pill tap · + long-press) -->
+      <div id="folderSheet" class="folder-sheet hidden">
+        <div class="folder-sheet-scrim" id="folderSheetScrim"></div>
+        <div class="folder-sheet-card">
+          <div class="folder-sheet-grabber"></div>
+          <div class="folder-sheet-title">Folders &amp; sessions</div>
+          <div id="folderSheetBody" class="folder-sheet-body"></div>
+        </div>
       </div>
 
       <!-- Find-in-conversation bar -->
@@ -134,9 +146,10 @@
                     <option value="ultracode" id="ultracodeOpt">ultracode ✦</option>
                   </select>
                 </div>
-                <div class="cpill folder-pill" title="Working folder">
-                  <span class="cpill-ico" aria-hidden="true">📁</span><select id="projectSelect"></select>
-                </div>
+                <button type="button" class="cpill folder-pill" id="folderPill" title="Switch folder · sessions">
+                  <span class="cpill-ico" aria-hidden="true">📁</span><span id="folderPillName" class="cpill-name">folder</span>
+                  <span class="cpill-chev" aria-hidden="true">▾</span>
+                </button>
                 <div class="cpill access-pill" title="Permission mode">
                   <select id="permModeSelect">
                     <option value="default">ask</option>

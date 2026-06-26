@@ -33,6 +33,7 @@
     activeKey: null,
     tabs: [], // [{ key, projectId, title, color, done, attn }] persisted session tabs
     _prevBusy: {}, // key -> busy, to detect a background session finishing
+    resources: null, // latest RESOURCES sample (device RAM + per-engine RSS) for the System tab
   };
   // exposed for managers.js (toast attached after its definition below)
   window.Agent = { send, state, esc };
@@ -223,6 +224,7 @@
       case 'control_status': appendTerminalMeta(`[${ev.channel}] ${ev.state}${ev.detail ? ': ' + ev.detail : ''}`); break;
       case 'metro_status': onMetro(ev); break;
       case 'apks': onApks(ev); break;
+      case 'resources': state.resources = ev; if (window.Managers) window.Managers.onResources(ev); break;
       case 'git_status': onGitStatus(ev); break;
       case 'projects': onProjects(ev); break;
       case 'profiles': onProfiles(ev); break;
@@ -300,6 +302,8 @@
       if (want !== state.activity && (want !== 'idle' || idleOk)) setActivity(want);
     }
     renderTabs();
+    updateFolderPill();
+    if (folderSheetOpen()) renderFolderSheet();
     updateSessionsBadge();
     if (window.Managers) window.Managers.onSessions(ev);
   }
@@ -396,6 +400,58 @@
       title: '', color: tabColorFor(t.projectId), done: false, attn: false,
     }));
     renderTabs();
+  }
+
+  // ---- folder switcher sheet (folder pill tap · + long-press) ---------------
+  function updateFolderPill() {
+    const name = projectName(state.activeProjectId) || state.activeProjectId || 'folder';
+    const e = $('folderPillName'); if (e) e.textContent = name;
+  }
+  function openFolderSheet() { renderFolderSheet(); $('folderSheet').classList.remove('hidden'); }
+  function closeFolderSheet() { const s = $('folderSheet'); if (s) s.classList.add('hidden'); }
+  function folderSheetOpen() { const s = $('folderSheet'); return s && !s.classList.contains('hidden'); }
+  function renderFolderSheet() {
+    const body = $('folderSheetBody'); if (!body) return;
+    body.innerHTML = '';
+    for (const p of state.projects.filter((x) => x.id)) {
+      const folder = el('div', 'fs-folder');
+      const head = el('div', 'fs-folder-head' + (p.id === state.activeProjectId ? ' current' : ''));
+      const dot = el('span', 'fs-dot'); dot.style.background = tabColorFor(p.id);
+      head.appendChild(dot); head.appendChild(el('span', 'fs-folder-name', p.name + (p.isExpo ? ' ⚛' : '')));
+      head.onclick = () => { send({ type: 'open_project', projectId: p.id }); closeFolderSheet(); };
+      folder.appendChild(head);
+      for (const t of state.tabs.filter((x) => x.projectId === p.id)) {
+        const live = state.sessions.find((s) => s.key === t.key);
+        const row = el('div', 'fs-session' + (t.key === state.activeKey ? ' active' : ''));
+        const d = el('span', 'fs-session-dot' + (live && live.busy ? ' busy' : ''));
+        row.appendChild(d); row.appendChild(el('span', 'fs-session-name', t.title));
+        row.onclick = () => { switchTab(t.key); closeFolderSheet(); };
+        folder.appendChild(row);
+      }
+      const nw = el('div', 'fs-session fs-new', '+ New chat here');
+      nw.onclick = () => { send({ type: 'open_project', projectId: p.id }); setTimeout(() => send({ type: 'new_session' }), 80); closeFolderSheet(); };
+      folder.appendChild(nw);
+      body.appendChild(folder);
+    }
+    if (!state.projects.filter((x) => x.id).length) body.appendChild(el('p', 'mgr-hint', 'No folders open yet.'));
+    const open = el('button', 'fs-open', '📂 Open another folder…');
+    open.onclick = () => { closeFolderSheet(); if (window.Managers) window.Managers.openTab('projects'); };
+    body.appendChild(open);
+  }
+  // Pointer-based long-press (unified touch + mouse); a move past threshold cancels it.
+  function onLongPress(elm, onLong, onTap) {
+    let timer = null, moved = false, sx = 0, sy = 0;
+    elm.addEventListener('pointerdown', (e) => {
+      moved = false; sx = e.clientX; sy = e.clientY;
+      timer = setTimeout(() => { timer = null; onLong(); }, 500);
+    });
+    elm.addEventListener('pointermove', (e) => {
+      if (timer && (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10)) { moved = true; clearTimeout(timer); timer = null; }
+    });
+    const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    elm.addEventListener('pointerup', () => { if (timer) { clearTimeout(timer); timer = null; if (!moved && onTap) onTap(); } });
+    elm.addEventListener('pointercancel', cancel);
+    elm.addEventListener('pointerleave', cancel);
   }
   // Show a "background sessions working" indicator in the nav when another session
   // (not the one you're viewing) has a turn in progress.
@@ -1439,6 +1495,8 @@
     });
     sel.appendChild(og);
     if (typeof renderTabs === 'function') renderTabs(); // project names just arrived -> refresh tab titles
+    updateFolderPill();
+    if (folderSheetOpen()) renderFolderSheet();
     if (window.Managers) window.Managers.onProjects(ev);
   }
 
@@ -1965,7 +2023,10 @@
       s.onclick = () => { $('input').value = s.textContent; autoGrow(); $('input').focus(); };
     });
 
-    $('tabNew') && ($('tabNew').onclick = () => send({ type: 'new_session' })); // tap = new session in current folder
+    // + : tap = new session in current folder; long-press = folder switcher sheet.
+    if ($('tabNew')) onLongPress($('tabNew'), openFolderSheet, () => send({ type: 'new_session' }));
+    $('folderPill') && ($('folderPill').onclick = openFolderSheet);
+    $('folderSheetScrim') && ($('folderSheetScrim').onclick = closeFolderSheet);
     restoreTabs(); // show persisted tabs immediately; SESSIONS reconciles liveness
     connect();
     // Reserve transcript space under the floating composer (after first layout).

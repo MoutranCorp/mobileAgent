@@ -244,6 +244,62 @@ svg { display: block; }
 .engine-row.active { border-color: var(--accent); }
 .engine-check { color: var(--accent); font-weight: 700; }
 
+/* System tab (☰ → System): device RAM + live agents */
+.sys-card { background: var(--sys-bg-2); border: .5px solid var(--separator); border-radius: var(--r-md);
+  padding: 14px 15px; margin: 10px 0 14px; }
+.sys-label { font-size: 13px; color: var(--label-2); font-weight: 600; margin-bottom: 9px; }
+.sys-bar { height: 12px; background: var(--fill-3); border-radius: 999px; overflow: hidden; }
+.sys-bar-fill { height: 100%; width: 0; background: var(--green); border-radius: 999px; transition: width .4s var(--ease); }
+.sys-bar-fill.warm { background: var(--orange); }
+.sys-bar-fill.hot { background: var(--red); }
+.sys-sub { font-size: 12px; color: var(--label-3); margin-top: 8px; font-family: var(--mono); }
+.sys-meta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; font-size: 12px; color: var(--label-2); }
+.sys-heading { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em;
+  color: var(--label-3); margin: 4px 0 8px; }
+.sys-engines { display: flex; flex-direction: column; gap: 8px; }
+.sys-engine { display: flex; align-items: center; gap: 10px; padding: 11px 13px; background: var(--sys-bg-2);
+  border: .5px solid var(--separator); border-radius: var(--r-md); }
+.sys-engine.active { border-color: var(--accent); }
+.sys-engine-info { flex: 1; min-width: 0; }
+.sys-engine-name { font-size: 14px; font-weight: 560; color: var(--label); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.sys-engine-sub { font-size: 12px; color: var(--label-3); margin-top: 2px; font-family: var(--mono); }
+.sys-engine-acts { display: flex; gap: 6px; flex: 0 0 auto; }
+.sys-engine-acts .ghost.small[disabled] { opacity: .4; pointer-events: none; }
+
+/* folder pill (button) + folder switcher sheet */
+.folder-pill { border: none; cursor: pointer; font: inherit; color: var(--label); gap: 5px; }
+.cpill-name { font-size: 13px; font-weight: 560; max-width: 26vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cpill-chev { font-size: 9px; color: var(--label-3); }
+.folder-sheet { position: fixed; inset: 0; z-index: 50; }
+.folder-sheet.hidden { display: none; }
+.folder-sheet-scrim { position: absolute; inset: 0; background: var(--scrim); animation: fade .2s var(--ease); }
+.folder-sheet-card { position: absolute; left: 0; right: 0; bottom: 0; background: var(--mat-thick);
+  -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+  border-radius: var(--r-xl) var(--r-xl) 0 0; border-top: .5px solid var(--separator);
+  padding: 8px 14px max(16px, var(--safe-bot)); max-height: 72dvh; overflow-y: auto;
+  animation: sheetup .26s var(--ease); }
+@keyframes sheetup { from { transform: translateY(100%); } to { transform: none; } }
+.folder-sheet-grabber { width: 38px; height: 5px; border-radius: 999px; background: var(--fill-2); margin: 4px auto 10px; }
+.folder-sheet-title { font-size: 15px; font-weight: 620; color: var(--label); margin: 0 2px 12px; }
+.folder-sheet-body { display: flex; flex-direction: column; gap: 12px; }
+.fs-folder { display: flex; flex-direction: column; gap: 2px; }
+.fs-folder-head { display: flex; align-items: center; gap: 9px; padding: 11px 13px; border-radius: var(--r-md);
+  background: var(--fill-3); border: .5px solid transparent; cursor: pointer; }
+.fs-folder-head.current { border-color: var(--accent); }
+.fs-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+.fs-folder-name { font-size: 15px; font-weight: 600; color: var(--label); }
+.fs-session { display: flex; align-items: center; gap: 9px; padding: 9px 12px 9px 12px; margin-left: 18px;
+  border-left: 1.5px solid var(--separator); cursor: pointer; font-size: 14px; color: var(--label-2); }
+.fs-session:hover { color: var(--label); }
+.fs-session.active { color: var(--accent); border-left-color: var(--accent); }
+.fs-session-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--label-3); flex: 0 0 auto; }
+.fs-session-dot.busy { background: var(--orange); }
+.fs-new { color: var(--accent); font-weight: 560; }
+.fs-open { margin-top: 6px; width: 100%; text-align: left; padding: 13px; background: var(--fill-3);
+  border: none; border-radius: var(--r-md); color: var(--label); font: inherit; font-size: 14px; cursor: pointer; }
+.fs-open:hover { background: var(--fill-2); }
+
 /* =============================== transcript ============================== */
 .transcript {
   flex: 1; overflow-y: auto; padding: 16px 14px 26px;

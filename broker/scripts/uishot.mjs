@@ -37,9 +37,28 @@ await shot('01-empty');
 
 // Tabbed shell: strip under the title bar; folder/access moved into the composer.
 console.log('CHECK tab strip present:', await page.evaluate(() => !!document.getElementById('tabStrip')));
-console.log('CHECK folder pill in composer:', await page.evaluate(() => !!document.querySelector('.composer .folder-pill #projectSelect')));
+console.log('CHECK folder pill in composer:', await page.evaluate(() => !!document.querySelector('.composer #folderPill')));
 console.log('CHECK access pill in composer:', await page.evaluate(() => !!document.querySelector('.composer .access-pill #permModeSelect')));
 console.log('CHECK old context-bar removed:', await page.evaluate(() => !document.querySelector('.context-bar')));
+// Folder switcher sheet (folder pill tap).
+try {
+  await page.click('#folderPill'); await sleep(400);
+  console.log('CHECK folder sheet opens:', await page.evaluate(() => !document.getElementById('folderSheet').classList.contains('hidden')));
+  await shot('01b-folder-sheet');
+  await page.click('#folderSheetScrim'); await sleep(250);
+} catch (e) { console.log('folder-sheet err', e.message); }
+// System tab (RESOURCES panel).
+try {
+  await page.click('#menuBtn'); await sleep(400);
+  const sys = page.locator('.mgr-tab', { hasText: 'System' });
+  if (await sys.count()) {
+    await sys.first().click(); await sleep(500);
+    console.log('CHECK system RAM bar:', await page.evaluate(() => !!document.querySelector('.sys-bar-fill')));
+    console.log('CHECK system engines listed:', await page.evaluate(() => document.querySelectorAll('.sys-engine').length));
+    await shot('01c-system-tab');
+  }
+  await page.evaluate(() => document.getElementById('managerModal')?.classList.add('hidden'));
+} catch (e) { console.log('system-tab err', e.message); }
 
 await page.fill('#input', 'Build a polished counter screen with a + button');
 await page.dispatchEvent('#input', 'input');
