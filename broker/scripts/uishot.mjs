@@ -20,7 +20,9 @@ fs.mkdirSync(OUT, { recursive: true });
 const VIEWPORT = { width: 393, height: 852 }; // iPhone 15 Pro logical size
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const browser = await chromium.launch();
+// Allow pointing at a pre-installed Chromium (e.g. a CI/cloud image that ships one
+// at a fixed path) instead of Playwright's own download, which may not be present.
+const browser = await chromium.launch(process.env.PW_CHROME ? { executablePath: process.env.PW_CHROME } : {});
 const ctx = await browser.newContext({
   viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true,
   colorScheme: process.env.SCHEME === 'light' ? 'light' : 'dark',

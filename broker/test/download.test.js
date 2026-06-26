@@ -98,6 +98,31 @@ test('a build that emits an .apk auto-broadcasts an APKS event after the turn', 
   }
 });
 
+test('a pre-existing .apk does NOT auto-render a widget; only a build does', async () => {
+  const dir = await tmpDir('dl-pre-');
+  // An artifact already on disk (e.g. dist/app-debug.apk that ships in the repo).
+  const preRel = 'dist/old.apk';
+  await fs.mkdir(path.join(dir, 'dist'), { recursive: true });
+  await fs.writeFile(path.join(dir, preRel), Buffer.concat([Buffer.from('PK\x03\x04'), Buffer.alloc(512, 3)]));
+
+  const { server, ws, events, waitFor } = await boot(dir);
+  try {
+    // The snapshot seeds the baseline silently — no unsolicited 'apks' widget event
+    // for a conversation that never touched the artifact.
+    await waitFor((e) => e.type === 'engine_state' || e.type === 'sessions');
+    assert.ok(!events.some((e) => e.type === 'apks'), 'pre-existing apk must not auto-broadcast a widget');
+
+    // A build that writes a NEW artifact surfaces only that one.
+    ws.send(JSON.stringify({ type: 'user_message', text: 'build the release apk please' }));
+    const apks = await waitFor((e) => e.type === 'apks', 12000);
+    assert.ok(apks.items.some((i) => i.name === 'app-release.apk'), 'the freshly built apk surfaces');
+    assert.ok(!apks.items.some((i) => i.rel === preRel), 'the pre-existing apk is not re-announced');
+  } finally {
+    ws.close();
+    await server.stop();
+  }
+});
+
 test('/preview serves svg/markdown/png with correct content-types (inline file viewer)', async () => {
   const dir = await tmpDir('pv-');
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" fill="#34d399"/></svg>';

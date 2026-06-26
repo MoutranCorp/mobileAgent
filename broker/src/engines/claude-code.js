@@ -299,7 +299,11 @@ export class ClaudeCodeEngine extends EngineAdapter {
           output: normalizeToolOutput(block.content),
           parentToolUseId,
         });
-      } else if (block.type === 'text') {
+      } else if (block.type === 'text' && !parentToolUseId) {
+        // Only a TOP-LEVEL user message is the human's prompt. A user-role text block
+        // nested under a subagent (parentToolUseId set) is internal relay, not a
+        // prompt — emitting it as USER_ECHO renders agent/relay text as a fake user
+        // bubble. Guard it so only real prompts echo into the transcript.
         this.emitEvent(EventType.USER_ECHO, { text: block.text });
       }
     }

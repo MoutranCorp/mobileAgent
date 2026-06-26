@@ -129,8 +129,13 @@ viewing). Background sessions keep generating while you look at another. Read
   but that getter is a convenience over the Map, not the real ownership.
 
 `startEngine` is serialized behind a `_startLock` so closely-timed restarts can't
-orphan a child `claude` process. Per-project resume ids persist to
-`<stateDir>/sessions.json`.
+orphan a child `claude` process. Resume ids persist to `<stateDir>/sessions.json`
+keyed by **`sessionKey`** (the first session's key === its `projectId`, so the file
+stays back-compatible) — keying by `projectId` let a 2nd concurrent session in the
+same folder clobber the 1st's resume id and resume *into* it on the next restart
+(the "sessions merged" bug). `setActiveKey` also rebinds `_activeKeyByProject` to
+the focused key so a later `newSession()`/restart-in-place can't route a turn into a
+sibling session.
 
 ## Code map
 

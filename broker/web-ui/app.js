@@ -798,6 +798,7 @@
       return;
     }
     if (!state.activeAssistant) {
+      closeThinking(); // a reply run ends the open thinking run (keeps think/text in order)
       const msg = el('div', 'msg assistant');
       msg.dataset.ts = state._lastEventTs || nowIso();
       msg.appendChild(el('div', 'role', 'Agent'));
@@ -834,6 +835,7 @@
     hideEmpty();
     if (parentId) return appendAssistant('💭 ' + delta, parentId);
     if (!state.activeThinking) {
+      closeAssistant(); // a new thinking run ends the open reply run (separate, ordered cards)
       const det = document.createElement('details');
       det.className = 'thinking live';
       det.open = true; // visible live; collapsible afterward
@@ -853,21 +855,28 @@
     scrollDown();
   }
 
-  function finalizeAssistant() {
-    if (state.activeAssistant) {
-      flushMd(state.activeAssistant); state.activeAssistant.classList.remove('cursor');
-      const msg = state.activeAssistant.closest('.msg');
-      if (msg) appendTime(msg, msg.dataset.ts); // ts is fixed at the reply's first delta (replay-safe)
-    }
+  // Close the open reply bubble (a run ended). Idempotent.
+  function closeAssistant() {
+    if (!state.activeAssistant) return;
+    flushMd(state.activeAssistant); state.activeAssistant.classList.remove('cursor');
+    const msg = state.activeAssistant.closest('.msg');
+    if (msg) appendTime(msg, msg.dataset.ts); // ts is fixed at the reply's first delta (replay-safe)
     state.activeAssistant = null;
-    if (state.activeThinking) {
-      const det = state.activeThinking;
-      if (det._body) flushMd(det._body);
-      det.classList.remove('live');
-      const title = det.querySelector('.think-title');
-      if (title) title.textContent = 'Thought process';
-    }
+  }
+  // Close the open thinking card (collapse + relabel). Idempotent.
+  function closeThinking() {
+    if (!state.activeThinking) return;
+    const det = state.activeThinking;
+    if (det._body) flushMd(det._body);
+    det.classList.remove('live');
+    const title = det.querySelector('.think-title');
+    if (title) title.textContent = 'Thought process';
     state.activeThinking = null;
+  }
+
+  function finalizeAssistant() {
+    closeAssistant();
+    closeThinking();
     document.querySelectorAll('.nested-text:not([data-done])').forEach((n) => { flushMd(n); n.dataset.done = '1'; });
     applyActivity();
   }
