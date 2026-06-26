@@ -56,6 +56,32 @@ test('TranscriptStore coalesces text deltas into one record', async () => {
   assert.equal(replay[0].type, 'user_echo');
 });
 
+// Interleaved think→text→think→text must replay in chronological order, each run a
+// distinct record — regression for thinking reappearing "before and after" a reply
+// after a reload (text and thinking used to coalesce into parallel slots and commit
+// text-first regardless of the real order).
+test('TranscriptStore preserves think/text interleave order on replay', async () => {
+  const dir = await tmpDir('ts-order-');
+  const ts = new TranscriptStore(dir);
+  ts.setProject('p1');
+  ts.record({ type: 'user_echo', text: 'go' });
+  ts.record({ type: 'assistant_thinking', delta: 'plan A ' });
+  ts.record({ type: 'assistant_thinking', delta: 'and B' });
+  ts.record({ type: 'assistant_text', delta: 'Doing ' });
+  ts.record({ type: 'assistant_text', delta: 'it.' });
+  ts.record({ type: 'assistant_thinking', delta: 'now verify' });
+  ts.record({ type: 'assistant_text', delta: 'Verified.' });
+  const seq = ts.replay().map((e) => e.type);
+  assert.deepEqual(seq, [
+    'user_echo', 'assistant_thinking', 'assistant_text', 'assistant_thinking', 'assistant_text',
+  ]);
+  const replay = ts.replay();
+  assert.equal(replay[1].delta, 'plan A and B'); // contiguous thinking run coalesced
+  assert.equal(replay[2].delta, 'Doing it.');    // contiguous text run coalesced
+  assert.equal(replay[3].delta, 'now verify');
+  assert.equal(replay[4].delta, 'Verified.');
+});
+
 // ---- unit: Checkpoints snapshot + restore ----
 test('Checkpoints snapshot, edit, restore reverts the change', async () => {
   const proj = await tmpDir('cp-proj-');

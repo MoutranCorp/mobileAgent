@@ -15,6 +15,7 @@ const KEEP = new Set([
   'user_echo', 'assistant_text', 'assistant_thinking', 'tool_call', 'tool_result',
   'permission_resolved', 'permission_denied', 'compact', 'result',
   'file_widget', // inline file viewers (e.g. screenshots) persist across reload
+  'apks', // build-artifact widgets persist for the session that produced them
 ]);
 const MAX_RECORDS = 1500;
 
@@ -61,6 +62,10 @@ export class TranscriptStore {
     const b = this._bufFor(key);
     if (!b) return;
     if (ev.type === 'assistant_text') {
+      // A reply run ends any open thinking run — flush it FIRST so replay keeps the
+      // real think→text→think interleave order (else all thinking sorts before all
+      // text and reappears in the wrong place after a reload).
+      this._flushThink(b);
       if (b.pendText && b.pendText.parentToolUseId === (ev.parentToolUseId || null)) {
         b.pendText.delta += ev.delta || '';
       } else {
@@ -72,8 +77,15 @@ export class TranscriptStore {
       return;
     }
     if (ev.type === 'assistant_thinking') {
-      if (b.pendThink) b.pendThink.delta += ev.delta || '';
-      else b.pendThink = { type: 'assistant_thinking', delta: ev.delta || '', parentToolUseId: ev.parentToolUseId || null, ts: ev.ts };
+      // Symmetric to text: a new thinking run ends any open reply run, so each
+      // contiguous run commits as its own record in chronological order.
+      this._flushText(b);
+      if (b.pendThink && b.pendThink.parentToolUseId === (ev.parentToolUseId || null)) {
+        b.pendThink.delta += ev.delta || '';
+      } else {
+        this._flushThink(b);
+        b.pendThink = { type: 'assistant_thinking', delta: ev.delta || '', parentToolUseId: ev.parentToolUseId || null, ts: ev.ts };
+      }
       return;
     }
     this._flushText(b);

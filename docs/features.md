@@ -101,6 +101,10 @@ are cache-busted with `?v=__VER__` rewritten to a mtime-derived version at serve
 - **File download** (`GET /download/<rel>`, path-guarded, binary-safe attachment):
   pulls artifacts out of the invisible proot rootfs into the phone's real Downloads.
   `_findApks()` bounded walk → `APKS` event; **APK widget** "⬇ Save to Downloads".
+  The widget appears only when a build **creates/changes** an `.apk/.aab`: the broker
+  baselines a project's existing artifacts on open (`_seedApks`) and emits only
+  newer/added ones, tagged with the producing `sessionKey` (so it records to that
+  session's transcript and never pops in a conversation that didn't build it).
 - **Floating composer:** one rounded frosted card floating above the bottom edge,
   holding textarea + control row (attach, model·effort pill, mic, send) + in-card
   action row (New/Undo/Test/Preview/Export/Terminal/access). Conversation scrolls

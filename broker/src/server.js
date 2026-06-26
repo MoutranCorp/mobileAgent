@@ -164,11 +164,11 @@ export class BrokerServer {
           // Self-healing verify runs for the foreground session only (Phase 1).
           if (key === activeKey) this.autoverify.onTurnComplete(proj.dir);
         }
-        this._maybeBroadcastApks();
+        this._maybeBroadcastApks(key);
       }
       // A build (run/eas/gradle) finishing may have produced an .apk/.aab.
       if (ev.type === EventType.CONTROL_STATUS && (ev.state === 'done' || ev.state === 'exited')) {
-        this._maybeBroadcastApks();
+        this._maybeBroadcastApks(key);
       }
     } catch {
       /* never let bookkeeping break the stream */
@@ -224,6 +224,7 @@ export class BrokerServer {
    *  running in the background). Replays that session's transcript + state. */
   async _switchView(key) {
     this.transcript.setProject(key);
+    this._seedApks(); // re-baseline apks for the (possibly new) active project before any build can fire
     await this.session.setActiveKey(key); // ensures an engine for `key`, keeps siblings alive
     this.broadcast(event(EventType.TRANSCRIPT, { events: this.transcript.replay(), reset: true }));
     this.broadcast(event(EventType.ENGINE_STATE, { state: this.session.engine?.state || 'stopped', ...this.session.snapshot }));
@@ -311,8 +312,10 @@ export class BrokerServer {
       enabled: this.autoverify.enabled, command: this.autoverify.command,
       maxIterations: this.autoverify.maxIterations, iteration: this.autoverify.iteration,
     }));
-    const apks = this._findApks();
-    if (apks.length) { this._send(ws, event(EventType.APKS, { items: apks })); this._apkSig = apks.map((a) => a.rel + ':' + a.mtime).join('|'); }
+    // Seed the APK baseline silently (no widget) so PRE-EXISTING artifacts on disk
+    // never render in a session that didn't build them; freshly-built apks surface
+    // via _maybeBroadcastApks and persist through the per-session transcript.
+    this._seedApks();
     this._send(ws, event(EventType.RESOURCES, sampleResources(this.session.liveSessions())));
     // Current effort + whatever model labels we already know (no probe spawn here).
     this._send(ws, event(EventType.EFFORT, { level: this.session.effort }));
@@ -459,6 +462,7 @@ export class BrokerServer {
         // context but doesn't re-stream past turns, so we replay them ourselves.
         const targetKey = this.projects.getActive()?.id || '__main__';
         this.transcript.setProject(targetKey);
+        this._seedApks(); // baseline the resumed project's apks so a later build still surfaces
         const dir = projectId ? this.claudeConfig.sessionsDirForProject(projectId) : null;
         const past = this.claudeConfig.readSessionTranscript(cmd.sessionId, { dir });
         const seeded = this.transcript.replace(past);
@@ -908,13 +912,33 @@ export class BrokerServer {
     return out.sort((a, b) => b.mtime - a.mtime);
   }
 
-  /** Scan for APKs and broadcast only when the set/mtimes changed. */
-  _maybeBroadcastApks() {
+  /** Capture the active project's on-disk .apk/.aab set as the baseline, so PRE-
+   *  EXISTING artifacts never render as widgets (only ones a build produces later
+   *  do). Idempotent per project — re-seeding the same project is a no-op, so it's
+   *  safe to call liberally (project-open, snapshot, session switch). */
+  _seedApks() {
+    const pid = this.projects.getActive()?.id || null;
+    if (this._apkSeen && this._apkProject === pid) return;
+    this._apkProject = pid;
+    this._apkSeen = new Map(this._findApks().map((a) => [a.rel, a.mtime]));
+  }
+
+  /** Surface ONLY the .apk/.aab artifacts newly created/changed since the project's
+   *  baseline, attributed to the session that produced them. A widget renders only
+   *  when a build actually writes/updates an artifact — never on a plain reload of a
+   *  project that merely contains one. */
+  _maybeBroadcastApks(sessionKey) {
+    const pid = this.projects.getActive()?.id || null;
+    // No baseline yet (or the active project changed without a seed): establish one
+    // silently and emit nothing — pre-existing artifacts are not "produced this turn".
+    if (!this._apkSeen || this._apkProject !== pid) { this._seedApks(); return; }
     const items = this._findApks();
-    const sig = items.map((a) => a.rel + ':' + a.mtime).join('|');
-    if (sig === this._apkSig) return;
-    this._apkSig = sig;
-    if (items.length) this.broadcast(event(EventType.APKS, { items }));
+    const changed = items.filter((a) => !this._apkSeen.has(a.rel) || this._apkSeen.get(a.rel) < a.mtime);
+    for (const a of items) this._apkSeen.set(a.rel, a.mtime);
+    if (!changed.length) return;
+    // Route through _emitEvent so it records to the producing session's transcript
+    // (persists across reload) and only reaches the UI when that session is active.
+    this._emitEvent(event(EventType.APKS, { items: changed, sessionKey: sessionKey ?? this.session.activeKey }));
   }
 
   _log(message) {

@@ -80,7 +80,7 @@ export class SessionManager {
       // Cold-resume a previously-live (idle-evicted) session in ITS OWN folder —
       // never the globally-active project, or it would resume in the wrong cwd.
       const project = this._projectById(m.projectId);
-      const resumeId = m.sessionId || (m.projectId ? this._sessionByProject[m.projectId] : null);
+      const resumeId = m.sessionId || this._sessionByProject[key] || null;
       // Pass the stored cwd so a session whose project folder was deleted resumes in
       // its OWN (now-missing) folder and fails loudly, never silently in another one.
       return this.startEngine(m.profileId || this.activeProfileId, { key, project, cwd: m.cwd, resumeId });
@@ -209,7 +209,13 @@ export class SessionManager {
   async setActiveKey(key) {
     this.activeKey = key;
     const m = this.meta.get(key);
-    if (m) m.lastActivityTs = Date.now(); // focusing a tab counts as activity (resets its idle timer)
+    if (m) {
+      m.lastActivityTs = Date.now(); // focusing a tab counts as activity (resets its idle timer)
+      // Keep the project's bound key in sync with the foreground view, else a later
+      // newSession()/restart-in-place resolves against a stale key and a session's
+      // turns can route into a sibling (the "sessions merging" bug).
+      if (m.projectId) this._activeKeyByProject.set(m.projectId, key);
+    }
     this._lastStatus = m?.lastStatus || StatusState.IDLE;
     this.currentModel = m?.model || this.currentModel;
     this.lastCapabilities = this.engines.get(key)?._lastCaps || null;
@@ -252,24 +258,21 @@ export class SessionManager {
 
   async switchModel(model) {
     this._log(`switching model -> ${model} (fresh session)`);
-    const project = this.getActiveProject();
-    if (project) delete this._sessionByProject[project.id];
+    delete this._sessionByProject[this.activeKey]; // a fresh session for THIS key only
     this._saveSessions();
     return this.startEngine(this.activeProfileId, { model, resumeId: null });
   }
 
   async setPermissionMode(mode) {
     this.permissionMode = mode;
-    const project = this.getActiveProject();
-    const resumeId = this.engine?.sessionId || (project ? this._sessionByProject[project.id] : null);
+    const resumeId = this.engine?.sessionId || this._sessionByProject[this.activeKey] || null;
     this._log(`set permission mode -> ${mode} (resume ${resumeId || 'none'})`);
     return this.startEngine(this.activeProfileId, { resumeId });
   }
 
   async setEffort(level) {
     this.effort = level;
-    const project = this.getActiveProject();
-    const resumeId = this.engine?.sessionId || (project ? this._sessionByProject[project.id] : null);
+    const resumeId = this.engine?.sessionId || this._sessionByProject[this.activeKey] || null;
     this._log(`set effort -> ${level} (resume ${resumeId || 'none'})`);
     return this.startEngine(this.activeProfileId, { resumeId });
   }
@@ -277,8 +280,7 @@ export class SessionManager {
   async refreshCapabilities() {
     if (!this.engine || this.engine.state === 'stopped') return null;
     if (this._lastStatus && this._lastStatus !== StatusState.IDLE && this._lastStatus !== StatusState.ERROR) return null;
-    const project = this.getActiveProject();
-    const resumeId = this.engine?.sessionId || (project ? this._sessionByProject[project.id] : null);
+    const resumeId = this.engine?.sessionId || this._sessionByProject[this.activeKey] || null;
     this._log(`refreshing capabilities (resume ${resumeId || 'none'})`);
     return this.startEngine(this.activeProfileId, { resumeId });
   }
@@ -331,7 +333,12 @@ export class SessionManager {
     ev.sessionKey = key; // every engine event is tagged with its owning session
     const m = this.meta.get(key);
     if (ev.type === EventType.SESSION_META && ev.sessionId) {
-      if (projectId) { this._sessionByProject[projectId] = ev.sessionId; this._saveSessions(); }
+      // Persist the resume id keyed by SESSION KEY (the first session's key === its
+      // projectId, so sessions.json stays back-compatible) — keying by projectId let
+      // a 2nd concurrent session in the same folder clobber the 1st's resume id and
+      // resume INTO it on the next restart (the "prompts merged into another
+      // session" bug). Cold-resume/eviction also reads meta.sessionId directly.
+      this._sessionByProject[key] = ev.sessionId; this._saveSessions();
       if (m) m.sessionId = ev.sessionId;
     }
     if (ev.type === EventType.STATUS && ev.state) {
