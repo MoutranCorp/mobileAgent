@@ -1,0 +1,10 @@
+{
+  "name": "webshot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Headless-Chromium screenshot tool that auto-renders into the agent broker UI",
+  "bin": { "webshot": "webshot.js" },
+  "dependencies": {
+    "playwright-core": "^1.49.0"
+  }
+}

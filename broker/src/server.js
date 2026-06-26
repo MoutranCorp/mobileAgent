@@ -712,6 +712,13 @@ export class BrokerServer {
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ ok: true, broker: 'on-device-agent', profile: this.config.defaultProfile }));
     }
+    // /widget?path=<rel>[&kind=][&title=] — emit an inline file viewer for an
+    // already-written project file (e.g. a Playwright screenshot) WITHOUT a
+    // Write/Edit tool event. Local helper tools (see tools/webshot) hit this so a
+    // captured PNG auto-renders in the transcript. Path-guarded to the project dir.
+    if (urlPath === '/widget') {
+      return this._serveWidget(req, res);
+    }
     // /preview/* serves the ACTIVE PROJECT's files so static/SPA builds can be
     // previewed in an iframe. Path-guarded to the project dir.
     if (urlPath === '/preview' || urlPath.startsWith('/preview/')) {
@@ -744,6 +751,28 @@ export class BrokerServer {
     const items = this.files.scripts();
     const running = items.map((s) => s.name).filter((n) => this.devtools.isScriptRunning(n));
     return { items, running };
+  }
+
+  /** Emit an inline file-viewer card for a file that already exists in the active
+   *  project, addressed by a project-relative path. Used by local capture tools
+   *  (Playwright screenshots) so the file renders without a Write/Edit tool event.
+   *  The event is recorded into the transcript, so it survives a reload. */
+  _serveWidget(req, res) {
+    const json = (code, obj) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
+    const project = this.projects.getActive();
+    if (!project) return json(404, { ok: false, error: 'no active project' });
+    let q;
+    try { q = new URL(req.url, 'http://127.0.0.1').searchParams; } catch { return json(400, { ok: false, error: 'bad url' }); }
+    const root = path.resolve(project.dir);
+    let rel = String(q.get('path') || '').replace(/^[./\\]+/, '');
+    if (!rel) return json(400, { ok: false, error: 'missing path' });
+    const filePath = path.resolve(root, rel);
+    if (filePath !== root && !filePath.startsWith(root + path.sep)) return json(403, { ok: false, error: 'forbidden' });
+    if (!fs.existsSync(filePath)) return json(404, { ok: false, error: 'not found in project: ' + rel });
+    // Normalize to forward-slash relative so the UI maps it to /preview consistently.
+    rel = path.relative(root, filePath).split(path.sep).join('/');
+    this._emitEvent(event(EventType.FILE_WIDGET, { path: rel, kind: q.get('kind') || undefined, title: q.get('title') || undefined }));
+    json(200, { ok: true, path: rel });
   }
 
   _servePreview(urlPath, res) {
