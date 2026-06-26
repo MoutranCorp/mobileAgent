@@ -51,6 +51,9 @@ These patterns recur across many findings; fixing the pattern once kills a clust
    1.5s retry. → Backoff + jitter + a persistent banner after N failures.
 
 **Highest-priority shortlist (security + correctness + data-loss):**
+- **CONFIRMED XSS** — markdown link/autolink `href` isn't attribute-escaped, so an
+  agent-emitted URL containing `"` injects live event-handler attributes that
+  execute. PoC fired (`onmouseover` → handler ran). One-line fix. See §4.
 - Shell injection in `devtools.js` git/gh ops (commit/push/PR/discard).
 - Permission approval/interrupt routed to the *active* engine, not the requesting one.
 - Permission IPC has **no timeout** and isn't flushed on engine crash → approval pipeline can hang forever.
@@ -138,7 +141,8 @@ These patterns recur across many findings; fixing the pattern once kills a clust
 
 - **[High] `scrollDown()` force-snaps to bottom on every delta** — ux — `app.js:~1990` (~20 callers) — reading scroll-back while the agent streams yanks you back every token; the worst mobile papercut. → track an "at-bottom" flag; only auto-scroll when already pinned.
 - **[High] Unbounded transcript DOM + Maps** — perf — `app.js:13,1109,1270` — **[RT✗ confirmed]** ~28 nodes/msg, never trimmed; `toolCards`/`fileWidgets`/`apkWidgets` grow forever → OOM/jank on long sessions. → cap rendered messages + lazy older history; prune Maps.
-- **[High] `innerHTML` template literals mix in server fields** — security — `app.js:1045,1361,1622`, `markdown.js:39` — **[RT✓ good]** user-input bubble is escaped (payload didn't fire), but tool head / denial / turn-changes / link-href paths are fragile; markdown link URL isn't attribute-escaped. → build via `el()`+`textContent`; `escapeAttr` URLs.
+- **[High] CONFIRMED XSS — markdown link/autolink `href` not attribute-escaped** — security — `markdown.js:39,45` — **[RT✗ confirmed, PoC fired]** `inline()` escapes only `<>&` (not `"`), and `safeUrl(u)` returns the URL unescaped into `href="…"`. Payload `[x](https://a"onmouseover="window.__xss=1)` rendered `<a href="https://a" onmouseover="window.__xss=1" …>` — a **live event-handler attribute**; dispatching `mouseover` executed it (`window.__xss===1`). Agent output flows through `MD.render`, and agent output is influenceable by prompt-injection from files/web it reads → real exploit path. → run the URL through `escapeAttr()` (or reject URLs containing `"`/`'`/whitespace/control chars) before inserting into `href`. (Raw `<script>`/`<img onerror>` and fenced/inline HTML are correctly escaped — verified inert.)
+- **[High] Other `innerHTML` template literals mix in server fields** — security — `app.js:1045,1361,1622` — **[RT✓ good]** the user-input bubble path is escaped (payload didn't fire), but tool head / denial / turn-changes build innerHTML from event fields; fragile if a field ever carries markup. → build via `el()`+`textContent`.
 - **[Med] Flat 1.5s reconnect, no backoff, no "giving up"** — robustness — `app.js:~183` — **[RT✗ confirmed]** dropping the socket shows no prominent disconnected state. → exp backoff + jitter + persistent banner/manual reconnect after N tries.
 - **[Med] `resetConversation()` on every reconnect blanks transcript before snapshot** — ux — `app.js:174,756` — flicker to empty state on flaky links. → reset only when the `reset:true` transcript arrives; show "Reconnecting…" overlay.
 - **[Med] `renderTabs()` nukes `#tabs` innerHTML mid-gesture** — bug — `app.js:~412` — a `sessions` event during a tab drag detaches the dragged element → gesture stuck. → skip full re-render while `_tabGesture` active / diff in place.
@@ -212,16 +216,17 @@ These patterns recur across many findings; fixing the pattern once kills a clust
 
 ## 8. Runtime-verified summary (live, mock engine, phone viewport)
 
-What held up well (don't spend effort here): user-input **XSS escaping** (payload inert), **no horizontal overflow** from long tokens, **reload-mid-stream recovery** (no stuck-busy), markdown/widget rendering, manager panes render with **zero console errors** across all tabs, tab long-press menu, sleeping-tab + plan-panel + find-bar fixes from the prior commits.
+What held up well (don't spend effort here): user-input **XSS escaping** (payload inert), raw `<script>`/`<img onerror>` and fenced/inline HTML **escaped inert**, **no horizontal overflow** from long tokens, **reload-mid-stream recovery** (no stuck-busy), **interrupt-mid-turn** (clean busy→idle, post-interrupt send works), **rapid tab-switching** (8 switches/3 sessions → exactly one active tab, no content bleed, 0 console errors), **background-stream suppression** on switch (idle foreground stays idle), markdown/widget rendering, manager panes render with **zero console errors** across all tabs, tab long-press menu, and the sleeping-tab + plan-panel + find-bar fixes from prior commits.
 
 What reproduced as flaws: **unbounded transcript DOM growth**, **no visible disconnect/reconnect state**, **light-mode/theme-color mismatch**. (Force-scroll-on-stream and the per-session-state bugs are code-confirmed but need an interactive/real-engine repro to demo.)
 
-Still worth a dedicated runtime pass later: **agent-output / markdown raw-HTML XSS** (mock can't inject arbitrary HTML — test with the real engine emitting `<script>`/`<img onerror>` inside fenced/inline contexts), interrupt-mid-turn, rapid tab-switch races, and a long real coding session for memory/jank.
+Agent-output XSS now tested: raw `<script>`/`<img onerror>` and fenced/inline HTML are **correctly escaped (inert)**, but the markdown **link/autolink `href` is a confirmed, executable XSS** (PoC fired — see §4). Interrupt-mid-turn and rapid tab-switching (via taps) are now tested and clean. Still genuinely open: the **tab-drag-overlapping-a-`sessions`-event** race (needs an actual pointer drag concurrent with a heartbeat — `.click()` doesn't hit it), the force-scroll-on-stream papercut (needs a slow real stream to feel), and a long real coding session for memory/jank.
 
 ---
 
 ## 9. Suggested discussion / implementation order
 
+0. **Confirmed XSS (do first — one line):** attribute-escape the markdown link/autolink URL in `markdown.js`. PoC-verified executable.
 1. **Security batch** (small, high value): devtools shell-injection → arg arrays; `files.js` symlink + `deleteSession` traversal; Android `openExternal` allow-list + JS-bridge `JSONObject.quote`; `profiles.json` mode.
 2. **Approval-flow correctness**: route approve/deny/interrupt by `sessionKey`; permission IPC timeout + crash flush + bridge auth.
 3. **Per-session state**: `_pendingTurn`/`_suppressEcho`/`_turnCheckpoints` → keyed maps; effort/permission-mode scope.
