@@ -247,6 +247,7 @@
       case 'turn_changes': onTurnChanges(ev); break;
       case 'workspace_browse': if (window.Managers) window.Managers.onWorkspaceBrowse(ev); break;
       case 'log': break;
+      case 'file_widget': onFileWidget(ev); break;
       case 'toast': if (ev.message) toast(ev.message, ev.level || 'info'); break;
       case 'app_version': if (window.Managers) window.Managers.onAppVersion(ev); break;
       case 'app_update': onAppUpdate(ev); if (window.Managers) window.Managers.onAppUpdate(ev); break;
@@ -586,6 +587,14 @@
   // images render as <img>, markdown renders rich. Each gets View source / Download
   // / Open-full controls. See [[implemented-features]] HTML microapp widget.
   const fileWidgets = new Map(); // filePath -> widget state
+  // A file_widget event renders a viewer for a file already on disk (e.g. a
+  // Playwright screenshot dropped via the /widget endpoint) — no Write/Edit needed.
+  function onFileWidget(ev) {
+    if (!ev || !ev.path) return;
+    const kind = ev.kind || fileKind(ev.path);
+    if (!kind) return;
+    addFileWidget(ev.path, kind);
+  }
   // What renderer a generated file maps to (null = not viewable).
   function fileKind(filePath) {
     const ext = (String(filePath).split('.').pop() || '').toLowerCase();

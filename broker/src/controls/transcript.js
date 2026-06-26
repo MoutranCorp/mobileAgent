@@ -14,6 +14,7 @@ import path from 'node:path';
 const KEEP = new Set([
   'user_echo', 'assistant_text', 'assistant_thinking', 'tool_call', 'tool_result',
   'permission_resolved', 'permission_denied', 'compact', 'result',
+  'file_widget', // inline file viewers (e.g. screenshots) persist across reload
 ]);
 const MAX_RECORDS = 1500;
 

@@ -70,6 +70,7 @@ export const EventType = Object.freeze({
   CHECKPOINTS_DIFF: 'checkpoints_diff', // { id, files: [{status, path}], stat }
   TURN_CHANGES: 'turn_changes', // { checkpointId, files: [{status, path}], stat } what the agent changed this turn
   NATIVE_CHANGE: 'native_change', // { deps } native deps changed — offer rebuild
+  FILE_WIDGET: 'file_widget', // { path, kind?, title? } render a generated project file inline (e.g. a Playwright screenshot) without a Write/Edit tool event
   LOG: 'log', // { level, message }  broker diagnostics
   TOAST: 'toast', // { message, level? }  transient user-facing notice
   APP_VERSION: 'app_version', // { sha, subject, when, branch, dirty }  current app build
