@@ -298,6 +298,12 @@ export class SessionManager {
     const e = (key && this.engines.get(key)) || this.engine;
     if (e) e.respondPermission(id, decision, extra);
   }
+  respondQuestion(id, answers, key) {
+    // Route to the engine that RAISED the question (UI echoes its sessionKey), so a
+    // question survives the user switching to another session while it's pending.
+    const e = (key && this.engines.get(key)) || this.engine;
+    if (e && e.respondQuestion) e.respondQuestion(id, answers);
+  }
   interrupt() { if (this.engine) this.engine.interrupt(); }
 
   async switchEngine(profileId) { this._log(`switching engine -> ${profileId}`); return this.startEngine(profileId, {}); }

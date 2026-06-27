@@ -14,10 +14,12 @@ import net from 'node:net';
  * One bridge per claude-code engine instance keeps permission routing isolated.
  */
 export class PermissionBridge {
-  constructor({ host = '127.0.0.1', token = null, onRequest, log } = {}) {
+  constructor({ host = '127.0.0.1', token = null, onRequest, onQuestion, log } = {}) {
     this.host = host;
     this.token = token; // shared secret the permission-server must present
     this.onRequest = onRequest || (async () => ({ decision: 'allow' }));
+    // Resolve to { text } (the user's answer) or { cancelled: true }.
+    this.onQuestion = onQuestion || (async () => ({ cancelled: true }));
     this.log = log || (() => {});
     this.server = null;
     this.port = 0;
@@ -54,25 +56,26 @@ export class PermissionBridge {
         } catch {
           continue;
         }
-        if (req.kind !== 'permission') continue;
+        if (req.kind !== 'permission' && req.kind !== 'question') continue;
         // Reject anything that doesn't present the shared secret — fail closed.
         if (this.token && req.token !== this.token) {
-          this.log('permission bridge: rejected request with bad/missing token');
-          try { socket.write(JSON.stringify({ id: req.id, decision: 'deny', message: 'unauthorized' }) + '\n'); } catch { /* ignore */ }
+          this.log(`bridge: rejected ${req.kind} request with bad/missing token`);
+          const rej = req.kind === 'question' ? { id: req.id, cancelled: true } : { id: req.id, decision: 'deny', message: 'unauthorized' };
+          try { socket.write(JSON.stringify(rej) + '\n'); } catch { /* ignore */ }
           continue;
         }
-        let decision;
-        try {
-          decision = await this.onRequest({ toolName: req.tool_name, input: req.input });
-        } catch (e) {
-          decision = { decision: 'deny', message: e.message };
+        let out;
+        if (req.kind === 'question') {
+          let res;
+          try { res = await this.onQuestion({ questions: req.questions || [] }); }
+          catch (e) { res = { cancelled: true, message: e.message }; }
+          out = { id: req.id, text: res.text, cancelled: !!res.cancelled };
+        } else {
+          let decision;
+          try { decision = await this.onRequest({ toolName: req.tool_name, input: req.input }); }
+          catch (e) { decision = { decision: 'deny', message: e.message }; }
+          out = { id: req.id, decision: decision.decision || 'allow', updatedInput: decision.updatedInput, message: decision.message };
         }
-        const out = {
-          id: req.id,
-          decision: decision.decision || 'allow',
-          updatedInput: decision.updatedInput,
-          message: decision.message,
-        };
         try {
           socket.write(JSON.stringify(out) + '\n');
         } catch {

@@ -107,6 +107,24 @@ function askBroker(toolName, input) {
   });
 }
 
+// Forward an ask_user_question to the broker → UI form → resolve with the user's
+// answers as a human-readable string the model can act on. Fails OPEN with a short
+// note if the broker link is down (a missing answer must not wedge the turn).
+function askQuestion(questions) {
+  return new Promise((resolve) => {
+    if (!ipcSocket) {
+      log('broker unavailable — cannot ask the user; returning a note');
+      return resolve('The question UI is unavailable right now; proceed using your best judgement.');
+    }
+    const id = `q-${++ipcReqSeq}`;
+    ipcPending.set(id, (msg) => {
+      if (msg.cancelled) return resolve('The user dismissed the question without answering; proceed using your best judgement.');
+      resolve(msg.text || 'No answer provided.');
+    });
+    ipcSocket.write(JSON.stringify({ id, kind: 'question', token: IPC_TOKEN, questions }) + '\n');
+  });
+}
+
 // --- MCP JSON-RPC handling --------------------------------------------------
 
 const TOOL = {
@@ -125,6 +143,49 @@ const TOOL = {
   },
 };
 
+// Stand-in for the built-in AskUserQuestion (which the headless CLI does not
+// expose): lets the agent ask the user one or more multiple-choice questions and
+// receive their selections. The host renders an interactive form; the result text
+// is the user's answer.
+const ASK_TOOL = {
+  name: 'AskUserQuestion',
+  description:
+    'Ask the user one or more multiple-choice questions and wait for their answer. ' +
+    'Use this whenever you need the user to choose between options or clarify a ' +
+    'preference before proceeding. Each question shows selectable options (plus a ' +
+    'free-text fallback); the result is the user\'s selections.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      questions: {
+        type: 'array',
+        description: 'One or more questions to ask.',
+        items: {
+          type: 'object',
+          properties: {
+            question: { type: 'string', description: 'The question text.' },
+            header: { type: 'string', description: 'A short (≤12 char) label/category for the question.' },
+            multiSelect: { type: 'boolean', description: 'Allow selecting more than one option.' },
+            options: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  label: { type: 'string' },
+                  description: { type: 'string' },
+                },
+                required: ['label'],
+              },
+            },
+          },
+          required: ['question', 'options'],
+        },
+      },
+    },
+    required: ['questions'],
+  },
+};
+
 async function handleRequest(msg) {
   const { id, method, params } = msg;
   switch (method) {
@@ -135,18 +196,20 @@ async function handleRequest(msg) {
         serverInfo: { name: 'broker-permission', version: '0.1.0' },
       });
     case 'tools/list':
-      return reply(id, { tools: [TOOL] });
+      return reply(id, { tools: [TOOL, ASK_TOOL] });
     case 'tools/call': {
       const name = params?.name;
       const args = params?.arguments || {};
-      if (name !== 'permission_prompt') {
-        return replyError(id, -32601, `Unknown tool: ${name}`);
+      if (name === 'permission_prompt') {
+        const decision = await askBroker(args.tool_name, args.input || {});
+        // The permission-prompt-tool contract: return the JSON decision as text.
+        return reply(id, { content: [{ type: 'text', text: JSON.stringify(decision) }] });
       }
-      const decision = await askBroker(args.tool_name, args.input || {});
-      // The permission-prompt-tool contract: return the JSON decision as text.
-      return reply(id, {
-        content: [{ type: 'text', text: JSON.stringify(decision) }],
-      });
+      if (name === 'AskUserQuestion') {
+        const text = await askQuestion(Array.isArray(args.questions) ? args.questions : []);
+        return reply(id, { content: [{ type: 'text', text }] });
+      }
+      return replyError(id, -32601, `Unknown tool: ${name}`);
     }
     case 'ping':
       return reply(id, {});

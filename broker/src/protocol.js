@@ -25,6 +25,9 @@ export const EventType = Object.freeze({
   // Permissions
   PERMISSION_REQUEST: 'permission_request', // { id, action, detail, toolName?, input? }
   PERMISSION_RESOLVED: 'permission_resolved', // { id, decision }
+  // Agent → user questions (via the broker's ask_user_question MCP tool)
+  QUESTION_REQUEST: 'question_request', // { id, questions: [{ question, header?, multiSelect?, options:[{label,description?}] }] }
+  QUESTION_RESOLVED: 'question_resolved', // { id } the question was answered/cancelled (clear the form)
   PERMISSION_DENIED: 'permission_denied', // { toolName, reason } from result.permission_denials
   PERMISSION_MODE: 'permission_mode', // { mode } effective permission mode
   MODELS: 'models', // { items: [{ alias, id, label }], resolvedModel }
@@ -95,6 +98,7 @@ export const CommandType = Object.freeze({
   APPROVE: 'approve', // { id, mode? }
   DENY: 'deny', // { id, reason? }
   SET_PERMISSION_MODE: 'set_permission_mode', // { mode } default|acceptEdits|plan|bypassPermissions
+  QUESTION_RESPONSE: 'question_response', // { id, answers: [{ header?, question?, selected:[label], custom? }], sessionKey? }  answer an ask_user_question
   // Session / engine
   RESUME: 'resume', // { sessionId }
   NEW_SESSION: 'new_session', // {}

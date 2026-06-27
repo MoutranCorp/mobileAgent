@@ -466,6 +466,8 @@ export class BrokerServer {
         return this.session.respondPermission(cmd.id, 'allow', { updatedInput: cmd.updatedInput }, cmd.sessionKey);
       case CommandType.DENY:
         return this.session.respondPermission(cmd.id, 'deny', { reason: cmd.reason }, cmd.sessionKey);
+      case CommandType.QUESTION_RESPONSE:
+        return this.session.respondQuestion(cmd.id, cmd.answers, cmd.sessionKey);
       case CommandType.SET_PERMISSION_MODE:
         await this.session.setPermissionMode(cmd.mode);
         this.userSettings.patch({ engine: { permissionMode: cmd.mode } }); // remember it across restarts

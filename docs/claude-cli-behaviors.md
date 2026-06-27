@@ -102,21 +102,28 @@ conversation across the respawn with `--resume <sessionId>` to preserve context.
   [`broker/web-ui/managers.js`](../broker/web-ui/managers.js)), sending the
   `marketplace add` / `install` slash commands and a `reload-plugins` button.
 
-## AskUserQuestion (agent → user question forms) — wire format TBD
+## AskUserQuestion (agent → user question forms)
 
-When the agent calls **`AskUserQuestion`**, the web UI renders it as an
-interactive form (`renderQuestionForm` in `web-ui/app.js`): each question becomes
-a single/multi-select group plus a free-fill answer. **The answer-back path is
-not yet wired** — how the headless stream-json CLI surfaces the question (and how
-it expects the reply) is unconfirmed. Almost certainly it arrives over the
-**control channel** (the same one the broker uses to *send* `interrupt`): the
-engine's `_handleStreamMessage` now has a `case 'control_request'` that logs the
-**full payload verbatim** (`INBOUND control_request (unhandled) :: …`) and the
-`default` branch dumps the whole unhandled object. To capture the real shape:
-trigger a question on-device, then read the broker log for those lines — that
-JSON is what the answer-back (a `control_response`, or a `tool_result` injected
-via `_writeUser`) must match. Until then, a completed form sends its answer as the
-next user turn (`queueReply`, flushed when the turn goes idle).
+The headless CLI does **not** expose the built-in `AskUserQuestion` tool, so the
+broker provides its **own** equivalent as an MCP tool — `mcp__broker__AskUserQuestion`
+(see `mcp/permission-server.js` `ASK_TOOL`). The broker MCP server is now started
+in **every** permission mode (not just gated/`default`), since the on-device
+default is `bypassPermissions`; `--permission-prompt-tool` is still only added in
+gated mode. Flow:
+
+1. Agent calls `mcp__broker__AskUserQuestion { questions }`.
+2. `permission-server.js` forwards it to the bridge as `{ kind:'question' }`;
+   `permission-bridge.js` routes it to the engine's `_onQuestion`, which emits a
+   `QUESTION_REQUEST` event and returns a pending Promise.
+3. The UI renders the form (`onQuestionRequest` → `renderQuestionForm`) and on
+   submit sends `QUESTION_RESPONSE { id, answers }`.
+4. `engine.respondQuestion` resolves the Promise; the bridge writes the answer
+   back; the MCP tool returns it as the tool result — so the **MCP result IS the
+   answer**, no control-protocol guessing needed.
+
+The `_handleStreamMessage` `case 'control_request'` (verbatim logging) remains as
+a diagnostic for any *other* inbound control message, but the question flow no
+longer depends on it.
 
 ## Verifying these against the repo
 

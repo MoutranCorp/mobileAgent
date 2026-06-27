@@ -263,6 +263,8 @@
       case 'tool_result': onToolResult(ev); break;
       case 'permission_request': onPermissionRequest(ev); break;
       case 'permission_resolved': onPermissionResolved(ev); break;
+      case 'question_request': onQuestionRequest(ev); break;
+      case 'question_resolved': onQuestionResolved(ev); break;
       case 'permission_denied': onPermissionDenied(ev); break;
       case 'permission_mode': onPermissionMode(ev); break;
       case 'models': onModels(ev); break;
@@ -1179,13 +1181,16 @@
     if (ev.name === 'TodoWrite' && ev.input && Array.isArray(ev.input.todos)) {
       return renderTodos(ev.input.todos);
     }
-    // AskUserQuestion renders as an interactive form (single/multi-select + free-fill)
-    // rather than a raw tool card.
+    // The agent asking via the broker's MCP tool surfaces as a question_request
+    // event (the real path); the raw mcp__broker__AskUserQuestion tool card is
+    // suppressed so we don't double-render. The legacy built-in tool_use (not
+    // exposed by the headless CLI, but kept for safety) still renders a form here.
+    if (/__AskUserQuestion$/.test(ev.name)) return; // mcp__broker__AskUserQuestion → driven by question_request
     if (ev.name === 'AskUserQuestion' && ev.input && Array.isArray(ev.input.questions)) {
       hideEmpty();
       if (!ev.parentToolUseId) finalizeAssistant();
       setActivity('working', 'Waiting for your answers…');
-      renderQuestionForm(ev);
+      renderQuestionForm(ev.input.questions, (answers) => queueReply(answersToText(answers)), ev.parentToolUseId);
       return;
     }
     hideEmpty();
@@ -1238,14 +1243,13 @@
     scrollDown();
   }
 
-  // Interactive form for an AskUserQuestion tool call: each question becomes a
-  // fieldset with single- or multi-select options plus a free-fill custom answer.
-  // (The answer-back wiring to the CLI is finalized once we capture the real
-  // control-protocol shape on-device; for now a completed form sends the answer as
-  // the next user turn — see queueReply.)
-  function renderQuestionForm(ev) {
-    const questions = ev.input.questions || [];
-    const answers = questions.map(() => ({ selected: new Set(), custom: '' }));
+  // Interactive form: each question becomes a fieldset with single- or
+  // multi-select options plus a free-fill custom answer. `onSubmit` receives the
+  // structured answers [{ header, question, selected:[label], custom }]. Returns
+  // the card element so the caller can finalize it (e.g. on question_resolved).
+  function renderQuestionForm(questions, onSubmit, parentToolUseId) {
+    questions = questions || [];
+    const answers = questions.map((q) => ({ header: q.header || '', question: q.question || '', selected: new Set(), custom: '' }));
     const card = el('div', 'qform');
     card.appendChild(el('div', 'qform-title', questions.length > 1 ? 'The agent has a few questions' : 'The agent has a question'));
 
@@ -1264,7 +1268,7 @@
         const label = typeof o === 'string' ? o : (o.label || '');
         const desc = (o && typeof o === 'object' && o.description) || '';
         const opt = el('button', 'qform-opt'); opt.type = 'button';
-        const lab = el('span', 'qform-opt-label', label); opt.appendChild(lab);
+        opt.appendChild(el('span', 'qform-opt-label', label));
         if (desc) opt.appendChild(el('span', 'qform-opt-desc', desc));
         opt.onclick = () => {
           if (multi) {
@@ -1289,22 +1293,49 @@
 
     submit.disabled = true;
     submit.onclick = () => {
-      const text = questions.map((q, qi) => {
-        const picks = [...answers[qi].selected];
-        const c = answers[qi].custom.trim();
-        if (c) picks.push(c);
-        return `**${q.header || q.question || ('Q' + (qi + 1))}:** ${picks.join(', ')}`;
-      }).join('\n');
+      const out = answers.map((a) => ({ header: a.header, question: a.question, selected: [...a.selected], custom: a.custom.trim() }));
       card.classList.add('answered');
       card.querySelectorAll('button, input').forEach((x) => { x.disabled = true; });
       submit.textContent = 'Answer sent ✓';
-      queueReply(text);
+      onSubmit(out);
     };
     card.appendChild(submit);
 
-    const host = nestedContainerFor(ev.parentToolUseId) || $('transcript');
+    const host = nestedContainerFor(parentToolUseId) || $('transcript');
     host.appendChild(card);
     scrollDown();
+    return card;
+  }
+
+  // The agent asked via the broker's MCP tool: render the form and send the
+  // structured answer straight back (the MCP tool result IS the answer — no extra
+  // user turn needed).
+  function onQuestionRequest(ev) {
+    hideEmpty();
+    finalizeAssistant();
+    setActivity('working', 'Waiting for your answer…');
+    const card = renderQuestionForm(ev.questions, (answers) => {
+      send({ type: 'question_response', id: ev.id, answers, sessionKey: ev.sessionKey });
+    }, null);
+    if (ev.id) (state.questionCards || (state.questionCards = new Map())).set(ev.id, card);
+  }
+  // The engine resolved/cancelled a question (answered elsewhere, or engine gone):
+  // finalize a still-open form so it can't be submitted twice.
+  function onQuestionResolved(ev) {
+    const map = state.questionCards;
+    const card = map && map.get(ev.id);
+    if (card && !card.classList.contains('answered')) {
+      card.classList.add('answered');
+      card.querySelectorAll('button, input').forEach((x) => { x.disabled = true; });
+    }
+    if (map) map.delete(ev.id);
+  }
+  function answersToText(answers) {
+    return (answers || []).map((a) => {
+      const picks = [...(a.selected || [])];
+      if (a.custom) picks.push(a.custom);
+      return `**${a.header || a.question || 'Answer'}:** ${picks.join(', ')}`;
+    }).join('\n');
   }
 
   // Send a reply as the next user turn, but wait until the current turn settles

@@ -46,6 +46,7 @@ export class ClaudeCodeEngine extends EngineAdapter {
     this.bridge = null;
     this._pendingPermissions = new Map();
     this._permSeq = 0;
+    this._pendingQuestions = new Map(); // bridge-req-id -> { resolve }
     this._ctrlSeq = 0;
     this._toolNames = new Map(); // tool_use_id -> tool name (for result mapping)
     this._mcpConfigFile = null;
@@ -78,39 +79,38 @@ export class ClaudeCodeEngine extends EngineAdapter {
     if (this.ultracode) args.push('--settings', '{"ultracode":true}');
     if (this.resumeId) args.push('--resume', this.resumeId);
 
+    // Always run the broker MCP server: it exposes `ask_user_question`
+    // (AskUserQuestion) so the agent can ask the user structured questions — the
+    // headless CLI does NOT expose the built-in one — in EVERY permission mode. In
+    // gated mode it ALSO serves as the permission-prompt tool. A per-engine shared
+    // secret authenticates the permission-server to the bridge, so another local
+    // process can't inject decisions/answers or read pending inputs over loopback
+    // (matters on shared-localhost Android).
+    const ipcToken = crypto.randomBytes(16).toString('hex');
+    this.bridge = new PermissionBridge({
+      token: ipcToken,
+      onRequest: (req) => this._onPermission(req),
+      onQuestion: (req) => this._onQuestion(req),
+      log: this.log,
+    });
+    const port = await this.bridge.start();
+    const mcpConfig = JSON.stringify({
+      mcpServers: {
+        broker: {
+          command: process.execPath, // node
+          args: [PERMISSION_SERVER],
+          env: { BROKER_IPC_PORT: String(port), BROKER_IPC_HOST: '127.0.0.1', BROKER_IPC_TOKEN: ipcToken },
+        },
+      },
+    });
+    // Write the config to a temp file (every CLI version accepts a file path;
+    // inline-JSON support varies) with restrictive perms (it wires the IPC port).
+    this._mcpConfigFile = path.join(os.tmpdir(), `agent-broker-mcp-${process.pid}-${port}.json`);
+    fs.writeFileSync(this._mcpConfigFile, mcpConfig, { mode: 0o600 });
+    args.push('--mcp-config', this._mcpConfigFile);
     if (gated) {
       // Proper approval flow via the permission MCP tool (UI approve/deny).
-      // A per-engine shared secret authenticates the permission-server to the
-      // bridge, so another local process can't inject allow/deny decisions or read
-      // pending tool inputs over the loopback (matters on shared-localhost Android).
-      const ipcToken = crypto.randomBytes(16).toString('hex');
-      this.bridge = new PermissionBridge({
-        token: ipcToken,
-        onRequest: (req) => this._onPermission(req),
-        log: this.log,
-      });
-      const port = await this.bridge.start();
-      const mcpConfig = JSON.stringify({
-        mcpServers: {
-          broker: {
-            command: process.execPath, // node
-            args: [PERMISSION_SERVER],
-            env: { BROKER_IPC_PORT: String(port), BROKER_IPC_HOST: '127.0.0.1', BROKER_IPC_TOKEN: ipcToken },
-          },
-        },
-      });
-      // Write the config to a temp file (every CLI version accepts a file path;
-      // inline-JSON support varies) with restrictive perms (it wires the IPC port).
-      this._mcpConfigFile = path.join(os.tmpdir(), `agent-broker-mcp-${process.pid}-${port}.json`);
-      fs.writeFileSync(this._mcpConfigFile, mcpConfig, { mode: 0o600 });
-      args.push(
-        '--permission-mode',
-        'default',
-        '--permission-prompt-tool',
-        'mcp__broker__permission_prompt',
-        '--mcp-config',
-        this._mcpConfigFile
-      );
+      args.push('--permission-mode', 'default', '--permission-prompt-tool', 'mcp__broker__permission_prompt');
     } else {
       // acceptEdits / plan / bypassPermissions / auto / dontAsk → CLI enforces.
       args.push('--permission-mode', this.permissionMode);
@@ -159,6 +159,7 @@ export class ClaudeCodeEngine extends EngineAdapter {
       // A crash/exit bypasses _teardown — flush any in-flight approvals so the
       // permission-server (and the UI) never hang waiting on a dead engine.
       this._failPendingPermissions(`engine exited (${code ?? signal})`);
+      this._failPendingQuestions(`engine exited (${code ?? signal})`);
       try { this.bridge?.stop(); } catch { /* ignore */ }
       this.emit('engine_state', 'stopped');
       this.state = 'stopped';
@@ -557,8 +558,40 @@ export class ClaudeCodeEngine extends EngineAdapter {
     this.emitStatus(StatusState.THINKING);
   }
 
+  // The agent called the broker's ask_user_question MCP tool. Surface a question
+  // form to the UI and resolve once the user answers (or the engine is gone).
+  _onQuestion({ questions }) {
+    const id = `ques-${++this._permSeq}`;
+    return new Promise((resolve) => {
+      this._pendingQuestions.set(id, { resolve });
+      this.emitEvent(EventType.QUESTION_REQUEST, { id, questions: Array.isArray(questions) ? questions : [] });
+      this.emitStatus(StatusState.WAITING, 'Waiting for your answer');
+    });
+  }
+
+  // UI → answer for a pending question. `answers` is the structured form result;
+  // we hand the MCP tool a readable summary the model can act on.
+  respondQuestion(id, answers) {
+    const pending = this._pendingQuestions.get(id);
+    if (!pending) return;
+    this._pendingQuestions.delete(id);
+    this.emitEvent(EventType.QUESTION_RESOLVED, { id });
+    if (!answers) { pending.resolve({ cancelled: true }); }
+    else { pending.resolve({ text: formatAnswers(answers) }); }
+    this.emitStatus(StatusState.THINKING);
+  }
+
+  _failPendingQuestions(reason) {
+    for (const [id, p] of this._pendingQuestions) {
+      try { this.emitEvent(EventType.QUESTION_RESOLVED, { id }); } catch { /* ignore */ }
+      p.resolve({ cancelled: true, message: reason });
+    }
+    this._pendingQuestions.clear();
+  }
+
   async _teardown() {
     this._failPendingPermissions('Engine stopped');
+    this._failPendingQuestions('Engine stopped');
     if (this.proc) {
       try {
         this.proc.stdin.end();
@@ -630,6 +663,18 @@ function describeTool(name, input) {
 function truncate(s, n) {
   s = String(s);
   return s.length > n ? s.slice(0, n - 1) + '…' : s;
+}
+
+/** Turn the UI's structured question answers into a readable string for the model. */
+function formatAnswers(answers) {
+  if (!Array.isArray(answers) || !answers.length) return 'No answer provided.';
+  const lines = answers.map((a) => {
+    const picks = [...(a.selected || [])];
+    if (a.custom && String(a.custom).trim()) picks.push(String(a.custom).trim());
+    const label = a.header || a.question || 'Answer';
+    return `- ${label}: ${picks.length ? picks.join(', ') : '(no selection)'}`;
+  });
+  return `The user answered:\n${lines.join('\n')}`;
 }
 
 function endProcess(proc) {

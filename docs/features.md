@@ -99,12 +99,14 @@ are cache-busted with `?v=__VER__` rewritten to a mtime-derived version at serve
 - **Slash-command highlight** (`app.js` `syncSlashHighlight`): a leading
   `/command` in the composer lights up in place (accent token over a backdrop that
   mirrors the textarea); ordinary prose typing is untouched.
-- **Agent question forms** (`app.js` `renderQuestionForm`): an `AskUserQuestion`
-  tool call renders as an interactive form — per question, single- or
-  multi-select option cards plus a free-fill answer, with a gated submit. The
-  answer-back to the CLI is **not yet wired** (the headless control-protocol shape
-  is unconfirmed — see [claude-cli-behaviors.md](claude-cli-behaviors.md)); a
-  completed form currently replies as the next user turn.
+- **Agent question forms** (`app.js` `renderQuestionForm`): the headless CLI
+  doesn't expose the built-in `AskUserQuestion`, so the broker provides its own as
+  an **MCP tool** (`mcp/permission-server.js` `ASK_TOOL`, always registered). When
+  the agent calls it, a `QUESTION_REQUEST` surfaces an interactive form (per
+  question: single/multi-select option cards + a free-fill answer, gated submit);
+  the submitted answer rides back as the **MCP tool result** (engine
+  `_onQuestion`/`respondQuestion`, bridge `kind:'question'`). See
+  [claude-cli-behaviors.md](claude-cli-behaviors.md).
 - **Select text** (`app.js` `enableBubbleSelection`): the message long-press menu
   has a **Select text** action that flips the bubble into native-selection mode
   and pre-selects it, so a specific span can be grabbed (alongside Copy-all).
