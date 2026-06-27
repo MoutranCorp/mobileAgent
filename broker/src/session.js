@@ -256,13 +256,17 @@ export class SessionManager {
     const now = Date.now();
     const out = live.slice();
     for (const [key, m] of this.meta) {
-      if (liveKeys.has(key) || key === MAIN_KEY) continue; // already live, or the no-project scratch key
+      if (liveKeys.has(key)) continue; // already live
+      // The no-project scratch session is normally hidden, but if it was evicted
+      // while holding real history (a sessionId) it must still surface — otherwise
+      // it vanished irrecoverably until a reload.
+      if (key === MAIN_KEY && !m.sessionId) continue;
       out.push({
         key, projectId: m.projectId, profileId: m.profileId, model: m.model,
         sessionId: m.sessionId, busy: false, lastStatus: 'idle',
         active: key === this.activeKey, pid: null, status: 'sleeping',
         idleMs: m.lastActivityTs ? Math.max(0, now - m.lastActivityTs) : 0,
-        pinned: !!m.pinned, title: m.title || null, sleeping: true,
+        pinned: !!m.pinned, title: m.title || (key === MAIN_KEY ? 'Main' : null), sleeping: true,
       });
     }
     return out;

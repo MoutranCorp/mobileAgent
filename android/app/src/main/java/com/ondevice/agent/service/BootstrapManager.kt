@@ -73,6 +73,22 @@ class BootstrapManager(private val ctx: Context) {
         }
         // 'z' forces gzip; toybox also auto-detects, but being explicit is clearer.
         val flags = if (asset.endsWith(".gz") || asset.endsWith(".tgz")) "xzf" else "xf"
+        // Defense-in-depth against a tar-slip: list entries first and refuse the
+        // whole archive if any path is absolute or contains a `..` component (which
+        // would escape usrDir on extraction). The tarball is a trusted bundled
+        // asset and modern toybox tar already refuses traversal, but validating
+        // up front makes the guarantee explicit and tool-independent.
+        val listFlags = if (flags == "xzf") "tzf" else "tf"
+        val listing = ProcessBuilder(tar, listFlags, tmp.absolutePath).redirectErrorStream(true).start()
+        val unsafe = listing.inputStream.bufferedReader().useLines { lines ->
+            lines.firstOrNull { e -> e.startsWith("/") || e.split('/').any { it == ".." } }
+        }
+        listing.waitFor()
+        if (unsafe != null) {
+            onLog("ERROR: refusing bootstrap — unsafe path in archive: $unsafe")
+            tmp.delete()
+            return false
+        }
         val pb = ProcessBuilder(tar, flags, tmp.absolutePath, "-C", usrDir.absolutePath)
             .redirectErrorStream(true)
         val proc = pb.start()
