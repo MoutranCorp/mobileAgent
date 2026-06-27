@@ -102,6 +102,22 @@ conversation across the respawn with `--resume <sessionId>` to preserve context.
   [`broker/web-ui/managers.js`](../broker/web-ui/managers.js)), sending the
   `marketplace add` / `install` slash commands and a `reload-plugins` button.
 
+## AskUserQuestion (agent → user question forms) — wire format TBD
+
+When the agent calls **`AskUserQuestion`**, the web UI renders it as an
+interactive form (`renderQuestionForm` in `web-ui/app.js`): each question becomes
+a single/multi-select group plus a free-fill answer. **The answer-back path is
+not yet wired** — how the headless stream-json CLI surfaces the question (and how
+it expects the reply) is unconfirmed. Almost certainly it arrives over the
+**control channel** (the same one the broker uses to *send* `interrupt`): the
+engine's `_handleStreamMessage` now has a `case 'control_request'` that logs the
+**full payload verbatim** (`INBOUND control_request (unhandled) :: …`) and the
+`default` branch dumps the whole unhandled object. To capture the real shape:
+trigger a question on-device, then read the broker log for those lines — that
+JSON is what the answer-back (a `control_response`, or a `tool_result` injected
+via `_writeUser`) must match. Until then, a completed form sends its answer as the
+next user turn (`queueReply`, flushed when the turn goes idle).
+
 ## Verifying these against the repo
 
 - Engine / init handling: `broker/src/engines/claude-code.js` (`_handleSystem`,

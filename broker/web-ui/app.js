@@ -1046,6 +1046,8 @@
     state.activity = kind;
     if (label) state.activityLabel = label;
     applyActivity();
+    // A queued reply (e.g. an answered question form) sends once the turn settles.
+    if (kind === 'idle' && state.queuedReply) flushQueuedReply();
   }
   function applyActivity() {
     const working = state.activity === 'working';
@@ -1177,6 +1179,15 @@
     if (ev.name === 'TodoWrite' && ev.input && Array.isArray(ev.input.todos)) {
       return renderTodos(ev.input.todos);
     }
+    // AskUserQuestion renders as an interactive form (single/multi-select + free-fill)
+    // rather than a raw tool card.
+    if (ev.name === 'AskUserQuestion' && ev.input && Array.isArray(ev.input.questions)) {
+      hideEmpty();
+      if (!ev.parentToolUseId) finalizeAssistant();
+      setActivity('working', 'Waiting for your answers…');
+      renderQuestionForm(ev);
+      return;
+    }
     hideEmpty();
     if (!ev.parentToolUseId) finalizeAssistant();
     setActivity('working', toolActivityLabel(ev)); // show what the agent is doing
@@ -1225,6 +1236,92 @@
       filePath, fileKind: isDiff ? fileKind(filePath) : null,
     });
     scrollDown();
+  }
+
+  // Interactive form for an AskUserQuestion tool call: each question becomes a
+  // fieldset with single- or multi-select options plus a free-fill custom answer.
+  // (The answer-back wiring to the CLI is finalized once we capture the real
+  // control-protocol shape on-device; for now a completed form sends the answer as
+  // the next user turn — see queueReply.)
+  function renderQuestionForm(ev) {
+    const questions = ev.input.questions || [];
+    const answers = questions.map(() => ({ selected: new Set(), custom: '' }));
+    const card = el('div', 'qform');
+    card.appendChild(el('div', 'qform-title', questions.length > 1 ? 'The agent has a few questions' : 'The agent has a question'));
+
+    const submit = el('button', 'qform-submit accent', 'Send answers');
+    const answered = (qi) => answers[qi].selected.size > 0 || answers[qi].custom.trim().length > 0;
+    const refresh = () => { submit.disabled = !questions.every((_, qi) => answered(qi)); };
+
+    questions.forEach((q, qi) => {
+      const fs = el('div', 'qform-q');
+      if (q.header) fs.appendChild(el('span', 'qform-h', q.header));
+      fs.appendChild(el('div', 'qform-text', q.question || ''));
+      const multi = !!q.multiSelect;
+      if (multi) fs.appendChild(el('div', 'qform-hint', 'Choose any that apply'));
+      const opts = el('div', 'qform-opts');
+      (q.options || []).forEach((o) => {
+        const label = typeof o === 'string' ? o : (o.label || '');
+        const desc = (o && typeof o === 'object' && o.description) || '';
+        const opt = el('button', 'qform-opt'); opt.type = 'button';
+        const lab = el('span', 'qform-opt-label', label); opt.appendChild(lab);
+        if (desc) opt.appendChild(el('span', 'qform-opt-desc', desc));
+        opt.onclick = () => {
+          if (multi) {
+            if (answers[qi].selected.has(label)) { answers[qi].selected.delete(label); opt.classList.remove('on'); }
+            else { answers[qi].selected.add(label); opt.classList.add('on'); }
+          } else {
+            answers[qi].selected.clear();
+            opts.querySelectorAll('.qform-opt').forEach((x) => x.classList.remove('on'));
+            answers[qi].selected.add(label); opt.classList.add('on');
+          }
+          refresh();
+        };
+        opts.appendChild(opt);
+      });
+      fs.appendChild(opts);
+      const custom = el('input', 'qform-custom'); custom.type = 'text';
+      custom.placeholder = 'Or type your own answer…';
+      custom.oninput = () => { answers[qi].custom = custom.value; refresh(); };
+      fs.appendChild(custom);
+      card.appendChild(fs);
+    });
+
+    submit.disabled = true;
+    submit.onclick = () => {
+      const text = questions.map((q, qi) => {
+        const picks = [...answers[qi].selected];
+        const c = answers[qi].custom.trim();
+        if (c) picks.push(c);
+        return `**${q.header || q.question || ('Q' + (qi + 1))}:** ${picks.join(', ')}`;
+      }).join('\n');
+      card.classList.add('answered');
+      card.querySelectorAll('button, input').forEach((x) => { x.disabled = true; });
+      submit.textContent = 'Answer sent ✓';
+      queueReply(text);
+    };
+    card.appendChild(submit);
+
+    const host = nestedContainerFor(ev.parentToolUseId) || $('transcript');
+    host.appendChild(card);
+    scrollDown();
+  }
+
+  // Send a reply as the next user turn, but wait until the current turn settles
+  // (the CLI has to resolve its pending tool first) so the API's tool_use→result
+  // ordering isn't violated.
+  function queueReply(text) {
+    state.queuedReply = text;
+    flushQueuedReply();
+  }
+  function flushQueuedReply() {
+    if (!state.queuedReply || state.activity !== 'idle') return;
+    const text = state.queuedReply; state.queuedReply = null;
+    const pendingId = 'p' + (++state._sendSeq);
+    state.pendingSent.push({ id: pendingId, text });
+    addUserMessage(text, null, pendingId);
+    setActivity('working', 'Thinking…');
+    send({ type: 'user_message', text });
   }
 
   function onToolResult(ev) {

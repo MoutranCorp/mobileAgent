@@ -569,6 +569,33 @@ svg { display: block; }
   background: var(--sys-bg-2); border: .5px solid var(--separator); border-radius: var(--r-md);
   overflow: hidden; box-shadow: var(--sh-1);
 }
+
+/* ---- AskUserQuestion interactive form ---- */
+.qform { background: var(--sys-bg-2); border: .5px solid rgba(var(--accent-rgb), .45);
+  border-radius: var(--r-md); box-shadow: var(--sh-1); padding: 14px 14px 12px;
+  display: flex; flex-direction: column; gap: 14px; animation: rise .26s var(--ease); }
+.qform-title { font-size: 14.5px; font-weight: 650; color: var(--label); }
+.qform-q { display: flex; flex-direction: column; gap: 7px; }
+.qform-h { align-self: flex-start; font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--accent); background: rgba(var(--accent-rgb), .14);
+  padding: 2px 8px; border-radius: var(--r-pill); }
+.qform-text { font-size: 15px; color: var(--label); line-height: 1.4; }
+.qform-hint { font-size: 11.5px; color: var(--label-3); margin-top: -3px; }
+.qform-opts { display: flex; flex-direction: column; gap: 6px; }
+.qform-opt { display: flex; flex-direction: column; gap: 2px; text-align: left; cursor: pointer;
+  background: var(--fill-3); border: 1.5px solid transparent; border-radius: var(--r-sm);
+  padding: 9px 12px; color: var(--label); font: inherit; transition: background .14s, border-color .14s; }
+.qform-opt:hover { background: var(--fill-2); }
+.qform-opt.on { border-color: var(--accent); background: rgba(var(--accent-rgb), .12); }
+.qform-opt-label { font-size: 14px; font-weight: 560; }
+.qform-opt-desc { font-size: 12px; color: var(--label-2); line-height: 1.35; }
+.qform-custom { background: var(--fill-3); color: var(--label); border: 1px solid var(--separator);
+  border-radius: var(--r-sm); padding: 9px 12px; font: inherit; font-size: 14px; }
+.qform-custom:focus { outline: none; border-color: rgba(var(--accent-rgb), .6); }
+.qform-submit { align-self: stretch; padding: 11px; border-radius: var(--r-sm); border: none;
+  font: inherit; font-size: 14.5px; font-weight: 620; cursor: pointer; }
+.qform-submit:disabled { opacity: .45; cursor: default; }
+.qform.answered { border-color: var(--separator); opacity: .82; }
 .tool-head { display: flex; align-items: center; gap: 10px; padding: 11px 13px; cursor: pointer; user-select: none; }
 .tool-head:hover { background: var(--fill-4); }
 .tool-icon {

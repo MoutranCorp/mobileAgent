@@ -99,6 +99,15 @@ are cache-busted with `?v=__VER__` rewritten to a mtime-derived version at serve
 - **Slash-command highlight** (`app.js` `syncSlashHighlight`): a leading
   `/command` in the composer lights up in place (accent token over a backdrop that
   mirrors the textarea); ordinary prose typing is untouched.
+- **Agent question forms** (`app.js` `renderQuestionForm`): an `AskUserQuestion`
+  tool call renders as an interactive form — per question, single- or
+  multi-select option cards plus a free-fill answer, with a gated submit. The
+  answer-back to the CLI is **not yet wired** (the headless control-protocol shape
+  is unconfirmed — see [claude-cli-behaviors.md](claude-cli-behaviors.md)); a
+  completed form currently replies as the next user turn.
+- **Select text** (`app.js` `enableBubbleSelection`): the message long-press menu
+  has a **Select text** action that flips the bubble into native-selection mode
+  and pre-selects it, so a specific span can be grabbed (alongside Copy-all).
 - **File Manager** (`managers.js` `renderFileManager` + `controls/fsmanager.js`):
   a **whole-filesystem** browser (NOT project-scoped) over absolute paths (`~`
   expanded). Navigate (home/up/go-to-path), **new folder**, and per-entry

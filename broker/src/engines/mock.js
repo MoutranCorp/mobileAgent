@@ -116,6 +116,12 @@ export class MockEngine extends EngineAdapter {
       return this._finish(false);
     }
 
+    // An AskUserQuestion form so the UI's interactive question widget can be exercised.
+    if (/\b(ask me|questions?|multiple choice|which option)\b/i.test(text)) {
+      await this._simulateQuestions();
+      return this._finish(false);
+    }
+
     const wantsApk = /\b(apk|aab|gradle|sideload|android build|release build|assemble)\b/i.test(text);
     const wantsSvg = /\b(svg|icon|logo)\b/i.test(text);
     const wantsPng = /\bpng\b/i.test(text);
@@ -179,6 +185,33 @@ export class MockEngine extends EngineAdapter {
     });
 
     this._finish(false);
+  }
+
+  /** Simulate the agent calling AskUserQuestion so the UI's question form demos. */
+  async _simulateQuestions() {
+    const id = `tool_${this._stableId()}`;
+    this.emitEvent(EventType.TOOL_CALL, {
+      id, name: 'AskUserQuestion', kind: 'tool',
+      input: {
+        questions: [
+          { question: 'Which styling approach should I use?', header: 'Styling', multiSelect: false,
+            options: [
+              { label: 'StyleSheet', description: 'React Native StyleSheet.create' },
+              { label: 'Tailwind (nativewind)', description: 'Utility classes via nativewind' },
+              { label: 'Inline styles', description: 'Quick inline style objects' },
+            ] },
+          { question: 'Which screens should I scaffold?', header: 'Screens', multiSelect: true,
+            options: [
+              { label: 'Home', description: 'Landing screen' },
+              { label: 'Settings', description: 'Preferences' },
+              { label: 'Profile', description: 'User profile' },
+            ] },
+        ],
+      },
+    });
+    // The real CLI resolves AskUserQuestion over the control channel; the mock just
+    // records a tool result so the turn completes and the UI's queued answer can send.
+    this.emitEvent(EventType.TOOL_RESULT, { id, name: 'AskUserQuestion', status: 'ok', output: 'Awaiting user selection' });
   }
 
   /** Simulate the agent's TodoWrite tool so the UI's live checklist demos. */

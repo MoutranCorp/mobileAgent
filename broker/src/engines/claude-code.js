@@ -212,8 +212,18 @@ export class ClaudeCodeEngine extends EngineAdapter {
       case 'result':
         this._handleResult(msg);
         break;
+      case 'control_request':
+        // The CLI asks the host something mid-turn (e.g. AskUserQuestion / a
+        // permission over the control channel). We don't yet implement the
+        // response, but log the FULL payload verbatim so the exact wire shape can
+        // be captured on-device and the answer-back wired correctly. (See
+        // docs/claude-cli-behaviors.md.)
+        this.log(`INBOUND control_request (unhandled) :: ${JSON.stringify(msg)}`);
+        break;
       default:
-        this.log(`unhandled stream-json type: ${msg.type}`);
+        // Dump the whole object (not just the type) so any new/undocumented
+        // stream-json message is recoverable from the log for diagnosis.
+        this.log(`unhandled stream-json type: ${msg.type} :: ${JSON.stringify(msg).slice(0, 2000)}`);
     }
   }
 
