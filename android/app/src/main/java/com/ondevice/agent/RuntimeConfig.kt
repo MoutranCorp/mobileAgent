@@ -26,11 +26,27 @@ object RuntimeConfig {
      * bootstrap is provisioned.
      */
     fun brokerUrl(ctx: Context): String =
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_URL, httpUrl()) ?: httpUrl()
+        normalizeLoopback(
+            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(KEY_URL, httpUrl()) ?: httpUrl()
+        )
 
     fun setBrokerUrl(ctx: Context, url: String) {
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { putString(KEY_URL, url) }
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { putString(KEY_URL, normalizeLoopback(url)) }
+    }
+
+    /**
+     * The on-device broker serves PLAIN HTTP on loopback. If the broker URL ever gets
+     * saved as `https://127.0.0.1…` (e.g. after testing another site, or a stray
+     * scheme), the WebView's TLS handshake to the http server fails with
+     * ERR_SSL_PROTOCOL_ERROR and the page renders blank. Coerce loopback https→http so
+     * that can't happen.
+     */
+    private fun normalizeLoopback(url: String): String {
+        val u = url.trim()
+        return if (Regex("^https://(127\\.0\\.0\\.1|localhost|\\[::1\\])(:|/|$)", RegexOption.IGNORE_CASE).containsMatchIn(u))
+            u.replaceFirst(Regex("^https://", RegexOption.IGNORE_CASE), "http://")
+        else u
     }
 
     fun defaultProfile(ctx: Context): String =

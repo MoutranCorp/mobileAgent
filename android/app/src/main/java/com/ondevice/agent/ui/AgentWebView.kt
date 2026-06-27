@@ -113,8 +113,19 @@ fun AgentWebView(
                     }
                     override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                         if (!request.isForMainFrame) return // ignore sub-resource hiccups
-                        RuntimeController.log("[webui] load error ${error.errorCode} ${error.description} @ ${request.url}")
-                        if (request.url.toString() == view.url || view.url == null) {
+                        val u = request.url.toString()
+                        RuntimeController.log("[webui] load error ${error.errorCode} ${error.description} @ $u")
+                        // The on-device broker is HTTP-only; an https loopback URL (saved
+                        // scheme or an upgrade) fails the TLS handshake and renders blank.
+                        // Fall back to http instead of looping on the SSL error.
+                        val httpFallback = Regex("^https://(127\\.0\\.0\\.1|localhost|\\[::1\\])", RegexOption.IGNORE_CASE)
+                        if (httpFallback.containsMatchIn(u)) {
+                            val httpUrl = u.replaceFirst(Regex("^https://", RegexOption.IGNORE_CASE), "http://")
+                            RuntimeController.log("[webui] retrying over http: $httpUrl")
+                            view.postDelayed({ view.loadUrl(httpUrl) }, 200)
+                            return
+                        }
+                        if (u == view.url || view.url == null) {
                             if (retries < 5) {
                                 retries++
                                 view.postDelayed({ view.reload() }, 800L * retries)
