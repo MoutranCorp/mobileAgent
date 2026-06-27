@@ -124,14 +124,15 @@ fun AgentWebView(
                     }
                     override fun onPageFinished(view: WebView, u: String?) {
                         onCanGoBackChange(view.canGoBack())
-                        // Report whether the page actually built any DOM, so we can tell a
-                        // blank-but-loaded page (CSS/visibility) from a failed-to-build one
-                        // (JS) without guessing.
-                        view.evaluateJavascript(
-                            "(function(){try{var b=document.body;var app=document.getElementById('app');" +
-                                "return 'bodyLen='+(b?b.innerHTML.length:-1)+' appChildren='+(app?app.children.length:-1)+" +
-                                "' title='+document.title+' proto='+location.protocol+' err='+(window.__lasterr||'none');}catch(e){return 'probe-fail '+e;}})()"
-                        ) { r -> RuntimeController.log("[webui] page finished: $u :: ${r?.trim('"')}") }
+                        // Dynamic viewport units (dvh) misresolve to 0 in this Compose-
+                        // hosted WebView, collapsing #app to zero height (blank page, full
+                        // DOM). Force concrete pixel heights from the Android side so the
+                        // fix ships in the APK and doesn't depend on the served CSS being
+                        // updated. Retries until innerHeight is known, then re-applies on
+                        // resize. Also reports the measured heights for diagnosis.
+                        view.evaluateJavascript(FIX_AND_PROBE) { r ->
+                            RuntimeController.log("[webui] page finished: $u :: ${r?.trim('"')}")
+                        }
                     }
                     override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                         if (!request.isForMainFrame) return // ignore sub-resource hiccups
@@ -172,6 +173,33 @@ fun AgentWebView(
         },
     )
 }
+
+// Injected after each load. Forces html/body/#app to a concrete pixel height equal
+// to innerHeight (dvh/% can collapse to 0 in this embedded WebView), retrying until
+// innerHeight is known and re-applying on resize. Returns a one-line diagnostic.
+private const val FIX_AND_PROBE = """
+(function(){
+  function fit(){
+    var h = window.innerHeight || document.documentElement.clientHeight || 0;
+    if (h > 0) {
+      var de = document.documentElement, b = document.body, a = document.getElementById('app');
+      de.style.height = h + 'px'; if (b) b.style.height = h + 'px';
+      if (a) { a.style.height = h + 'px'; a.style.minHeight = h + 'px'; }
+    }
+    return h;
+  }
+  if (!window.__fitInstalled) {
+    window.__fitInstalled = true;
+    window.addEventListener('resize', fit);
+    var n = 0, t = setInterval(function(){ if (fit() > 0 || ++n > 20) clearInterval(t); }, 150);
+  }
+  var h = fit();
+  var bd = document.body, ap = document.getElementById('app');
+  return 'innerH=' + h + ' appH=' + (ap ? ap.offsetHeight : -1) +
+    ' bodyLen=' + (bd ? bd.innerHTML.length : -1) + ' appChildren=' + (ap ? ap.children.length : -1) +
+    ' proto=' + location.protocol + ' err=' + (window.__lasterr || 'none');
+})()
+"""
 
 private fun handleUrl(view: WebView, uri: Uri): Boolean {
     return when (uri.scheme?.lowercase()) {
