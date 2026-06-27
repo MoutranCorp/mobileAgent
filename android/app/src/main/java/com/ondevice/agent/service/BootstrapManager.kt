@@ -100,14 +100,18 @@ class BootstrapManager(private val ctx: Context) {
         // 'z' forces gzip; toybox also auto-detects, but being explicit is clearer.
         val flags = if (asset.endsWith(".gz") || asset.endsWith(".tgz")) "xzf" else "xf"
         // Defense-in-depth against a tar-slip: list entries first and refuse the
-        // whole archive if any path is absolute or contains a `..` component (which
-        // would escape usrDir on extraction). The tarball is a trusted bundled
-        // asset and modern toybox tar already refuses traversal, but validating
-        // up front makes the guarantee explicit and tool-independent.
+        // whole archive if any ENTRY NAME is absolute or contains a `..` component
+        // (which would escape usrDir on extraction). Only the entry NAME (the path
+        // being created) is a traversal vector — NOT a symlink's target. toybox
+        // `tar tf` prints symlinks as `name -> target`, and the official bootstrap
+        // contains legitimate relative symlinks whose targets carry `..` (e.g. a
+        // copyright dedup'd to ../../LICENSES/...) plus absolute targets into the
+        // Termux prefix; both are fine, so we strip the ` -> target` before checking.
         val listFlags = if (flags == "xzf") "tzf" else "tf"
         val listing = ProcessBuilder(tar, listFlags, tmp.absolutePath).redirectErrorStream(true).start()
         val unsafe = listing.inputStream.bufferedReader().useLines { lines ->
-            lines.firstOrNull { e -> e.startsWith("/") || e.split('/').any { it == ".." } }
+            lines.map { it.substringBefore(" -> ").trim() }
+                .firstOrNull { name -> name.startsWith("/") || name.split('/').any { it == ".." } }
         }
         listing.waitFor()
         if (unsafe != null) {
