@@ -50,6 +50,13 @@ npm test               # node:test suite — run it for the live count, don't tr
 
 Open http://127.0.0.1:8765/ and drive the full UI against the mock engine.
 
+**On-device run / relaunch (Termux→Debian guest):** if the repo is cloned in place
+(e.g. `~/mobileAgent`), there is **no `~/agent-broker` and no `~/provisioning/`** —
+launch with the repo-root script (resolves the broker relative to itself, so it
+works after any reboot/Termux reset): `bash ~/mobileAgent/start-broker.sh`
+(`PROFILE=mock` for offline). The `~/provisioning/run-broker.sh` + `~/agent-broker`
+path only exists if you ran `provision-debian.sh`. See [docs/on-device-deploy.md](docs/on-device-deploy.md).
+
 **Prerequisites:** Node **≥ 21** (the test script relies on `node --test` glob
 expansion, which is 21+), npm, git. For the real engine: the `claude` CLI logged
 in on a Max plan. For UI screenshots: `npx playwright install chromium`. For the

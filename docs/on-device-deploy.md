@@ -107,15 +107,39 @@ What it does ([`provision-debian.sh`](../provisioning/provision-debian.sh)):
 
 ### 5. Run the broker
 
+There are **two layouts**, depending on how the broker got onto the phone — use the
+launcher that matches yours:
+
+**A) You cloned the whole repo and run it in place** (e.g. `git clone … ~/mobileAgent`).
+This is the common case if you didn't run `provision-debian.sh`. Use the repo-root
+launcher — it resolves the broker **relative to itself**, so the path can't drift:
+
+```bash
+bash ~/mobileAgent/start-broker.sh                 # default PROFILE=claude-max
+PROFILE=mock bash ~/mobileAgent/start-broker.sh    # offline demo, no /login needed
+```
+
+[`start-broker.sh`](../start-broker.sh) `cd`s into `<repo>/broker` and runs
+`node src/index.js --profile $PROFILE --port $PORT --projects $PROJECTS --verbose`.
+**There is no `~/agent-broker` and no `~/provisioning/` in this layout** — run the
+broker from the repo. This is also the **relaunch command after a Termux reset /
+reboot / crash**.
+
+**B) You ran `provision-debian.sh`**, which installed a *copy* of the broker to
+`~/agent-broker` and dropped the provisioning scripts at `~/provisioning/`:
+
 ```bash
 bash ~/provisioning/run-broker.sh                  # default PROFILE=claude-max
 PROFILE=mock bash ~/provisioning/run-broker.sh     # offline demo, no /login needed
 ```
 
 [`run-broker.sh`](../provisioning/run-broker.sh) `exec`s
-`node ~/agent-broker/src/index.js --profile $PROFILE --port $PORT --projects ~/projects --verbose`
-(`PROFILE` default `claude-max`, `PORT` default `8765`). The broker CLI also accepts
-`--host`, `--engine`, and `--state` — see the header of `broker/src/index.js`.
+`node ~/agent-broker/src/index.js --profile $PROFILE --port $PORT --projects ~/projects --verbose`.
+
+Both launchers honor `PROFILE` (default `claude-max`), `PORT` (default `8765`), and set
+`WATCHMAN_DISABLE`/`EXPO_NO_TELEMETRY`. The broker CLI also accepts `--host`, `--engine`,
+and `--state` — see the header of `broker/src/index.js`. To keep it alive after closing
+the terminal: `nohup bash ~/mobileAgent/start-broker.sh > ~/broker.log 2>&1 &`.
 
 Open **`http://127.0.0.1:8765/`** in a phone browser, or launch the app (its WebView
 auto-loads that URL). Projects live in `~/projects`; `git push` them routinely so they
