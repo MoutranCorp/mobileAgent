@@ -381,6 +381,13 @@ svg { display: block; }
   display: flex; flex-direction: column; gap: 12px;
   overscroll-behavior: contain; scroll-behavior: smooth;
 }
+/* Transcript items must NEVER shrink: this is a scrollable flex COLUMN, so every
+   child keeps its natural height and the container scrolls. Without this, items
+   that set `overflow:hidden` (e.g. .tool-card) lose the flexbox implicit
+   min-height floor and get squished to slivers that clip + overlap when the
+   conversation is taller than the viewport (the "tool cards collapse into thin
+   lines" bug). */
+.transcript > * { flex-shrink: 0; }
 
 /* empty / hero */
 .empty-state { margin: auto; text-align: center; max-width: 460px; padding: 0 18px;
@@ -568,6 +575,11 @@ svg { display: block; }
 .tool-state.running { color: var(--accent); background: rgba(var(--accent-rgb), .16); }
 .tool-state.ok      { color: var(--green);  background: rgba(var(--green-rgb), .16); }
 .tool-state.error   { color: var(--red);    background: rgba(var(--red-rgb), .16); }
+/* Expand/collapse affordance: a caret that points right when collapsed and down
+   when expanded, so a completed (collapsed) tool card clearly reads as tappable. */
+.tool-caret { flex: 0 0 auto; font-size: 10px; color: var(--label-3); width: 12px; text-align: center;
+  transition: transform .15s ease; }
+.tool-head[aria-expanded="true"] .tool-caret { transform: rotate(90deg); }
 .tool-body { border-top: .5px solid var(--separator); }
 .tool-body.collapsed { display: none; }
 .tool-body pre {

@@ -1107,7 +1107,8 @@
       `<span class="tool-icon">${toolIcon(ev.name, ev.kind)}</span>` +
       `<span class="tool-name">${esc(prettyToolName(ev.name))}</span>` +
       `<span class="tool-target">${esc(targetOf(ev.input))}</span>` +
-      `<span class="tool-state running">running</span>`;
+      `<span class="tool-state running">running</span>` +
+      `<span class="tool-caret" aria-hidden="true">▸</span>`;
     card.appendChild(head);
 
     const body = el('div', 'tool-body');
