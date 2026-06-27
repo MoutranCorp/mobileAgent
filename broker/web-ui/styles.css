@@ -868,29 +868,36 @@ mark.find-hit.current { background: var(--orange); color: #000; }
 /* ============================ managers sheet ========================= */
 .modal-card.mgr { width: min(820px, 100%); height: 92dvh; }
 .mgr-layout { display: flex; flex-direction: column; min-height: 0; flex: 1; }
-.mgr-tabs { display: flex; flex-direction: row; flex-wrap: nowrap; gap: 7px; padding: 4px 16px 14px;
-  overflow-x: auto; scrollbar-width: none; border-bottom: .5px solid var(--separator);
+/* Shared "liquid glass" container that holds the chip row, like a modern navbar. */
+.mgr-tabs-wrap { margin: 2px 14px 12px; padding: 5px; border-radius: var(--r-md);
+  background: var(--mat-bar); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+  border: .5px solid var(--separator); box-shadow: 0 1px 0 rgba(255,255,255,.04) inset, 0 4px 16px rgba(0,0,0,.18);
+  overflow: hidden; }
+.mgr-tabs { display: flex; flex-direction: row; flex-wrap: nowrap; gap: 4px;
+  overflow-x: auto; scrollbar-width: none;
   /* Fade the trailing edge so it's obvious the (20+) tab strip scrolls — the
      scrollbar is hidden, so without this the offscreen tabs look absent. */
-  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
-  mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent); }
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent); }
 .mgr-tabs::-webkit-scrollbar { display: none; }
-.mgr-tab { flex: 0 0 auto; background: var(--fill-3); border: .5px solid transparent; color: var(--label-2);
-  text-align: center; padding: 8px 15px; border-radius: var(--r-pill); cursor: pointer; font-size: 13.5px;
+/* Chips are flat segments inside the glass — the container provides the surface,
+   so only the active chip floats above it. */
+.mgr-tab { flex: 0 0 auto; background: transparent; border: none; color: var(--label-2);
+  text-align: center; padding: 7px 14px; border-radius: var(--r-sm); cursor: pointer; font-size: 13.5px;
   font-weight: 560; white-space: nowrap; line-height: 1.1;
-  transition: background .16s ease, color .16s ease, transform .12s ease, opacity .16s ease, border-color .16s ease; }
-.mgr-tab:hover { background: var(--fill-2); }
-.mgr-tab:active { transform: scale(.96); }
+  transition: background .16s ease, color .16s ease, transform .12s ease, opacity .16s ease; }
+.mgr-tab:hover { background: var(--fill-3); color: var(--label); }
+.mgr-tab:active { transform: scale(.95); }
 .mgr-tab.active { background: var(--accent); color: #fff; box-shadow: 0 2px 8px rgba(var(--accent-rgb), .35); }
 /* Filtered out by the search box: collapse away smoothly. */
 .mgr-tab.fm-hidden { display: none; }
 
-/* Slick expandable search chip (always the first chip). */
-.mgr-search { flex: 0 0 auto; display: flex; align-items: center; background: var(--fill-3);
-  border: .5px solid transparent; border-radius: var(--r-pill); overflow: hidden;
-  transition: background .16s ease, border-color .16s ease; }
-.mgr-search.open { background: var(--sys-bg-2); border-color: rgba(var(--accent-rgb), .5); }
-.mgr-search-btn { flex: 0 0 auto; width: 34px; height: 34px; border: none; background: transparent;
+/* Slick expandable search chip (always the first chip), flat inside the glass. */
+.mgr-search { flex: 0 0 auto; display: flex; align-items: center; background: transparent;
+  border: none; border-radius: var(--r-sm); overflow: hidden;
+  transition: background .16s ease; }
+.mgr-search.open { background: var(--fill-3); }
+.mgr-search-btn { flex: 0 0 auto; width: 32px; height: 32px; border: none; background: transparent;
   color: var(--label-2); cursor: pointer; font-size: 14px; display: grid; place-items: center; }
 .mgr-search.open .mgr-search-btn { color: var(--accent); }
 .mgr-search-input { width: 0; min-width: 0; border: none; outline: none; background: transparent;

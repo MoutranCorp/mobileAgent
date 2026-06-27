@@ -102,9 +102,13 @@
     card.appendChild(head);
 
     const layout = el('div', 'mgr-layout');
+    // Glass "navbar" container holds the scrolling chip row; the row itself fades
+    // its trailing edge so the offscreen chips read as scrollable.
+    const tabsWrap = el('div', 'mgr-tabs-wrap');
     const tabs = el('div', 'mgr-tabs');
     renderChips(tabs);
-    layout.appendChild(tabs);
+    tabsWrap.appendChild(tabs);
+    layout.appendChild(tabsWrap);
 
     const pane = el('div', 'mgr-pane');
     pane.id = 'mgrPane';
