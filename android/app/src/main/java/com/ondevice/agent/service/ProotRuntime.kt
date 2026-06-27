@@ -288,6 +288,8 @@ class ProotRuntime(private val ctx: Context) {
     /** Host:guest binds, mirroring the essentials proot-distro sets. Only existing hosts. */
     private fun guestBinds(): List<String> {
         File(rootfs, "tmp").mkdirs()
+        ensureFakeProc()
+        val fake = fakeProcDir.absolutePath
         val candidates = listOf(
             "/dev", "/proc", "/sys",
             "/dev/urandom:/dev/random",
@@ -297,8 +299,35 @@ class ProotRuntime(private val ctx: Context) {
             "/proc/self/fd/2:/dev/stderr",
             "/sdcard", "/storage",
             "${rootfs.absolutePath}/tmp:/dev/shm",
+            // Fake /proc entries Android's kernel doesn't expose. Bound AFTER /proc so
+            // they override. Critically, libgcrypt (gpgv + apt's http hash check) reads
+            // /proc/sys/crypto/fips_enabled and FATALs on ENOSYS, aborting apt with
+            // SIGABRT; the rest mirror proot-distro so other tools don't choke.
+            "$fake/fips_enabled:/proc/sys/crypto/fips_enabled",
+            "$fake/cap_last_cap:/proc/sys/kernel/cap_last_cap",
+            "$fake/loadavg:/proc/loadavg",
+            "$fake/stat:/proc/stat",
+            "$fake/uptime:/proc/uptime",
+            "$fake/version:/proc/version",
+            "$fake/vmstat:/proc/vmstat",
         )
         return candidates.filter { val host = it.substringBefore(":"); File(host).exists() }
+    }
+
+    private val fakeProcDir: File get() = File(rootDir, "fakeproc")
+
+    /** Write the fake /proc files bound into the guest (idempotent). */
+    private fun ensureFakeProc() {
+        val d = fakeProcDir
+        if (!d.exists()) d.mkdirs()
+        fun w(name: String, body: String) { val f = File(d, name); if (!f.exists()) runCatching { f.writeText(body) } }
+        w("fips_enabled", "0\n")
+        w("cap_last_cap", "40\n")
+        w("loadavg", "0.10 0.20 0.15 1/100 1000\n")
+        w("stat", "cpu  0 0 0 0 0 0 0 0 0 0 0 0\nbtime 1700000000\n")
+        w("uptime", "100.00 100.00\n")
+        w("version", "Linux version 6.2.0 (proot) #1 SMP PREEMPT\n")
+        w("vmstat", "nr_free_pages 100000\n")
     }
 
     /** Host env every proot invocation needs (loader, libs, tmp). */
