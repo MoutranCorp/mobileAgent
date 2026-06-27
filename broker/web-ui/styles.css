@@ -9,6 +9,12 @@
 :root {
   color-scheme: dark;
 
+  /* 1% of viewport height. Defaults to the CSS unit (correct in browsers) but is
+     overwritten to a concrete px (innerHeight/100) by JS, because vh/dvh misresolve
+     to 0 in the Compose-hosted Android WebView. All viewport-height sizing uses
+     calc(N * var(--vh)) so overlays/modals don't collapse there. */
+  --vh: 1vh;
+
   /* — iOS system palette (dark) — */
   --sys-bg:        #000000;            /* systemBackground */
   --sys-bg-2:      #1c1c1e;            /* secondarySystemBackground */
@@ -322,7 +328,7 @@ svg { display: block; }
 .folder-sheet-card { position: absolute; left: 0; right: 0; bottom: 0; background: var(--mat-thick);
   -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
   border-radius: var(--r-xl) var(--r-xl) 0 0; border-top: .5px solid var(--separator);
-  padding: 8px 14px max(16px, var(--safe-bot)); max-height: 72vh; overflow-y: auto;
+  padding: 8px 14px max(16px, var(--safe-bot)); max-height: calc(72 * var(--vh)); overflow-y: auto;
   animation: sheetup .26s var(--ease); }
 @keyframes sheetup { from { transform: translateY(100%); } to { transform: none; } }
 .folder-sheet-grabber { width: 38px; height: 5px; border-radius: 999px; background: var(--fill-2); margin: 4px auto 10px; }
@@ -374,11 +380,11 @@ svg { display: block; }
   background-image: linear-gradient(45deg, #e6e6ec 25%, transparent 25%), linear-gradient(-45deg, #e6e6ec 25%, transparent 25%),
     linear-gradient(45deg, transparent 75%, #e6e6ec 75%), linear-gradient(-45deg, transparent 75%, #e6e6ec 75%);
   background-size: 18px 18px; background-position: 0 0, 0 9px, 9px -9px, -9px 0; }
-.fv-img { max-width: 100%; max-height: 70vh; object-fit: contain; border-radius: 6px; }
-.fv-iframe { width: 100%; height: 100%; min-height: 70vh; border: none; background: #fff; display: block; }
+.fv-img { max-width: 100%; max-height: calc(70 * var(--vh)); object-fit: contain; border-radius: 6px; }
+.fv-iframe { width: 100%; height: 100%; min-height: calc(70 * var(--vh)); border: none; background: #fff; display: block; }
 .fv-md { padding: 16px; }
 .fv-md .bubble.md { max-width: none; padding: 0; border: none; background: none; box-shadow: none; border-radius: 0; }
-.fv-source { width: 100%; height: 100%; min-height: 70vh; box-sizing: border-box; background: var(--grouped); color: var(--label);
+.fv-source { width: 100%; height: 100%; min-height: calc(70 * var(--vh)); box-sizing: border-box; background: var(--grouped); color: var(--label);
   border: none; resize: none; padding: 14px; font-family: var(--mono); font-size: 13px; line-height: 1.55; outline: none; scrollbar-width: none; }
 .fv-empty { padding: 22px 14px; color: var(--label-3); font-size: 14px; text-align: center; }
 #fvSave.dirty { color: var(--accent); background: rgba(var(--accent-rgb), .14); }
@@ -530,8 +536,8 @@ svg { display: block; }
   flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .html-app-actions { display: flex; gap: 6px; flex: 0 0 auto; }
 .html-app-body { background: #fff; }
-.html-app-iframe { display: block; width: 100%; height: clamp(220px, 55vh, 420px); border: none; background: #fff; }
-@media (max-width: 720px) { .html-app-iframe { height: 68vh; } }
+.html-app-iframe { display: block; width: 100%; height: clamp(220px, calc(55 * var(--vh)), 420px); border: none; background: #fff; }
+@media (max-width: 720px) { .html-app-iframe { height: calc(68 * var(--vh)); } }
 /* svg / image preview — checkerboard reveals transparency (icons, logos) */
 .html-app-body.media { display: flex; align-items: center; justify-content: center; padding: 16px; min-height: 120px; }
 .html-app-body.checker {
@@ -541,10 +547,10 @@ svg { display: block; }
     linear-gradient(45deg, transparent 75%, #e6e6ec 75%), linear-gradient(-45deg, transparent 75%, #e6e6ec 75%);
   background-size: 18px 18px; background-position: 0 0, 0 9px, 9px -9px, -9px 0;
 }
-.html-app-img { max-width: 100%; max-height: 62vh; object-fit: contain; display: block; border-radius: 6px; }
+.html-app-img { max-width: 100%; max-height: calc(62 * var(--vh)); object-fit: contain; display: block; border-radius: 6px; }
 .html-app-empty { padding: 22px 14px; color: var(--label-3); font-size: 13px; text-align: center; }
 /* markdown preview — reuse the assistant-bubble markdown styles, minus the bubble chrome */
-.html-app-body.mdbody { background: var(--sys-bg-2); max-height: 62vh; overflow: auto; padding: 12px 15px; }
+.html-app-body.mdbody { background: var(--sys-bg-2); max-height: calc(62 * var(--vh)); overflow: auto; padding: 12px 15px; }
 .html-app-body.mdbody .bubble.md { max-width: none; padding: 0; border: none; background: none;
   box-shadow: none; border-radius: 0; font-size: 15px; color: var(--label); }
 .html-app-actions .ghost.small.on { color: var(--accent); background: rgba(var(--accent-rgb), .14); }
@@ -847,7 +853,7 @@ svg { display: block; }
 /* ============================ todo panel ============================== */
 .todo-panel { background: var(--mat-bar); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
   border-bottom: .5px solid var(--separator); padding: 11px 16px; display: flex; flex-direction: column; gap: 6px;
-  max-height: 30vh; overflow-y: auto; }
+  max-height: calc(30 * var(--vh)); overflow-y: auto; }
 .todo-head { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
   color: var(--label-3); margin-bottom: 3px; cursor: pointer; user-select: none; }
 .todo-caret { display: inline-block; width: 11px; color: var(--label-4); }
@@ -884,7 +890,7 @@ mark.find-hit.current { background: var(--orange); color: #000; }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 .modal-card { background: var(--mat-thick); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
   border: .5px solid var(--separator); border-radius: var(--r-xl) var(--r-xl) 0 0; width: min(620px, 100%);
-  box-shadow: var(--sh-pop); animation: sheet-up .42s var(--spring); max-height: 92vh; display: flex; flex-direction: column;
+  box-shadow: var(--sh-pop); animation: sheet-up .42s var(--spring); max-height: calc(92 * var(--vh)); display: flex; flex-direction: column;
   padding-top: 8px; }
 @keyframes sheet-up { from { transform: translateY(100%); } to { transform: none; } }
 .modal-card::before { content: ""; width: 36px; height: 5px; border-radius: 999px; background: var(--label-4);
@@ -917,7 +923,7 @@ mark.find-hit.current { background: var(--orange); color: #000; }
 .git-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 
 /* ============================ managers sheet ========================= */
-.modal-card.mgr { width: min(820px, 100%); height: 92vh; }
+.modal-card.mgr { width: min(820px, 100%); height: calc(92 * var(--vh)); }
 .mgr-layout { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 /* Shared "liquid glass" container that holds the chip row, like a modern navbar. */
 .mgr-tabs-wrap { margin: 2px 14px 12px; padding: 5px; border-radius: var(--r-md);
@@ -1048,9 +1054,9 @@ mark.find-hit.current { background: var(--orange); color: #000; }
 .ctx-big { font-size: 17px; color: var(--label); font-weight: 600; }
 .av-toggle { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; color: var(--label-2); cursor: pointer; }
 .av-toggle input { margin-top: 3px; width: 18px; height: 18px; accent-color: var(--accent); }
-.file-edit { min-height: 40vh; }
+.file-edit { min-height: calc(40 * var(--vh)); }
 .file-view { background: var(--grouped); border: .5px solid var(--separator); border-radius: var(--r-sm);
-  padding: 12px; margin-top: 8px; font-family: var(--mono); font-size: 12.5px; line-height: 1.55; max-height: 50vh; overflow: auto; white-space: pre; }
+  padding: 12px; margin-top: 8px; font-family: var(--mono); font-size: 12.5px; line-height: 1.55; max-height: calc(50 * var(--vh)); overflow: auto; white-space: pre; }
 .chg-M { color: var(--orange); } .chg-A, .chg-\? { color: var(--green); } .chg-D { color: var(--red); }
 
 /* =============================== toasts =============================== */
@@ -1067,7 +1073,7 @@ mark.find-hit.current { background: var(--orange); color: #000; }
 
 /* ============================ command palette ======================== */
 .palette { position: fixed; inset: 0; background: var(--scrim); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
-  z-index: 60; display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; animation: fade .18s var(--ease); }
+  z-index: 60; display: flex; justify-content: center; align-items: flex-start; padding-top: calc(12 * var(--vh)); animation: fade .18s var(--ease); }
 .palette-card { background: var(--mat-thick); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
   border: .5px solid var(--separator); border-radius: var(--r-lg); width: min(560px, 92vw); overflow: hidden;
   box-shadow: var(--sh-pop); animation: pop .28s var(--spring); }
@@ -1076,7 +1082,7 @@ mark.find-hit.current { background: var(--orange); color: #000; }
   border-bottom: .5px solid var(--separator); padding: 16px 18px; font-size: 16px; }
 .palette-card input::placeholder { color: var(--label-3); }
 .palette-card input:focus { outline: none; }
-.palette-list { max-height: 52vh; overflow-y: auto; padding: 6px; }
+.palette-list { max-height: calc(52 * var(--vh)); overflow-y: auto; padding: 6px; }
 .palette-item { padding: 11px 14px; cursor: pointer; font-size: 15px; border-radius: var(--r-xs); }
 .palette-item.sel, .palette-item:hover { background: var(--fill-3); color: var(--accent); }
 
@@ -1093,8 +1099,8 @@ mark.find-hit.current { background: var(--orange); color: #000; }
   background: var(--mat-thick); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
   border-top: .5px solid var(--separator); border-radius: var(--r-xl) var(--r-xl) 0 0;
   display: flex; flex-direction: column; box-shadow: var(--sh-3); animation: sheet-up .42s var(--spring); padding-top: 8px; }
-.terminal { height: 48vh; }
-.preview { height: 62vh; }
+.terminal { height: calc(48 * var(--vh)); }
+.preview { height: calc(62 * var(--vh)); }
 .terminal::before, .preview::before { content: ""; width: 36px; height: 5px; border-radius: 999px;
   background: var(--label-4); margin: 0 auto 6px; flex: 0 0 auto; }
 .terminal-head, .preview-head { display: flex; justify-content: space-between; align-items: center; gap: 8px;
@@ -1146,9 +1152,9 @@ mark.find-hit.current { background: var(--orange); color: #000; }
   .modal { align-items: stretch; }
   /* A full-screen sheet is opaque (iOS), not a translucent material — content
      behind must not bleed through. Elevated surfaces inside stay lighter. */
-  .modal-card { width: 100%; max-height: 100vh; height: 100vh; border-radius: 0;
+  .modal-card { width: 100%; max-height: calc(100 * var(--vh)); height: calc(100 * var(--vh)); border-radius: 0;
     padding-top: max(8px, var(--safe-top)); background: var(--grouped); -webkit-backdrop-filter: none; backdrop-filter: none; }
-  .modal-card.mgr { height: 100vh; }
+  .modal-card.mgr { height: calc(100 * var(--vh)); }
   .modal-card::before { display: none; }
 }
 

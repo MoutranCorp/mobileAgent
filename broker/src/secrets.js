@@ -65,6 +65,26 @@ export class SecretStore {
     return env;
   }
 
+  /**
+   * Claude auth set via the in-app "Sign in" (no profile authRef): a long-lived
+   * CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) or an ANTHROPIC_API_KEY.
+   * Injected into default-endpoint claude-code engines so it applies to the next
+   * turn without a broker restart.
+   */
+  claudeEnv() {
+    const env = {};
+    const oauth = this.resolve('CLAUDE_CODE_OAUTH_TOKEN');
+    if (oauth) env.CLAUDE_CODE_OAUTH_TOKEN = oauth;
+    const apiKey = this.resolve('ANTHROPIC_API_KEY');
+    if (apiKey) env.ANTHROPIC_API_KEY = apiKey;
+    return env;
+  }
+
+  /** Whether an in-app Claude sign-in token/key is present. */
+  hasClaudeAuth() {
+    return this.has('CLAUDE_CODE_OAUTH_TOKEN') || this.has('ANTHROPIC_API_KEY');
+  }
+
   /** True if the profile can authenticate (has its key, or uses OAuth). */
   isReady(profile) {
     if (!profile) return false;

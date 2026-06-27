@@ -4,6 +4,17 @@
   const $ = (id) => document.getElementById(id);
   const esc = window.DiffRender.escapeHtml;
 
+  // Drive --vh from the real innerHeight: vh/dvh units misresolve (often to 0) in
+  // the Compose-hosted Android WebView, which collapses modals/sheets/the terminal
+  // drawer. All viewport-height CSS uses calc(N * var(--vh)).
+  function setVh() {
+    const h = window.innerHeight || document.documentElement.clientHeight || 0;
+    if (h > 0) document.documentElement.style.setProperty('--vh', h / 100 + 'px');
+  }
+  setVh();
+  window.addEventListener('resize', setVh);
+  window.addEventListener('orientationchange', setVh);
+
   const state = {
     ws: null,
     url: localStorage.getItem('brokerUrl') || defaultWsUrl(),
@@ -279,6 +290,7 @@
         appendTerminalMeta(`[${ev.channel}] ${ev.state}${ev.detail ? ': ' + ev.detail : ''}`);
         if (ev.channel === 'run') onRunStatus(ev.state);
         break;
+      case 'claude_auth': if (ev.signedIn) { const b = $('banner'); if (b) b.remove(); } break;
       case 'metro_status': onMetro(ev); break;
       case 'apks': onApks(ev); break;
       case 'resources': state.resources = ev; if (window.Managers) window.Managers.onResources(ev); break;
@@ -1757,17 +1769,65 @@
     banner.innerHTML = '';
     banner.appendChild(el('span', '', message));
     if (isAuth) {
-      const help = el('span', 'banner-help',
-        ' To sign in: open the Terminal (⌘ button), run `claude setup-token`, open the printed URL in a browser, then paste the code back into the terminal input. (Or set CLAUDE_CODE_OAUTH_TOKEN in Runtime → secrets and restart.)');
+      const help = el('span', 'banner-help', ' You need to sign in to Claude.');
       banner.appendChild(help);
-      const open = aria(el('button', 'banner-act', 'Open terminal'), 'Open terminal');
-      open.onclick = () => { toggleTerminal(); banner.remove(); };
+      const open = aria(el('button', 'banner-act', 'Sign in'), 'Sign in to Claude');
+      open.onclick = () => { openClaudeSignin(); banner.remove(); };
       banner.appendChild(open);
     }
     const x = aria(el('button', 'banner-x', '✕'), 'Dismiss');
     x.onclick = () => banner.remove();
     banner.appendChild(x);
   }
+
+  // ---- Claude sign-in ------------------------------------------------------
+  // Reliable login UX wrapping the two working paths: (A) paste a token/key that we
+  // inject into the engine env (applies next message, no restart); (B) on-device
+  // `claude setup-token` (PTY) — open the link, approve, paste the code back.
+  function openClaudeSignin() {
+    const prev = $('signinModal'); if (prev) prev.remove();
+    const back = el('div', 'modal'); back.id = 'signinModal';
+    const close = () => back.remove();
+    back.onclick = (e) => { if (e.target === back) close(); };
+    const card = el('div', 'modal-card'); card.style.maxWidth = 'min(560px, 94vw)';
+
+    const head = el('div', 'mgr-head');
+    head.appendChild(el('h3', '', 'Sign in to Claude'));
+    const x = aria(el('button', 'ghost small', '✕'), 'Close'); x.onclick = close; head.appendChild(x);
+    card.appendChild(head);
+
+    const body = el('div', 'mgr-body'); body.style.padding = '14px';
+
+    body.appendChild(el('p', 'mgr-hint', 'Paste a Claude OAuth token (from `claude setup-token`) or an Anthropic API key. Applies to your next message — no restart.'));
+    const tok = el('input', 'mgr-input'); tok.type = 'password';
+    tok.placeholder = 'CLAUDE_CODE_OAUTH_TOKEN or sk-ant-…'; tok.autocapitalize = 'off'; tok.autocomplete = 'off'; tok.spellcheck = false;
+    body.appendChild(tok);
+    const save = el('button', 'primary', 'Save & sign in'); save.style.marginTop = '8px';
+    save.onclick = () => {
+      const v = tok.value.trim(); if (!v) return;
+      const name = v.startsWith('sk-ant-') ? 'ANTHROPIC_API_KEY' : 'CLAUDE_CODE_OAUTH_TOKEN';
+      send({ type: 'set_secret', name, value: v });
+      toast('Signed in — applies to your next message'); close();
+    };
+    body.appendChild(save);
+
+    body.appendChild(el('hr', 'mgr-sep'));
+    body.appendChild(el('p', 'mgr-hint', 'Or do it on this device: run setup-token, open the link, approve, then paste the code it shows you.'));
+    const runBtn = el('button', 'ghost small', 'Run claude setup-token');
+    runBtn.onclick = () => { send({ type: 'run', command: 'claude setup-token' }); if ($('terminal')) $('terminal').classList.remove('hidden'); toast('Running — watch the Terminal for a link'); };
+    body.appendChild(runBtn);
+    const codeRow = el('div', ''); codeRow.style.cssText = 'margin-top:8px;display:flex;gap:6px';
+    const code = el('input', 'mgr-input'); code.placeholder = 'paste the code here'; code.style.flex = '1';
+    const sendCode = el('button', 'ghost small', 'Send code');
+    sendCode.onclick = () => { const c = code.value.trim(); if (!c) return; send({ type: 'run_input', data: c + '\n' }); appendTerminalMeta('(code sent)'); code.value = ''; toast('Code sent'); };
+    codeRow.appendChild(code); codeRow.appendChild(sendCode); body.appendChild(codeRow);
+
+    card.appendChild(body);
+    back.appendChild(card);
+    document.getElementById('app').appendChild(back);
+    tok.focus();
+  }
+  window.openClaudeSignin = openClaudeSignin;
 
   // ---- transcript replay / checkpoints / native change --------------------
 
@@ -1945,6 +2005,7 @@
 
   function paletteActions() {
     const a = [
+      { label: 'Sign in to Claude', run: openClaudeSignin },
       { label: 'Collapse all thinking & actions', run: () => setAllCollapsed(true) },
       { label: 'Expand all thinking & actions', run: () => setAllCollapsed(false) },
       { label: 'Update app (git pull)', run: () => { send({ type: 'app_update' }); toast('Checking for updates…', 'info'); } },

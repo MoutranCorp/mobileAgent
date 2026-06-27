@@ -185,6 +185,9 @@ private const val FIX_AND_PROBE = """
       var de = document.documentElement, b = document.body, a = document.getElementById('app');
       de.style.height = h + 'px'; if (b) b.style.height = h + 'px';
       if (a) { a.style.height = h + 'px'; a.style.minHeight = h + 'px'; }
+      // Drive --vh too so overlays/modals (calc(N*var(--vh))) don't collapse when
+      // vh/dvh misresolve in this WebView — works even before the broker is updated.
+      de.style.setProperty('--vh', h / 100 + 'px');
     }
     return h;
   }

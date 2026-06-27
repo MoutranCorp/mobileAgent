@@ -136,6 +136,9 @@ export class SessionManager {
     const cwd = opts.cwd || project?.dir || prevMeta?.cwd || this.config.projectsDir;
     const projectId = prevMeta?.projectId ?? project?.id ?? null; // an existing session's own folder id wins (cold-resume after a fallback)
     const env = this.secrets.envForProfile(profile);
+    // In-app Claude sign-in token/key applies to default-endpoint claude-code engines
+    // (the Max/OAuth profile) without a broker restart.
+    if (profile?.harness === 'claude-code' && !profile.baseUrl) Object.assign(env, this.secrets.claudeEnv());
     // Resolve the resume id. A FRESH tab must get its OWN brand-new Claude session
     // (resume nothing) — otherwise it inherits the folder's existing session and
     // every concurrent tab writes into the SAME .jsonl, so they collapse into one

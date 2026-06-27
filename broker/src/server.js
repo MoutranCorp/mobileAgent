@@ -972,6 +972,12 @@ export class BrokerServer {
         return this.devtools.runInput(cmd.data);
       case CommandType.RUN_STOP:
         return this.devtools.runStop();
+      case CommandType.SET_SECRET: {
+        if (!cmd.name) return;
+        const r = this.secrets.set(String(cmd.name), cmd.value == null ? '' : String(cmd.value));
+        this.broadcast(event(EventType.CLAUDE_AUTH, { signedIn: this.secrets.hasClaudeAuth() }));
+        return r;
+      }
 
       default:
         throw new Error(`Unknown command type: ${cmd.type}`);

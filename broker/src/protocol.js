@@ -69,6 +69,7 @@ export const EventType = Object.freeze({
   FS_FILE: 'fs_file', // { path, content, truncated?, binary?, error? }  a file read for opening as a tab
   TRANSCRIPT_SEARCH_RESULT: 'transcript_search', // { query, matches: [{type, text}] }
   PROMPTS: 'prompts', // { items: [{name, text}] }
+  CLAUDE_AUTH: 'claude_auth', // { signedIn } — whether an in-app Claude sign-in token/key is present
   SCRIPTS: 'scripts', // { items: [{name, cmd}], running: [names] }
   GITHUB: 'github', // { ok, url?, message, op }
   AUTOVERIFY: 'autoverify', // { enabled, command, maxIterations, state?, iteration? }
@@ -194,6 +195,7 @@ export const CommandType = Object.freeze({
   // Meta
   PING: 'ping', // {}
   HELLO: 'hello', // {} — client requests a full state snapshot
+  SET_SECRET: 'set_secret', // { name, value } — store a broker secret (e.g. CLAUDE_CODE_OAUTH_TOKEN) for in-app Claude sign-in; applies to new engines
 });
 
 /** Build a canonical event object. */
