@@ -185,6 +185,8 @@ export const CommandType = Object.freeze({
   GIT: 'git', // { op: 'status'|'commit'|'push'|'log'|'diff'|'init', ...args }
   EAS_BUILD: 'eas_build', // { profile?, platform? }
   RUN: 'run', // { command, cwd? }  arbitrary command, streamed
+  RUN_INPUT: 'run_input', // { data } — write to the running `run` command's stdin (interactive CLIs, e.g. `claude` login)
+  RUN_STOP: 'run_stop', // {} — terminate the running `run` command
   // Self-update (git pull the app's own repo)
   APP_VERSION: 'app_version', // {} — request current build info
   APP_UPDATE: 'app_update', // {} — git pull --ff-only the app repo

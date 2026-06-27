@@ -226,10 +226,27 @@ export class DevTools {
 
   // --- arbitrary command ------------------------------------------------------
 
-  async run(command, { cwd, projectId } = {}) {
+  run(command, { cwd, projectId } = {}) {
+    // A 'run' command while one is already live = stdin to that process (so the
+    // terminal can drive interactive CLIs like `claude` login). Otherwise start a
+    // TRACKED process so it persists for stdin / can be stopped.
+    if (this.runner.isRunning('run')) {
+      this.runner.sendInput('run', command.endsWith('\n') ? command : command + '\n');
+      return { sentInput: true };
+    }
     const project = this._resolveProject(projectId);
     const dir = cwd || project?.dir || this.config.projectsDir;
-    return this.runner.run('run', command, { cwd: dir });
+    return this.runner.start('run', command, { cwd: dir });
+  }
+
+  /** Raw keystrokes/lines to the running `run` command's stdin (no echo, no newline
+   *  added — the client controls framing). */
+  runInput(data) {
+    return { ok: this.runner.sendInput('run', String(data ?? '')) };
+  }
+
+  runStop() {
+    return { ok: this.runner.stop('run') };
   }
 
   // --- native-dep change detection (Phase 4) ----------------------------------

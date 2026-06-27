@@ -275,7 +275,10 @@
       case 'result': onResult(ev); break;
       case 'error': onError(ev); break;
       case 'control_output': onControlOutput(ev); break;
-      case 'control_status': appendTerminalMeta(`[${ev.channel}] ${ev.state}${ev.detail ? ': ' + ev.detail : ''}`); break;
+      case 'control_status':
+        appendTerminalMeta(`[${ev.channel}] ${ev.state}${ev.detail ? ': ' + ev.detail : ''}`);
+        if (ev.channel === 'run') onRunStatus(ev.state);
+        break;
       case 'metro_status': onMetro(ev); break;
       case 'apks': onApks(ev); break;
       case 'resources': state.resources = ev; if (window.Managers) window.Managers.onResources(ev); break;
@@ -1754,8 +1757,12 @@
     banner.innerHTML = '';
     banner.appendChild(el('span', '', message));
     if (isAuth) {
-      const help = el('span', 'banner-help', ' Open the terminal drawer and run `claude` then `/login` to re-authenticate.');
+      const help = el('span', 'banner-help',
+        ' To sign in: open the Terminal (⌘ button), run `claude setup-token`, open the printed URL in a browser, then paste the code back into the terminal input. (Or set CLAUDE_CODE_OAUTH_TOKEN in Runtime → secrets and restart.)');
       banner.appendChild(help);
+      const open = aria(el('button', 'banner-act', 'Open terminal'), 'Open terminal');
+      open.onclick = () => { toggleTerminal(); banner.remove(); };
+      banner.appendChild(open);
     }
     const x = aria(el('button', 'banner-x', '✕'), 'Dismiss');
     x.onclick = () => banner.remove();
@@ -2056,6 +2063,20 @@
   }
 
   // ---- terminal ------------------------------------------------------------
+
+  // True while the `run` channel has a live process. When set, the terminal input
+  // routes keystrokes to its stdin (interactive CLIs: `claude` login, REPLs) and
+  // the Stop button appears.
+  let runActive = false;
+  function onRunStatus(stateStr) {
+    runActive = stateStr === 'running';
+    const input = $('termInput');
+    if (input) input.placeholder = runActive
+      ? 'type input for the running command… (Enter to send)'
+      : 'run a command in the project…';
+    const stop = $('termStop');
+    if (stop) stop.classList.toggle('hidden', !runActive);
+  }
 
   function onControlOutput(ev) { appendTerminal(ev.data, ev.stream === 'stderr' ? 'stderr' : ''); }
   const TERM_MAX_SPANS = 2000;
@@ -2678,11 +2699,22 @@
     $('termClear').onclick = () => { $('termBody').innerHTML = ''; };
     $('termInput').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
-        const cmd = e.target.value.trim();
-        if (cmd) { appendTerminalMeta('$ ' + cmd); send({ type: 'run', command: cmd }); }
+        const line = e.target.value;
+        if (runActive) {
+          // A command is live — send this line to its stdin so interactive CLIs
+          // (e.g. `claude` then `/login`, or `claude setup-token`) can be driven
+          // from the phone. Echo it locally since stdin isn't reflected back.
+          appendTerminal(line + '\n', 'meta');
+          send({ type: 'run_input', data: line + '\n' });
+        } else {
+          const cmd = line.trim();
+          if (cmd) { appendTerminalMeta('$ ' + cmd); send({ type: 'run', command: cmd }); }
+        }
         e.target.value = '';
       }
     });
+    const termStop = $('termStop');
+    if (termStop) termStop.onclick = () => send({ type: 'run_stop' });
 
     $('menuBtn').onclick = () => window.Managers && window.Managers.open();
     $('bgSessions') && ($('bgSessions').onclick = () => window.Managers && window.Managers.openTab('sessions'));

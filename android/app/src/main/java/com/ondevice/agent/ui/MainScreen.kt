@@ -170,6 +170,13 @@ private fun RuntimeTab(state: RuntimeState, detail: String, actions: MainActions
         }
 
         Section("Provider secrets (Keystore-encrypted)") {
+            Text(
+                "Sign in to Claude: add CLAUDE_CODE_OAUTH_TOKEN (generate it with " +
+                    "`claude setup-token` on any computer, or in-app via Terminal), then " +
+                    "Stop+Start the runtime. ANTHROPIC_API_KEY also works.",
+                color = TextDim, fontSize = 12.sp,
+            )
+            Spacer(Modifier.height(8.dp))
             var names by remember { mutableStateOf(actions.secretNames().toList()) }
             names.forEach { n ->
                 Row(verticalAlignment = Alignment.CenterVertically) {

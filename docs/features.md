@@ -164,6 +164,13 @@ are cache-busted with `?v=__VER__` rewritten to a mtime-derived version at serve
   `#fullEditor`. Defaults: access=`bypassPermissions`, model=opus 4.8.
 - **Multimodal:** image attach; voice input; `@`-file mention; slash-command palette;
   plan-mode approval card; prompt library; command palette (Ctrl-K / ⌘ touch button).
+- **Interactive terminal:** the Terminal drawer runs project commands (`run`), and
+  once a command is live the input routes to its **stdin** (`run_input`) with a Stop
+  button (`run_stop`) — so interactive CLIs can be driven from the phone. This is the
+  on-device Claude login path: run `claude setup-token`, open the printed URL, paste
+  the code back. (Reliable fallback: set `CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_API_KEY`
+  in Runtime → secrets and restart.) NB: stdin is a pipe, not a PTY, so full-screen
+  TUIs (raw-mode `claude` REPL) won't render — prefer line-oriented commands.
 - **Visual/smoke harness:** `npm run uishot` (Playwright + mock broker, iPhone
   viewport, screenshots, **fails on JS console errors**).
 

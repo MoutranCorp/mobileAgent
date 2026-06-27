@@ -100,6 +100,20 @@ export class ProcessRunner {
     return { alreadyRunning: false, promise, child: this.running.get(channel) };
   }
 
+  /** Write to a tracked child's stdin (interactive CLIs run via the terminal,
+   *  e.g. `claude` / `claude setup-token` for on-device login). No-op if the
+   *  channel isn't running or its stdin has closed. */
+  sendInput(channel, data) {
+    const child = this.running.get(channel);
+    if (!child || !child.stdin || child.stdin.destroyed) return false;
+    try {
+      child.stdin.write(data);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   stop(channel) {
     const child = this.running.get(channel);
     if (!child) return false;

@@ -9,7 +9,9 @@ import android.webkit.JsPromptResult
 import android.webkit.JsResult
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.EditText
@@ -95,6 +97,12 @@ fun AgentWebView(
                 }
 
                 webViewClient = object : WebViewClient() {
+                    // Up to 5 auto-retries of the MAIN frame: if the WebView is created
+                    // the instant the broker flips to RUNNING, the very first GET can
+                    // still race the listener and fail with CONNECTION_REFUSED, leaving
+                    // a permanent blank page (the browser "works" only because the user
+                    // opens it a moment later). Retry on a short backoff instead.
+                    var retries = 0
                     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
                         handleUrl(view, request.url)
                     override fun doUpdateVisitedHistory(view: WebView, u: String?, isReload: Boolean) {
@@ -102,6 +110,20 @@ fun AgentWebView(
                     }
                     override fun onPageFinished(view: WebView, u: String?) {
                         onCanGoBackChange(view.canGoBack())
+                    }
+                    override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+                        if (!request.isForMainFrame) return // ignore sub-resource hiccups
+                        RuntimeController.log("[webui] load error ${error.errorCode} ${error.description} @ ${request.url}")
+                        if (request.url.toString() == view.url || view.url == null) {
+                            if (retries < 5) {
+                                retries++
+                                view.postDelayed({ view.reload() }, 800L * retries)
+                            }
+                        }
+                    }
+                    override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
+                        if (request.isForMainFrame)
+                            RuntimeController.log("[webui] http ${response.statusCode} @ ${request.url}")
                     }
                 }
                 tag = url

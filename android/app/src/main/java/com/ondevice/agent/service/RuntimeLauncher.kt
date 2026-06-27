@@ -3,6 +3,7 @@ package com.ondevice.agent.service
 import android.content.Context
 import com.ondevice.agent.RuntimeConfig
 import com.ondevice.agent.net.BrokerHealth
+import java.util.concurrent.TimeUnit
 
 /**
  * Launches and supervises the Node broker inside a Debian guest via a bundled
@@ -107,11 +108,24 @@ class RuntimeLauncher(private val ctx: Context) {
 
     fun stop() {
         polling = false
-        // Android's java.lang.Process exposes neither ProcessHandle.descendants() nor
-        // pid(), so we can't portably reap the proot subtree; destroyForcibly() +
-        // proot's --kill-on-exit forwards the kill to its tracees in the common case.
-        runCatching { process?.destroyForcibly() }
+        val p = process
         process = null
+        // The broker (node) runs as a TRACEE of proot, not as our direct child. A
+        // SIGKILL (destroyForcibly) can't be trapped, so proot dies without running
+        // its --kill-on-exit cleanup and node is orphaned — it keeps serving and the
+        // "Stop" button looks like a no-op. Send SIGTERM (destroy) first so proot
+        // exits cleanly and reaps its tracees; only force-kill if it doesn't.
+        if (p != null) {
+            runCatching { p.destroy() } // SIGTERM → proot → --kill-on-exit reaps node
+            Thread {
+                runCatching {
+                    if (!p.waitFor(4, TimeUnit.SECONDS)) {
+                        RuntimeController.log("[runtime] broker didn't exit on SIGTERM — force-killing")
+                        p.destroyForcibly()
+                    }
+                }
+            }.apply { isDaemon = true; start() }
+        }
         if (RuntimeController.state.value != RuntimeState.BOOTSTRAP_MISSING) {
             RuntimeController.setState(RuntimeState.STOPPED, "stopped")
         }

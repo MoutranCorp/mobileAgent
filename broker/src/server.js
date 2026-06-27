@@ -968,6 +968,10 @@ export class BrokerServer {
         return this.devtools.easBuild(cmd, cmd.projectId);
       case CommandType.RUN:
         return this.devtools.run(cmd.command, { cwd: cmd.cwd, projectId: cmd.projectId });
+      case CommandType.RUN_INPUT:
+        return this.devtools.runInput(cmd.data);
+      case CommandType.RUN_STOP:
+        return this.devtools.runStop();
 
       default:
         throw new Error(`Unknown command type: ${cmd.type}`);
