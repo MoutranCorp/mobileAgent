@@ -310,8 +310,10 @@ export class BrokerServer {
     // Replay the recorded conversation so reloads/reconnects don't lose history.
     // reset:true makes it idempotent — the server greets with a snapshot AND the
     // client sends `hello`, so two replays could otherwise double the transcript.
+    // Always send it (even when empty) so a reconnecting client can rebuild from
+    // reset:true in place instead of eagerly blanking on open (which flickered).
     const replay = this.transcript.replay();
-    if (replay.length) this._send(ws, event(EventType.TRANSCRIPT, { events: replay, reset: true }));
+    this._send(ws, event(EventType.TRANSCRIPT, { events: replay, reset: true }));
     if (active) this._send(ws, event(EventType.CHECKPOINTS, this.checkpoints.list(active.id, active.dir)));
     this._send(ws, event(EventType.PROMPTS, { items: this.prompts.list() }));
     this._send(ws, event(EventType.AUTOVERIFY, {

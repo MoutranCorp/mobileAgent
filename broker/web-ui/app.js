@@ -174,7 +174,11 @@
       state._reconnectAttempts = 0;
       hideDisconnectBanner();
       setConnected(true);
-      resetConversation(); // avoid desync: rebuild fresh, then re-request snapshot
+      // First connect: blank to a clean slate. Reconnect: DON'T eagerly blank
+      // (that flickered the empty state) — the snapshot's reset:true transcript,
+      // now always sent, rebuilds the conversation in place when it arrives.
+      if (!state._everConnected) resetConversation();
+      state._everConnected = true;
       send({ type: 'hello' });
     };
     state.ws.onclose = () => { setConnected(false); scheduleReconnect(); };
@@ -467,7 +471,7 @@
         tab.classList.toggle('sleeping', !!sleeping && !isActive);
       }
       const title = el('span', 'tab-title', t.title);
-      const close = el('button', 'tab-close', '✕');
+      const close = aria(el('button', 'tab-close', '✕'), 'Close tab');
       close.title = 'Close tab';
       tab.appendChild(ind); tab.appendChild(title); tab.appendChild(close);
       tab.onclick = (e) => {
@@ -996,7 +1000,11 @@
   // Minimize/expand every thinking trace and tool card at once.
   function setAllCollapsed(collapsed) {
     document.querySelectorAll('.thinking').forEach((d) => { d.open = !collapsed; });
-    document.querySelectorAll('.tool-card .tool-body').forEach((b) => { b.classList.toggle('collapsed', collapsed); });
+    document.querySelectorAll('.tool-card .tool-body').forEach((b) => {
+      b.classList.toggle('collapsed', collapsed);
+      const head = b.parentElement && b.parentElement.querySelector('.tool-head');
+      if (head) head.setAttribute('aria-expanded', String(!collapsed));
+    });
   }
 
   function onUserEcho(ev) {
@@ -1088,6 +1096,10 @@
     const isDiff = /^(Write|Edit|MultiEdit)$/.test(ev.name);
 
     const head = el('div', 'tool-head');
+    // It's a real toggle: expose it as a keyboard-operable button to assistive tech.
+    head.setAttribute('role', 'button');
+    head.setAttribute('tabindex', '0');
+    head.setAttribute('aria-label', `${prettyToolName(ev.name)} ${targetOf(ev.input)} — toggle details`);
     head.innerHTML =
       `<span class="tool-icon">${toolIcon(ev.name, ev.kind)}</span>` +
       `<span class="tool-name">${esc(prettyToolName(ev.name))}</span>` +
@@ -1110,7 +1122,10 @@
     }
     if (ev.kind === 'subagent') body.classList.remove('collapsed');
     card.appendChild(body);
-    head.addEventListener('click', () => body.classList.toggle('collapsed'));
+    const toggleBody = () => { const collapsed = body.classList.toggle('collapsed'); head.setAttribute('aria-expanded', String(!collapsed)); };
+    head.setAttribute('aria-expanded', String(!body.classList.contains('collapsed')));
+    head.addEventListener('click', toggleBody);
+    head.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleBody(); } });
 
     const host = nestedContainerFor(ev.parentToolUseId) || $('transcript');
     host.appendChild(card);
@@ -1522,7 +1537,7 @@
       const help = el('span', 'banner-help', ' Open the terminal drawer and run `claude` then `/login` to re-authenticate.');
       banner.appendChild(help);
     }
-    const x = el('button', 'banner-x', '✕');
+    const x = aria(el('button', 'banner-x', '✕'), 'Dismiss');
     x.onclick = () => banner.remove();
     banner.appendChild(x);
   }
@@ -1571,7 +1586,7 @@
     banner.appendChild(el('span', '', `Native deps changed${deps ? ' (' + deps + ')' : ''} — a new dev client build is needed for JS-only Fast Refresh to keep working.`));
     const rebuild = el('button', 'accent', 'Rebuild (EAS)');
     rebuild.onclick = () => { send({ type: 'eas_build', profile: 'development', platform: 'android' }); banner.remove(); toggleTerminal(); };
-    const dismiss = el('button', 'banner-x', '✕');
+    const dismiss = aria(el('button', 'banner-x', '✕'), 'Dismiss');
     dismiss.onclick = () => banner.remove();
     banner.appendChild(rebuild); banner.appendChild(dismiss);
   }
@@ -1780,7 +1795,10 @@
     if (!q) { $('findCount').textContent = ''; return; }
     const needle = q.toLowerCase();
     const walker = document.createTreeWalker($('transcript'), NodeFilter.SHOW_TEXT, {
-      acceptNode: (n) => (n.parentElement && n.parentElement.closest('script,style') ? NodeFilter.FILTER_REJECT
+      // Never mark inside a still-streaming bubble/thinking card: the next RAF
+      // render overwrites it (wasting the mark) and the replaceChild can mis-route
+      // that render. Find only over settled content.
+      acceptNode: (n) => (n.parentElement && n.parentElement.closest('script,style,.bubble.cursor,.thinking.live') ? NodeFilter.FILTER_REJECT
         : n.nodeValue.toLowerCase().includes(needle) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
     });
     const nodes = [];
@@ -1896,7 +1914,7 @@
       const a = el('button', 'ghost', '🔗 Open PR: ' + ev.url);
       a.onclick = () => openExternal(ev.url);
       banner.appendChild(a);
-      const x = el('button', 'banner-x', '✕'); x.onclick = () => banner.remove();
+      const x = aria(el('button', 'banner-x', '✕'), 'Dismiss'); x.onclick = () => banner.remove();
       banner.appendChild(x);
     } else {
       toast(`GitHub ${ev.op}: ${ev.ok ? 'ok' : 'failed'} — ${ev.message || ''}`, ev.ok ? 'info' : 'error');
@@ -2025,6 +2043,9 @@
     if (text != null) e.textContent = text;
     return e;
   }
+  // Give an emoji/symbol-only control an accessible name (otherwise screen
+  // readers announce just the glyph, e.g. "✕").
+  function aria(e, label) { if (e) { e.setAttribute('aria-label', label); if (!e.title) e.title = label; } return e; }
   function elHtml(tag, cls, html) {
     const e = document.createElement(tag);
     if (cls) e.className = cls;
@@ -2182,7 +2203,7 @@
       const chip = el('div', 'attach-chip');
       const img = document.createElement('img');
       img.src = a.url; chip.appendChild(img);
-      const x = el('button', 'attach-x', '✕');
+      const x = aria(el('button', 'attach-x', '✕'), 'Remove attachment');
       x.onclick = () => { state.attachments.splice(i, 1); renderAttachments(); };
       chip.appendChild(x);
       tray.appendChild(chip);
