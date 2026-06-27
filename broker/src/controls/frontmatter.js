@@ -9,7 +9,7 @@ export function parseFrontmatter(raw) {
   if (!m) return { data: {}, body: text };
   const data = {};
   for (const line of m[1].split(/\r?\n/)) {
-    const mm = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+    const mm = line.match(/^([A-Za-z0-9_.-]+):\s*(.*)$/); // allow dotted keys (e.g. allowed.tools)
     if (!mm) continue;
     const key = mm[1];
     let val = mm[2].trim();

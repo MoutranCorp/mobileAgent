@@ -3,6 +3,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseFrontmatter, stringifyFrontmatter } from './frontmatter.js';
 
+// Session list caps. These differ ON PURPOSE: the per-project picker shows a
+// focused "recent in this project" slice, while the cross-project management
+// screen surveys more sessions across every project. Both are newest-first, so a
+// project near the top of the global list can show more entries there than in its
+// own picker — that's expected, not a bug.
+const PER_PROJECT_SESSION_CAP = 50;
+const ALL_SESSIONS_CAP = 120;
+
 /**
  * ClaudeConfig — read/write the Claude Code harness config that lives in
  * `.claude/` directories, so the UI can offer first-class managers for:
@@ -62,10 +70,20 @@ export class ClaudeConfig {
 
   /** Delete a session .jsonl, most precisely by its literal encoded folder. */
   deleteSession(sessionId, { projectId = null, projectDir = null } = {}) {
+    // Guard against path traversal in caller-supplied values: a session id is a
+    // UUID-ish token; an encoded projectDir is a single folder name (Claude encodes
+    // separators as '-'), so neither may contain path separators or '..'.
+    if (!/^[A-Za-z0-9_-]+$/.test(String(sessionId))) return { error: 'invalid session id' };
+    if (projectDir != null && (/[\\/]/.test(String(projectDir)) || String(projectDir).includes('..'))) {
+      return { error: 'invalid project dir' };
+    }
     let base = null;
     if (projectDir) base = path.join(os.homedir(), '.claude', 'projects', projectDir);
     else base = this._dirForProject(projectId) || this._sessionsDir();
     const file = path.join(base, `${sessionId}.jsonl`);
+    // Final containment check: never delete outside ~/.claude/.
+    const claudeRoot = path.join(os.homedir(), '.claude');
+    if (!path.resolve(file).startsWith(claudeRoot + path.sep)) return { error: 'refused: outside the claude dir' };
     try {
       if (!fs.existsSync(file)) return { error: 'session file not found' };
       fs.rmSync(file, { force: true });
@@ -320,7 +338,7 @@ export class ClaudeConfig {
         };
       })
       .sort((a, b) => b.mtime - a.mtime)
-      .slice(0, 50);
+      .slice(0, PER_PROJECT_SESSION_CAP);
   }
 
   /**
@@ -329,7 +347,7 @@ export class ClaudeConfig {
    * from the encoded directory (best-effort; the encoding is lossy), and returns
    * them newest-first with the project name attached so the UI can group them.
    */
-  listAllSessions({ max = 120 } = {}) {
+  listAllSessions({ max = ALL_SESSIONS_CAP } = {}) {
     const root = path.join(os.homedir(), '.claude', 'projects');
     if (!fs.existsSync(root)) return [];
     const byEnc = this._projectIndex();
@@ -556,12 +574,20 @@ export class ClaudeConfig {
       return { ok: true };
     }
     if (kind === 'hooks') {
-      // name = `event#groupIndex#hookIndex`
-      const [event, gi] = String(name).split('#');
+      // name = `event#groupIndex#hookIndex`. Delete the SINGLE hook, not the whole
+      // group (a group can hold several hooks — the old code wiped all of them).
+      const [event, giStr, hiStr] = String(name).split('#');
+      const gi = Number(giStr), hi = Number(hiStr);
       const json = this._readSettingsRaw(scope);
-      if (json.hooks && json.hooks[event]) {
-        json.hooks[event].splice(Number(gi), 1);
-        if (!json.hooks[event].length) delete json.hooks[event];
+      const groups = json.hooks && json.hooks[event];
+      if (groups && groups[gi]) {
+        if (Number.isInteger(hi) && Array.isArray(groups[gi].hooks)) {
+          groups[gi].hooks.splice(hi, 1);
+          if (!groups[gi].hooks.length) groups.splice(gi, 1); // group emptied
+        } else {
+          groups.splice(gi, 1); // legacy name without a hook index
+        }
+        if (!groups.length) delete json.hooks[event];
         this._writeSettingsRaw(scope, json);
       }
       return { ok: true };
@@ -581,9 +607,15 @@ export class ClaudeConfig {
 }
 
 // How Claude encodes a cwd into its ~/.claude/projects/<dir> folder name. Used to
-// map a session's folder back to a known project (and vice-versa).
-function encodeCwd(dir) {
-  return String(dir).replace(/[/\\:]+/g, '-').replace(/^-+/, '-');
+// map a session's folder back to a known project (and vice-versa). Claude replaces
+// EVERY non-alphanumeric character with '-', per character (runs are NOT
+// collapsed, and '.'/'_'/spaces are included — the old `[/\\:]+` regex missed
+// those and collapsed runs, so any path with a dot or underscore mapped to the
+// wrong folder and showed up as "folder unknown"). Verified char-for-char against
+// the real ~/.claude/projects names on disk, e.g.
+// `/tmp/claude-0/-home-user-x/<uuid>/scratchpad` → `-tmp-claude-0--home-user-x-<uuid>-scratchpad`.
+export function encodeCwd(dir) {
+  return String(dir).replace(/[^a-zA-Z0-9]/g, '-');
 }
 function read(file) {
   try {

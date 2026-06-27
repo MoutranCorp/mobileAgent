@@ -73,13 +73,17 @@ export class ProfileStore {
   }
 
   _load() {
+    const exists = fs.existsSync(this.file);
     try {
-      if (fs.existsSync(this.file)) {
+      if (exists) {
         const raw = JSON.parse(fs.readFileSync(this.file, 'utf8'));
         if (Array.isArray(raw) && raw.length) return raw;
+        console.warn(`[profiles] ${this.file} is not a non-empty array — overwriting with defaults`);
       }
-    } catch {
-      /* fall through to defaults */
+    } catch (e) {
+      // Don't silently clobber a user's hand-edited profiles on a transient
+      // read/parse error — surface it so a typo is fixable rather than lost.
+      console.warn(`[profiles] could not parse ${this.file} (${e?.message || e}) — using defaults`);
     }
     this._save(DEFAULT_PROFILES);
     return DEFAULT_PROFILES.slice();
@@ -87,7 +91,7 @@ export class ProfileStore {
 
   _save(profiles) {
     try {
-      fs.writeFileSync(this.file, JSON.stringify(profiles, null, 2));
+      fs.writeFileSync(this.file, JSON.stringify(profiles, null, 2), { mode: 0o600 });
     } catch {
       /* state dir might be read-only in some setups */
     }

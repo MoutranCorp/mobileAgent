@@ -24,15 +24,27 @@ export class ProcessRunner {
    * processes you intend to stop later.
    */
   run(channel, command, { cwd, env, track = false, shell = true } = {}) {
-    this.emit(event(EventType.CONTROL_STATUS, { channel, state: 'running', detail: command }));
-    this.log(`[${channel}] $ ${command}`);
+    return this._spawnStream(channel, command, null, command, { cwd, env, track, shell });
+  }
 
-    const child = spawn(command, {
-      cwd,
-      env: { ...process.env, ...env },
-      shell,
-      windowsHide: true,
-    });
+  /**
+   * Like run(), but spawns `file` with an explicit `args` array and NO shell, so
+   * user-supplied values (commit messages, paths, URLs, PR titles) can never be
+   * interpreted as shell syntax (`$()`, backticks, `;`, `&&`). Prefer this for any
+   * command that includes caller/agent-controlled strings.
+   */
+  runArgs(channel, file, args = [], { cwd, env, track = false } = {}) {
+    const display = [file, ...args].join(' ');
+    return this._spawnStream(channel, file, args, display, { cwd, env, track, shell: false });
+  }
+
+  _spawnStream(channel, fileOrCommand, args, display, { cwd, env, track = false, shell = true } = {}) {
+    this.emit(event(EventType.CONTROL_STATUS, { channel, state: 'running', detail: display }));
+    this.log(`[${channel}] $ ${display}`);
+
+    const child = args
+      ? spawn(fileOrCommand, args, { cwd, env: { ...process.env, ...env }, shell: false, windowsHide: true })
+      : spawn(fileOrCommand, { cwd, env: { ...process.env, ...env }, shell, windowsHide: true });
 
     if (track) this.running.set(channel, child);
 
@@ -104,8 +116,10 @@ export class ProcessRunner {
         /* ignore */
       }
     }, 3000);
-    child.once('exit', () => clearTimeout(t));
-    this.running.delete(channel);
+    // Remove from `running` only when the process actually exits — deleting eagerly
+    // made isRunning() return false while the child was still alive, so a quick
+    // restart could spawn a second instance (e.g. two Metros) on the same channel.
+    child.once('exit', () => { clearTimeout(t); this.running.delete(channel); });
     this.emit(event(EventType.CONTROL_STATUS, { channel, state: 'stopped' }));
     return true;
   }

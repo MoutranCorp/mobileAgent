@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>On-Device Agent</title>
     <link rel="manifest" href="manifest.json" />
-    <meta name="theme-color" content="#0f1115" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -30,7 +31,7 @@
           <div class="nav-title">Agent</div>
           <div class="nav-sub">
             <span id="statusPill" class="status-pill idle">idle</span>
-            <span id="connDot" class="conn-dot" title="Broker connection"></span>
+            <span id="connDot" class="conn-dot" role="status" aria-live="polite" aria-label="Broker connection" title="Broker connection"></span>
           </div>
         </div>
         <div class="nav-right">
@@ -87,7 +88,7 @@
       <div id="todoPanel" class="todo-panel hidden"></div>
 
       <!-- Conversation -->
-      <main id="transcript" class="transcript">
+      <main id="transcript" class="transcript" aria-label="Conversation transcript" tabindex="0">
         <div class="empty-state">
           <div class="hero-glyph">
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">

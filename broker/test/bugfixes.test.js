@@ -7,7 +7,7 @@ import path from 'node:path';
 import { WebSocket } from 'ws';
 import { loadConfig } from '../src/config.js';
 import { BrokerServer } from '../src/server.js';
-import { ClaudeConfig } from '../src/controls/claude-config.js';
+import { ClaudeConfig, encodeCwd } from '../src/controls/claude-config.js';
 import { TranscriptStore } from '../src/controls/transcript.js';
 import { labelFor, familyMatches, ModelResolver } from '../src/controls/model-resolver.js';
 import { MockEngine } from '../src/engines/mock.js';
@@ -176,4 +176,50 @@ test('e2e: creating a skill via the UI triggers a hot-reload toast', async () =>
 
   ws.close();
   await server.stop();
+});
+
+test('TranscriptStore skips a torn last line instead of dropping the whole file', async () => {
+  const state = await tmpDir('ts-torn-');
+  const ts = new TranscriptStore(state);
+  ts.setProject('p1');
+  ts.record({ type: 'user_echo', text: 'hi' });
+  ts.record({ type: 'assistant_text', delta: 'ok' });
+  ts.replay(); // flush pending text to disk
+  // Simulate a process killed mid-append: a partial JSON line at the end.
+  const f = path.join(state, 'transcripts', 'p1.jsonl');
+  fssync.appendFileSync(f, '{"type":"user_echo","text":"tor');
+  const reopened = new TranscriptStore(state);
+  reopened.setProject('p1');
+  const types = reopened.replay().map((e) => e.type);
+  assert.ok(types.includes('user_echo'), 'valid records survive');
+  assert.ok(types.includes('assistant_text'), 'valid records survive');
+  assert.equal(types.filter((t) => t === 'user_echo').length, 1, 'torn line skipped, not parsed');
+});
+
+test('ClaudeConfig hook delete removes only the targeted hook, not the whole group', async () => {
+  const proj = await tmpDir('hk-proj-');
+  fssync.mkdirSync(path.join(proj, '.claude'), { recursive: true });
+  fssync.writeFileSync(path.join(proj, '.claude', 'settings.json'), JSON.stringify({
+    hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'A' }, { type: 'command', command: 'B' }] }] },
+  }));
+  const cc = new ClaudeConfig({ getProjectDir: () => proj, getProjects: () => [], stateDir: proj });
+  cc.delete('hooks', 'PreToolUse#0#0', 'project');
+  const after = JSON.parse(fssync.readFileSync(path.join(proj, '.claude', 'settings.json'), 'utf8'));
+  const cmds = after.hooks.PreToolUse[0].hooks.map((h) => h.command);
+  assert.deepEqual(cmds, ['B'], 'only hook A removed; B survives');
+});
+
+test('encodeCwd matches Claude\'s real ~/.claude/projects folder encoding', () => {
+  // Every non-alphanumeric char -> '-', per character, NO run-collapsing. Verified
+  // char-for-char against real folder names produced by the claude CLI on disk.
+  assert.equal(encodeCwd('/home/user/mobileAgent'), '-home-user-mobileAgent');
+  // Leading '/-' yields a double dash (runs not collapsed).
+  assert.equal(
+    encodeCwd('/tmp/claude-0/-home-user-x/abc-123/scratchpad'),
+    '-tmp-claude-0--home-user-x-abc-123-scratchpad'
+  );
+  // Dots and underscores are encoded too (the old regex left these intact and
+  // collapsed runs, so these paths mapped to the wrong folder -> "folder unknown").
+  assert.equal(encodeCwd('/home/user/my.app_v2'), '-home-user-my-app-v2');
+  assert.equal(encodeCwd('/a//b'), '-a--b');
 });

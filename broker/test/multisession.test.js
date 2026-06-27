@@ -102,11 +102,14 @@ test('SESSION_STOP tears down a background engine but keeps its meta (resume hin
     await open('projA');
     await open('projB'); // active = projB, projA in the background
     assert.equal(server.session.engines.size, 2);
-    const p = waitNext((e) => e.type === 'sessions' && !e.items.some((s) => s.key === 'projA'));
+    // A stopped session now stays in the list as SLEEPING (kept in the workspace as a
+    // dormant tab) rather than vanishing — its engine is gone but meta survives.
+    const p = waitNext((e) => e.type === 'sessions' && e.items.some((s) => s.key === 'projA' && s.sleeping));
     send({ type: 'session_stop', key: 'projA' });
     await p;
     assert.equal(server.session.engines.has('projA'), false, 'engine torn down');
     assert.equal(server.session.meta.has('projA'), true, 'meta (transcript/resume hint) retained');
+    assert.ok(server.session.uiSessions().some((s) => s.key === 'projA' && s.sleeping), 'reported as sleeping, not dropped');
   } finally { ws.close(); await server.stop(); }
 });
 

@@ -71,7 +71,10 @@ class AgentForegroundService : Service() {
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "OnDeviceAgent::runtime").apply {
             setReferenceCounted(false)
-            acquire()
+            // Bounded acquire: if the service is OOM-killed without onDestroy, an
+            // un-timed lock would keep the CPU awake until reboot. START_STICKY
+            // re-delivers onStartCommand, which re-acquires, so a long bound is safe.
+            acquire(WAKELOCK_TIMEOUT_MS)
         }
     }
 
@@ -122,6 +125,7 @@ class AgentForegroundService : Service() {
         const val CHANNEL_ID = "agent_runtime"
         const val NOTIF_ID = 42
         const val ACTION_STOP = "com.ondevice.agent.STOP"
+        private const val WAKELOCK_TIMEOUT_MS = 12L * 60L * 60L * 1000L // 12h safety bound
 
         fun start(ctx: Context) {
             val i = Intent(ctx, AgentForegroundService::class.java)

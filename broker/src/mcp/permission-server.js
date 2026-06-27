@@ -22,6 +22,7 @@ import readline from 'node:readline';
 
 const IPC_PORT = Number(process.env.BROKER_IPC_PORT || 0);
 const IPC_HOST = process.env.BROKER_IPC_HOST || '127.0.0.1';
+const IPC_TOKEN = process.env.BROKER_IPC_TOKEN || null; // shared secret presented to the bridge
 const PROTOCOL_VERSION = '2024-11-05';
 // SECURITY: when the broker IPC link is unavailable we FAIL CLOSED (deny) by
 // default — a dropped socket must not silently disable approval for an agent
@@ -51,6 +52,9 @@ function connectIpc() {
     }
     const sock = net.createConnection({ host: IPC_HOST, port: IPC_PORT }, () => {
       log(`connected to broker IPC on ${IPC_HOST}:${IPC_PORT}`);
+      // Only mark the socket usable once actually connected — assigning it before
+      // the 'connect' callback let an already-errored socket look live.
+      ipcSocket = sock;
       resolve(sock);
     });
     sock.setEncoding('utf8');
@@ -80,7 +84,6 @@ function connectIpc() {
     sock.on('close', () => {
       ipcSocket = null;
     });
-    ipcSocket = sock;
   });
 }
 
@@ -100,7 +103,7 @@ function askBroker(toolName, input) {
         resolve({ behavior: 'deny', message: msg.message || 'Denied by user' });
       }
     });
-    ipcSocket.write(JSON.stringify({ id, kind: 'permission', tool_name: toolName, input }) + '\n');
+    ipcSocket.write(JSON.stringify({ id, kind: 'permission', token: IPC_TOKEN, tool_name: toolName, input }) + '\n');
   });
 }
 

@@ -29,18 +29,37 @@ export class ProjectManager {
     } catch {
       /* ignore */
     }
-    return { activeId: null, order: [], workspaces: [] };
+    return { activeId: null, order: [], workspaces: [], ports: {} };
   }
 
   _saveMeta() {
     try {
       fs.writeFileSync(
         this._stateFile,
-        JSON.stringify({ activeId: this.activeId, order: this._meta.order || [], workspaces: this._meta.workspaces || [] }, null, 2)
+        JSON.stringify({
+          activeId: this.activeId,
+          order: this._meta.order || [],
+          workspaces: this._meta.workspaces || [],
+          ports: this._meta.ports || {},
+        }, null, 2)
       );
     } catch {
       /* ignore */
     }
+  }
+
+  /** A STABLE Metro port for a project id. Keyed by id and persisted, so adding
+   *  or deleting a project never shifts another project's port out from under a
+   *  running Metro (the old `base + listIndex` did exactly that). */
+  _portFor(id) {
+    this._meta.ports = this._meta.ports || {};
+    if (this._meta.ports[id]) return this._meta.ports[id];
+    const used = new Set(Object.values(this._meta.ports));
+    let port = this.config.metroBasePort;
+    while (used.has(port)) port++;
+    this._meta.ports[id] = port;
+    this._saveMeta();
+    return port;
   }
 
   /** Projects = subdirectories of projectsDir + any opened workspace folders. */
@@ -81,7 +100,7 @@ export class ProjectManager {
       name: path.basename(dir) || dir,
       dir,
       external: !this._underProjects(dir),
-      metroPort: this.config.metroBasePort + index,
+      metroPort: this._portFor(id),
       isExpo: this._looksLikeExpo(dir),
       hasGit: fs.existsSync(path.join(dir, '.git')),
       active: id === this.activeId,

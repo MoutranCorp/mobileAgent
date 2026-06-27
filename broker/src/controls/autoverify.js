@@ -45,6 +45,7 @@ export class AutoVerify {
     if (enabled !== undefined) this.enabled = !!enabled;
     if (command !== undefined && command) this.command = command;
     if (maxIterations !== undefined) this.maxIterations = Math.max(1, Math.min(10, Number(maxIterations) || 3));
+    this.iteration = 0; // reset the fix-chain counter so a config change starts fresh
     this._save();
     this.emitState();
   }

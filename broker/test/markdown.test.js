@@ -30,7 +30,7 @@ test('ordered + unordered lists and links', () => {
 
 test('fenced code blocks escape HTML and are not formatted', () => {
   const h = MD.render('```js\nconst x = 1 < 2 && a > b;\n```');
-  assert.match(h, /<pre><code>const x = 1 &lt; 2 &amp;&amp; a &gt; b;<\/code><\/pre>/);
+  assert.match(h, /<pre><code class="language-js">const x = 1 &lt; 2 &amp;&amp; a &gt; b;<\/code><\/pre>/);
 });
 
 test('blockquote and horizontal rule', () => {
@@ -98,5 +98,42 @@ test('a pipe line without a delimiter row is NOT a table', () => {
 test('partial input mid-stream does not throw (unterminated fence)', () => {
   assert.doesNotThrow(() => MD.render('intro\n\n```js\nconst a ='));
   const h = MD.render('intro\n\n```js\nconst a =');
-  assert.match(h, /<pre><code>/);
+  assert.match(h, /<pre><code class="language-js">/);
+});
+
+test('link/autolink URLs cannot break out of the href attribute (XSS)', () => {
+  // A double-quote in the URL must not start a new attribute (regression for the
+  // confirmed onmouseover-injection PoC).
+  const h = MD.render('[x](https://a"onmouseover="alert(1)) and https://b"onmouseover="alert(2) end');
+  // No event-handler attribute may appear in any opening <a> tag. (`[^>]*` is bounded
+  // by the first `>`, so this inspects only attributes, not the harmless link text.)
+  assert.doesNotMatch(h, /<a [^>]*\son\w+=/, 'no injected event-handler attribute in the tag');
+  // Every " inside a URL must be escaped to &quot; so it can't close the href.
+  assert.match(h, /href="https:\/\/a&quot;onmouseover=&quot;alert\(1"/, 'link quote escaped inside href');
+  assert.match(h, /href="https:\/\/b&quot;onmouseover=&quot;alert\(2"/, 'autolink quote escaped inside href');
+  // Disallowed schemes still neutralized.
+  assert.match(MD.render('[x](javascript:alert(1))'), /href="#"/);
+  // Ampersands in a normal URL are not double-escaped.
+  assert.match(MD.render('[x](https://e.com/?a=1&b=2)'), /href="https:\/\/e\.com\/\?a=1&amp;b=2"/);
+});
+
+test('fenced code captures the language as data-lang + language- class', () => {
+  const h = MD.render('```python\nprint(1)\n```');
+  assert.match(h, /data-lang="python"/);
+  assert.match(h, /<code class="language-python">/);
+  // No language -> no attributes, still renders.
+  const plain = MD.render('```\nplain\n```');
+  assert.doesNotMatch(plain, /data-lang=/);
+  assert.match(plain, /<pre><code>plain<\/code><\/pre>/);
+});
+
+test('blockquote recursion is depth-capped (no stack blow-up)', () => {
+  const deep = Array.from({ length: 200 }, (_, i) => '>'.repeat(i + 1) + ' x').join('\n');
+  assert.doesNotThrow(() => MD.render(deep));
+});
+
+test('tab-indented sublist is treated as nested', () => {
+  const h = MD.render('- a\n\t- b');
+  // The nested item opens a second <ul> (tabs expanded to spaces).
+  assert.match(h, /<ul><li>a<\/li><ul><li>b<\/li><\/ul>/);
 });

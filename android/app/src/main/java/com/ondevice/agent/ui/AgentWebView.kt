@@ -43,7 +43,10 @@ fun AgentWebView(
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 settings.mediaPlaybackRequiresUserGesture = false
-                settings.cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
+                // Use the HTTP cache between loads — the broker cache-busts its
+                // assets with ?v=__VER__, so stale JS/CSS isn't a risk and we avoid
+                // re-fetching everything over loopback on each (re)load.
+                settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
                 // Honor the page's <meta viewport width=device-width> and fit to the
                 // screen width — without this the WebView can lay the page out wider
                 // than the device and let it pan sideways.
@@ -82,10 +85,12 @@ fun AgentWebView(
                             .setOnCancelListener { r.cancel() }.show()
                         return true
                     }
-                    // Grant in-page media permission requests (defensive; the UI
-                    // primarily uses the native voice bridge).
+                    // Grant ONLY audio capture (the voice path); never blanket-grant
+                    // camera etc. to in-page content — an XSS'd microapp widget could
+                    // otherwise request and be handed the camera.
                     override fun onPermissionRequest(request: PermissionRequest) {
-                        request.grant(request.resources)
+                        val audio = request.resources.filter { it == PermissionRequest.RESOURCE_AUDIO_CAPTURE }.toTypedArray()
+                        if (audio.isNotEmpty()) request.grant(audio) else request.deny()
                     }
                 }
 

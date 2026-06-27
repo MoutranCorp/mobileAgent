@@ -2,6 +2,7 @@ package com.ondevice.agent.ui
 
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
+import org.json.JSONObject
 
 /**
  * window.AndroidAgent — the bridge the web UI calls into for capabilities a
@@ -37,8 +38,11 @@ class WebAppBridge(private val host: MainActions, private val web: WebView) {
     }
 
     private fun js(fn: String, vararg args: String?) {
-        val a = args.joinToString(",") { if (it == null) "null" else "'" + esc(it) + "'" }
+        // JSONObject.quote produces a fully-escaped, double-quoted JS string literal
+        // (handles ", \, control chars, etc.) — the old hand-rolled single-quote
+        // escape missed backticks / </script> / unicode separators and could break
+        // out of the generated call.
+        val a = args.joinToString(",") { if (it == null) "null" else JSONObject.quote(it) }
         web.evaluateJavascript("window.$fn && window.$fn($a)", null)
     }
-    private fun esc(s: String) = s.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "")
 }

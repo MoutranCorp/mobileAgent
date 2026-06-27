@@ -40,6 +40,7 @@ export class PromptLibrary {
   }
 
   save(name, text) {
+    name = String(name || '').trim(); // reject empty / whitespace-only names (would dup)
     if (!name) return;
     const i = this.items.findIndex((p) => p.name === name);
     if (i >= 0) this.items[i] = { name, text };

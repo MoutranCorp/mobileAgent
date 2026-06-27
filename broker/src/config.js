@@ -40,6 +40,10 @@ export function loadConfig(argv = process.argv.slice(2)) {
   // Bind to loopback only by default — the whole point is localhost-only.
   const host = args.host || process.env.BROKER_HOST || '127.0.0.1';
   const port = Number(args.port || process.env.BROKER_PORT || 8765);
+  // Port 0 is valid — it asks the OS for any free ephemeral port (used in tests).
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new Error(`Invalid --port ${JSON.stringify(args.port || process.env.BROKER_PORT)} — must be an integer 0–65535`);
+  }
 
   // Default engine profile id. `mock` lets the entire stack run with no
   // claude CLI / proot present (great for dev + CI on a laptop).
@@ -54,6 +58,9 @@ export function loadConfig(argv = process.argv.slice(2)) {
     defaultProfile,
     // Where Metro's base port starts; each project gets base + offset.
     metroBasePort: Number(process.env.METRO_BASE_PORT || 8081),
+    // Memory-pressure threshold (%) above which idle background engines are evicted.
+    // Configurable because the right value differs hugely between a phone and a PC.
+    memEvictPct: Number(process.env.BROKER_MEM_EVICT_PCT || 88),
     // Path to the claude binary (overridable for odd installs).
     claudeBin: process.env.CLAUDE_BIN || 'claude',
     // Default permission mode for the claude-code engine. Bypass-all by default

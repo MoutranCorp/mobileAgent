@@ -171,6 +171,9 @@ agent:
    is empty. Only the manual `provision-debian.sh` (which copies from `$BROKER_SRC`)
    actually populates `~/agent-broker`. **Fix:** teach `setup-guest.sh` to fetch the
    broker (clone a repo URL or extract a bundled copy), mirroring `provision-debian.sh`.
+   (`setup-guest.sh` now at least **fails loudly** if `proot-distro` couldn't be
+   installed — previously `pkg ... || true` masked it and the failure surfaced later
+   as a cryptic `proot-distro: not found` — but it still does not deliver the broker.)
 
 2. **The bootstrap tarball is missing and unreproducible.** The app expects a Termux
    arm64 bootstrap at `android/app/src/main/assets/bootstrap-aarch64.tar.{gz,xz,zst}`,

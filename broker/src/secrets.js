@@ -40,8 +40,12 @@ export class SecretStore {
     this._fileSecrets[name] = value;
     try {
       fs.writeFileSync(this.file, JSON.stringify(this._fileSecrets, null, 2), { mode: 0o600 });
-    } catch {
-      /* ignore */
+      return { ok: true };
+    } catch (e) {
+      // Report the failure instead of silently dropping the secret — the caller
+      // (and the user) should know the key didn't persist.
+      console.warn(`[secrets] failed to persist ${name}: ${e?.message || e}`);
+      return { ok: false, error: e?.message || String(e) };
     }
   }
 

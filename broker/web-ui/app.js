@@ -12,7 +12,8 @@
     activeThinking: null,
     toolCards: new Map(), // id -> { el, head, body, name, isDiff, nested }
     approvals: new Map(), // id -> el
-    pendingSent: [], // normalized texts we optimistically rendered (dedupe echoes)
+    pendingSent: [], // [{id,text}] optimistically-rendered sends, matched to echoes by id
+    _sendSeq: 0,     // monotonic id for optimistic user bubbles (stamp the RIGHT one)
     profiles: [],
     activeProfileId: null,
     projects: [],
@@ -170,23 +171,48 @@
       handleEvent(ev);
     };
     state.ws.onopen = () => {
+      state._reconnectAttempts = 0;
+      hideDisconnectBanner();
       setConnected(true);
-      resetConversation(); // avoid desync: rebuild fresh, then re-request snapshot
+      // First connect: blank to a clean slate. Reconnect: DON'T eagerly blank
+      // (that flickered the empty state) — the snapshot's reset:true transcript,
+      // now always sent, rebuilds the conversation in place when it arrives.
+      if (!state._everConnected) resetConversation();
+      state._everConnected = true;
       send({ type: 'hello' });
     };
     state.ws.onclose = () => { setConnected(false); scheduleReconnect(); };
     state.ws.onerror = () => {};
   }
 
+  // Reconnect with exponential backoff + jitter (was a flat 1.5s retry that hammered
+  // the broker and the phone's wake-lock when it stayed down). After a few failures
+  // surface a persistent banner with a manual Reconnect button.
   function scheduleReconnect() {
     clearTimeout(state.reconnectTimer);
-    state.reconnectTimer = setTimeout(connect, 1500);
+    const n = (state._reconnectAttempts = (state._reconnectAttempts || 0) + 1);
+    const delay = Math.min(1500 * Math.pow(2, n - 1), 30000) + Math.floor(Math.random() * 500);
+    if (n >= 5) showDisconnectBanner();
+    state.reconnectTimer = setTimeout(connect, delay);
   }
+  function showDisconnectBanner() {
+    if (document.getElementById('disconnBanner')) return;
+    const el2 = el('div', 'disconn-banner');
+    el2.id = 'disconnBanner';
+    el2.innerHTML = '<span>⚠ Lost connection to the broker — retrying…</span>';
+    const btn = el('button', 'accent small', 'Reconnect now');
+    btn.onclick = () => { state._reconnectAttempts = 0; clearTimeout(state.reconnectTimer); connect(); };
+    el2.appendChild(btn);
+    document.body.appendChild(el2);
+  }
+  function hideDisconnectBanner() { const b = document.getElementById('disconnBanner'); if (b) b.remove(); }
 
   function setConnected(on) {
     state.connected = on;
     $('connDot').classList.toggle('online', on);
-    $('connDot').title = on ? 'Connected to broker' : 'Disconnected — reconnecting…';
+    const label = on ? 'Connected to broker' : 'Disconnected — reconnecting…';
+    $('connDot').title = label;
+    $('connDot').setAttribute('aria-label', label); // announced via aria-live
     // Transport state lives on the dot ONLY; the status pill reflects engine status.
   }
 
@@ -280,14 +306,25 @@
     const prev = state._prevBusy || {};
     state.sessions = ev.items || [];
     if (ev.activeKey) state.activeKey = ev.activeKey;
-    // The focused session always has a tab.
+    // The focused session is never "dismissed" — re-surface it if it was.
+    undismissSession(state.activeKey);
+    // Give EVERY broker-known session a tab (live or sleeping) so a dormant/idle-
+    // evicted session never silently vanishes from the workspace — except ones the
+    // user explicitly closed (dismissed; still on disk, resumable via Sessions).
+    for (const s of state.sessions) {
+      if (s.key !== state.activeKey && isDismissed(s.key)) continue;
+      ensureTab({ key: s.key, projectId: s.projectId, title: s.title });
+    }
     const act = state.sessions.find((s) => s.key === state.activeKey);
-    if (act) ensureTab({ key: act.key, projectId: act.projectId, title: act.title });
-    else if (state.activeKey) ensureTab({ key: state.activeKey, projectId: state.activeProjectId });
+    if (!act && state.activeKey) ensureTab({ key: state.activeKey, projectId: state.activeProjectId });
     // Keep the focused tab synced to the broker's active session — unless the user is
     // currently on a FILE tab (a client-only view; don't yank them back to chat).
+    // Clear an in-flight switch once the broker confirms it as active.
+    if (state._pendingActiveKey && state.activeKey === state._pendingActiveKey) state._pendingActiveKey = null;
     const curTab = state.activeTabId ? tabById(state.activeTabId) : null;
-    if (!curTab || curTab.kind !== 'file') { state.activeTabId = state.activeKey; applyViewMode(); }
+    // Don't override the focused tab while a user-initiated switch is still in
+    // flight (its ACK hasn't arrived) — that caused a visible wrong-tab flash.
+    if ((!curTab || curTab.kind !== 'file') && !state._pendingActiveKey) { state.activeTabId = state.activeKey; applyViewMode(); }
     // "Done" nudge: a background session that finished a turn (busy -> idle) while
     // unfocused. (working/waiting indicators are derived live in renderTabs.)
     const nowBusy = {};
@@ -336,6 +373,13 @@
     const suffix = String(key).includes('#') ? ' ' + String(key).slice(String(key).indexOf('#')) : '';
     return base + suffix;
   }
+  // Sessions the user explicitly closed (✕). Persisted so a reload doesn't re-add
+  // their tabs from the SESSIONS list. They stay on disk (resumable via Sessions).
+  function dismissedSet() { if (!state.dismissed) { try { state.dismissed = new Set(JSON.parse(localStorage.getItem('agentDismissed') || '[]')); } catch { state.dismissed = new Set(); } } return state.dismissed; }
+  function saveDismissed() { try { localStorage.setItem('agentDismissed', JSON.stringify([...dismissedSet()])); } catch { /* ignore */ } }
+  function isDismissed(key) { return dismissedSet().has(key); }
+  function dismissSession(key) { dismissedSet().add(key); saveDismissed(); }
+  function undismissSession(key) { if (dismissedSet().delete(key)) saveDismissed(); }
   function loadTabs() { try { return JSON.parse(localStorage.getItem('agentTabs') || '[]'); } catch { return []; } }
   function saveTabs() {
     try {
@@ -365,8 +409,13 @@
     if (t.kind === 'file') { applyViewMode(); renderFileView(t); renderTabs(); return; } // client-only, no broker switch
     state._optimisticUntil = 0; // show the destination tab's real state immediately
     applyViewMode();
-    if (t.key !== state.activeKey) send({ type: 'switch_session', key: t.key });
-    else renderTabs();
+    if (t.key !== state.activeKey) {
+      // Mark the switch in-flight: until the broker's SESSIONS reports this key as
+      // active, onSessions must not yank activeTabId back to the old session (which
+      // flashed the wrong tab).
+      state._pendingActiveKey = t.key;
+      send({ type: 'switch_session', key: t.key });
+    } else renderTabs();
   }
   function closeTab(id) {
     const idx = state.tabs.findIndex((t) => t.id === id);
@@ -374,7 +423,10 @@
     const t = state.tabs[idx];
     state.tabs.splice(idx, 1);
     saveTabs();
-    if (t.kind !== 'file') send({ type: 'session_stop', key: t.key }); // free the process; transcript kept
+    if (t.kind !== 'file') {
+      dismissSession(t.key); // user explicitly removed it — don't let SESSIONS re-add the tab
+      send({ type: 'session_stop', key: t.key }); // free the process; transcript kept (resumable via Sessions)
+    }
     if (t.id === state.activeTabId) {
       if (state.tabs.length) switchTab(state.tabs[Math.min(idx, state.tabs.length - 1)].id);
       else { state.activeTabId = null; applyViewMode(); send({ type: 'new_session' }); }
@@ -382,6 +434,11 @@
   }
   function renderTabs() {
     const host = $('tabs'); if (!host) return;
+    // A background `sessions` heartbeat must not nuke-and-rebuild the strip while the
+    // user is mid drag/long-press — it would detach the element the gesture holds and
+    // leave the gesture (and pointer capture) stuck. Defer the re-render until the
+    // gesture ends.
+    if (_tabGesture && (_tabGesture.mode === 'drag' || _tabGesture.mode === 'pending')) { state._tabsDirty = true; return; }
     // Title session tabs by their folder, numbered sequentially PER FOLDER ("demo",
     // "demo 2", "demo 3") — independent of the internal key suffix, so closing/reopening
     // never shows a weird climbing counter. File tabs keep their own (file)name.
@@ -403,13 +460,18 @@
         const live = state.sessions.find((s) => s.key === t.key);
         const waiting = live && live.lastStatus === 'waiting';
         const working = live && live.busy && !waiting;
+        // Sleeping = the broker reports it dormant, or it's not in the live set at all
+        // (idle-evicted / pre-reconnect). Dimmed 💤 — tapping it cold-resumes.
+        const sleeping = (live && live.sleeping) || (!live && t.key !== state.activeKey);
         if (waiting) { ind.className = 'tab-attn'; ind.textContent = '!'; } // needs you (approval) — over the spinner
         else if (working) ind.className = 'tab-spin';
         else if (t.done) { ind.className = 'tab-done'; ind.textContent = '✓'; }
+        else if (sleeping) { ind.className = 'tab-sleep'; ind.textContent = '💤'; }
         else { ind.className = 'tab-dot'; ind.style.background = t.color; }
+        tab.classList.toggle('sleeping', !!sleeping && !isActive);
       }
       const title = el('span', 'tab-title', t.title);
-      const close = el('button', 'tab-close', '✕');
+      const close = aria(el('button', 'tab-close', '✕'), 'Close tab');
       close.title = 'Close tab';
       tab.appendChild(ind); tab.appendChild(title); tab.appendChild(close);
       tab.onclick = (e) => {
@@ -550,6 +612,8 @@
       try { tabEl.releasePointerCapture(g.pid); } catch { /* ignore */ }
       if (g.mode === 'drag') endDrag(g);
       if (g.mode !== 'menu') _tabGesture = null; // keep ref while the menu is open
+      // Apply any session update that arrived (and was deferred) during the gesture.
+      if (!_tabGesture && state._tabsDirty) { state._tabsDirty = false; renderTabs(); }
     };
     tabEl.addEventListener('pointerup', finish);
     tabEl.addEventListener('pointercancel', finish);
@@ -816,18 +880,21 @@
   // Render an element's accumulated Markdown to HTML. We keep the raw source on
   // dataset.md so search/export can read the original syntax. Throttled to one
   // render per animation frame so long streaming replies stay smooth.
-  function renderMd(b) {
-    b.dataset.md = b._md || '';
+  function renderMd(b, final) {
+    // Only stamp the raw source onto dataset.md when finalizing — duplicating a
+    // large string into the DOM every streaming frame was pure waste (search/
+    // export of a finished bubble still read it; a live one falls back to text).
+    if (final) b.dataset.md = b._md || '';
     b.innerHTML = window.MD ? window.MD.render(b._md || '') : esc(b._md || '');
   }
   function scheduleMd(b) {
     if (b._mdPending) return;
-    b._mdPending = requestAnimationFrame(() => { b._mdPending = 0; renderMd(b); scrollDown(); });
+    b._mdPending = requestAnimationFrame(() => { b._mdPending = 0; renderMd(b, false); scrollDown(); });
   }
   function flushMd(b) {
     if (!b) return;
     if (b._mdPending) { cancelAnimationFrame(b._mdPending); b._mdPending = 0; }
-    if (b._md != null) renderMd(b);
+    if (b._md != null) renderMd(b, true);
   }
 
   function appendThinking(delta, parentId) {
@@ -871,6 +938,7 @@
     det.classList.remove('live');
     const title = det.querySelector('.think-title');
     if (title) title.textContent = 'Thought process';
+    det.open = false; // auto-collapse the finished trace (one tap to reopen) so long convos stay scannable
     state.activeThinking = null;
   }
 
@@ -895,6 +963,9 @@
     const working = state.activity === 'working';
     const composer = document.querySelector('.composer');
     if (composer) composer.classList.toggle('busy', working); // Stop button only while actively working
+    // Freeze the plan's in-progress spinner when not actively working, so a paused/
+    // abandoned plan doesn't keep implying live progress.
+    const tp = $('todoPanel'); if (tp && !tp.classList.contains('hidden')) tp.classList.toggle('idle', !working);
     // The typing dots only fill the pure gap — once a thinking trace or assistant
     // text is streaming, those are the "alive" cue and the dots would be redundant.
     const showRow = working && !state.activeAssistant && !state.activeThinking;
@@ -929,7 +1000,11 @@
   // Minimize/expand every thinking trace and tool card at once.
   function setAllCollapsed(collapsed) {
     document.querySelectorAll('.thinking').forEach((d) => { d.open = !collapsed; });
-    document.querySelectorAll('.tool-card .tool-body').forEach((b) => { b.classList.toggle('collapsed', collapsed); });
+    document.querySelectorAll('.tool-card .tool-body').forEach((b) => {
+      b.classList.toggle('collapsed', collapsed);
+      const head = b.parentElement && b.parentElement.querySelector('.tool-head');
+      if (head) head.setAttribute('aria-expanded', String(!collapsed));
+    });
   }
 
   function onUserEcho(ev) {
@@ -937,10 +1012,14 @@
     const meta = ev && typeof ev === 'object' ? ev : {};
     if (text == null || text === '') return;
     const norm = String(text).trim();
-    const i = state.pendingSent.indexOf(norm);
+    const i = state.pendingSent.findIndex((e) => e.text === norm);
     if (i >= 0) { // our optimistic copy — keep it, just stamp the revert ids onto it
+      const { id } = state.pendingSent[i];
       state.pendingSent.splice(i, 1);
-      stampUserBubble(lastUserBubble(), meta);
+      // Stamp the bubble for THIS send (by id), not whatever bubble is last.
+      const bubble = id && $('transcript').querySelector('.msg.user[data-pending-id="' + id + '"]');
+      stampUserBubble(bubble || lastUserBubble(), meta);
+      if (bubble) delete bubble.dataset.pendingId;
       return;
     }
     addUserMessage(text, meta);
@@ -963,12 +1042,13 @@
     }
   }
 
-  function addUserMessage(text, meta) {
+  function addUserMessage(text, meta, pendingId) {
     hideEmpty();
     finalizeAssistant();
     const msg = el('div', 'msg user');
     const ts = (meta && meta.ts) || nowIso();
     msg.dataset.ts = ts;
+    if (pendingId) msg.dataset.pendingId = pendingId;
     msg.appendChild(el('div', 'role', 'You'));
     msg.appendChild(el('div', 'bubble', text));
     appendTime(msg, ts);
@@ -1016,6 +1096,10 @@
     const isDiff = /^(Write|Edit|MultiEdit)$/.test(ev.name);
 
     const head = el('div', 'tool-head');
+    // It's a real toggle: expose it as a keyboard-operable button to assistive tech.
+    head.setAttribute('role', 'button');
+    head.setAttribute('tabindex', '0');
+    head.setAttribute('aria-label', `${prettyToolName(ev.name)} ${targetOf(ev.input)} — toggle details`);
     head.innerHTML =
       `<span class="tool-icon">${toolIcon(ev.name, ev.kind)}</span>` +
       `<span class="tool-name">${esc(prettyToolName(ev.name))}</span>` +
@@ -1038,7 +1122,10 @@
     }
     if (ev.kind === 'subagent') body.classList.remove('collapsed');
     card.appendChild(body);
-    head.addEventListener('click', () => body.classList.toggle('collapsed'));
+    const toggleBody = () => { const collapsed = body.classList.toggle('collapsed'); head.setAttribute('aria-expanded', String(!collapsed)); };
+    head.setAttribute('aria-expanded', String(!body.classList.contains('collapsed')));
+    head.addEventListener('click', toggleBody);
+    head.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleBody(); } });
 
     const host = nestedContainerFor(ev.parentToolUseId) || $('transcript');
     host.appendChild(card);
@@ -1080,7 +1167,7 @@
   // (served from the project via /preview): html runs in a sandboxed iframe, svg/
   // images render as <img>, markdown renders rich. Each gets View source / Download
   // / Open-full controls. See [[implemented-features]] HTML microapp widget.
-  const fileWidgets = new Map(); // filePath -> widget state
+  const fileWidgets = new Map(); // projectRelPath -> widget state (normalized key)
   // A file_widget event renders a viewer for a file already on disk (e.g. a
   // Playwright screenshot dropped via the /widget endpoint) — no Write/Edit needed.
   function onFileWidget(ev) {
@@ -1127,7 +1214,10 @@
     if (!kind) return;
     hideEmpty();
     const url = htmlAppUrl(filePath); // /preview/<rel>
-    let w = fileWidgets.get(filePath);
+    // Key by the project-relative path so an absolute and a relative reference to
+    // the SAME file collapse onto one card instead of producing duplicates.
+    const wkey = projectRelPath(filePath);
+    let w = fileWidgets.get(wkey);
     if (w) { // file re-written: refresh in place + bump to the bottom
       w.url = url; w.kind = kind;
       $('transcript').appendChild(w.card);
@@ -1149,7 +1239,7 @@
     card.appendChild(head); card.appendChild(bodyEl); card.appendChild(codeEl);
     $('transcript').appendChild(card);
     w = { card, body: bodyEl, code: codeEl, url, filePath, fname, kind, running: kind === 'html', frame: null, codeShown: false };
-    fileWidgets.set(filePath, w);
+    fileWidgets.set(wkey, w);
 
     // Run/Hide only makes sense for the interactive html app.
     if (kind === 'html') {
@@ -1292,8 +1382,8 @@
       const actions = el('div', 'approval-actions');
       const go = el('button', 'accent', 'Approve plan & proceed');
       const keep = el('button', 'ghost', 'Keep planning');
-      go.onclick = () => { setActivity('working', 'Working…'); send({ type: 'approve', id: ev.id }); };
-      keep.onclick = () => { setActivity('working', 'Working…'); send({ type: 'deny', id: ev.id, reason: 'Keep planning' }); };
+      go.onclick = () => { setActivity('working', 'Working…'); send({ type: 'approve', id: ev.id, sessionKey: ev.sessionKey }); };
+      keep.onclick = () => { setActivity('working', 'Working…'); send({ type: 'deny', id: ev.id, reason: 'Keep planning', sessionKey: ev.sessionKey }); };
       actions.appendChild(go); actions.appendChild(keep);
       card.appendChild(actions);
       $('transcript').appendChild(card);
@@ -1312,8 +1402,8 @@
     const actions = el('div', 'approval-actions');
     const allow = el('button', 'accent', 'Approve');
     const deny = el('button', 'danger', 'Deny');
-    allow.onclick = () => { setActivity('working', 'Working…'); send({ type: 'approve', id: ev.id }); };
-    deny.onclick = () => { setActivity('working', 'Working…'); send({ type: 'deny', id: ev.id }); };
+    allow.onclick = () => { setActivity('working', 'Working…'); send({ type: 'approve', id: ev.id, sessionKey: ev.sessionKey }); };
+    deny.onclick = () => { setActivity('working', 'Working…'); send({ type: 'deny', id: ev.id, sessionKey: ev.sessionKey }); };
     actions.appendChild(allow); actions.appendChild(deny);
     card.appendChild(actions);
     $('transcript').appendChild(card);
@@ -1447,7 +1537,7 @@
       const help = el('span', 'banner-help', ' Open the terminal drawer and run `claude` then `/login` to re-authenticate.');
       banner.appendChild(help);
     }
-    const x = el('button', 'banner-x', '✕');
+    const x = aria(el('button', 'banner-x', '✕'), 'Dismiss');
     x.onclick = () => banner.remove();
     banner.appendChild(x);
   }
@@ -1456,11 +1546,19 @@
 
   function applyTranscript(ev) {
     if (ev.reset) resetConversation();
-    for (const rec of ev.events || []) {
-      if (rec.type === 'result') { finalizeAssistant(); continue; }
-      handleEvent(rec);
+    // Replay flag: suppress the per-record scroll churn (setActivity/scrollDown
+    // fire for every replayed record); we scroll once after the loop.
+    state._replaying = true;
+    try {
+      for (const rec of ev.events || []) {
+        if (rec.type === 'result') { finalizeAssistant(); continue; }
+        handleEvent(rec);
+      }
+    } finally {
+      state._replaying = false;
     }
     finalizeAssistant();
+    scrollDown(true);
     // A replay is historical — replayed tool_call records call setActivity('working'),
     // which would leave the UI stuck "working" (Stop button, send blocked). Reset to
     // idle; live status events for the (re)started engine drive the real state.
@@ -1488,7 +1586,7 @@
     banner.appendChild(el('span', '', `Native deps changed${deps ? ' (' + deps + ')' : ''} — a new dev client build is needed for JS-only Fast Refresh to keep working.`));
     const rebuild = el('button', 'accent', 'Rebuild (EAS)');
     rebuild.onclick = () => { send({ type: 'eas_build', profile: 'development', platform: 'android' }); banner.remove(); toggleTerminal(); };
-    const dismiss = el('button', 'banner-x', '✕');
+    const dismiss = aria(el('button', 'banner-x', '✕'), 'Dismiss');
     dismiss.onclick = () => banner.remove();
     banner.appendChild(rebuild); banner.appendChild(dismiss);
   }
@@ -1497,17 +1595,33 @@
 
   function renderTodos(todos) {
     const panel = $('todoPanel');
-    if (!todos || !todos.length) { panel.classList.add('hidden'); panel.innerHTML = ''; return; }
-    const done = todos.filter((t) => t.status === 'completed').length;
+    // An explicit call (TodoWrite/clear) updates the model; a no-arg call just
+    // re-renders the current plan (e.g. when the agent goes idle, to freeze the
+    // in-progress spinner so an abandoned plan stops implying active work).
+    if (todos !== undefined) {
+      state._todos = (todos && todos.length) ? todos : null;
+      const allDone = state._todos && state._todos.every((t) => t.status === 'completed');
+      state._todoCollapsed = !!allDone; // expand an active plan; auto-collapse a finished one
+    }
+    const list = state._todos;
+    if (!list || !list.length) { panel.classList.add('hidden'); panel.innerHTML = ''; return; }
+    const done = list.filter((t) => t.status === 'completed').length;
+    const collapsed = !!state._todoCollapsed;
     panel.innerHTML = '';
-    const head = el('div', 'todo-head', `Plan — ${done}/${todos.length} done`);
+    const head = el('div', 'todo-head');
+    head.innerHTML = `<span class="todo-caret">${collapsed ? '▸' : '▾'}</span> Plan — ${done}/${list.length} done`;
+    head.onclick = () => { state._todoCollapsed = !state._todoCollapsed; renderTodos(); };
     panel.appendChild(head);
-    todos.forEach((t) => {
-      const row = el('div', 'todo-item ' + (t.status || 'pending'));
-      // The status marker is drawn by CSS (::before circle/check/spinner).
-      row.textContent = t.status === 'in_progress' && t.activeForm ? t.activeForm : t.content;
-      panel.appendChild(row);
-    });
+    if (!collapsed) {
+      list.forEach((t) => {
+        const row = el('div', 'todo-item ' + (t.status || 'pending'));
+        // The status marker is drawn by CSS (::before circle/check/spinner).
+        row.textContent = t.status === 'in_progress' && t.activeForm ? t.activeForm : t.content;
+        panel.appendChild(row);
+      });
+    }
+    panel.classList.toggle('done', done === list.length);
+    panel.classList.toggle('idle', state.activity !== 'working'); // freezes the in-progress spinner
     panel.classList.remove('hidden');
   }
   function clearTodos() { renderTodos([]); }
@@ -1538,6 +1652,17 @@
         // Prefer the original Markdown source (assistant bubbles render to HTML).
         const text = (bubble && (bubble.dataset.md ?? bubble.textContent)) || '';
         md += `**${role}:** ${text}\n\n`;
+      } else if (node.classList.contains('thinking')) {
+        // Include the reasoning trace as a blockquote (source kept on the body's _md).
+        const body = node.querySelector('.think-body');
+        const text = (body && (body.dataset.md ?? body.textContent)) || '';
+        if (text.trim()) md += `> 💭 ${text.trim().replace(/\n/g, '\n> ')}\n\n`;
+      } else if (node.classList.contains('html-app')) {
+        const name = node.querySelector('.html-app-name')?.textContent || 'file';
+        md += `\`📎 ${name}\` _(generated file)_\n\n`;
+      } else if (node.classList.contains('apk-app')) {
+        const name = node.querySelector('.apk-name')?.textContent || 'artifact';
+        md += `\`📦 ${name}\` _(build artifact)_\n\n`;
       } else if (node.classList.contains('tool-card')) {
         const name = node.querySelector('.tool-name')?.textContent || 'tool';
         const target = node.querySelector('.tool-target')?.textContent || '';
@@ -1554,8 +1679,12 @@
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = name;
+    // Some WebViews ignore a click on an unattached anchor — attach it. Revoke
+    // generously later so a slow save isn't cut off mid-write.
+    a.style.display = 'none';
+    document.body.appendChild(a);
     a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 60000);
   }
 
   function onFileReplace(ev) {
@@ -1666,7 +1795,10 @@
     if (!q) { $('findCount').textContent = ''; return; }
     const needle = q.toLowerCase();
     const walker = document.createTreeWalker($('transcript'), NodeFilter.SHOW_TEXT, {
-      acceptNode: (n) => (n.parentElement && n.parentElement.closest('script,style') ? NodeFilter.FILTER_REJECT
+      // Never mark inside a still-streaming bubble/thinking card: the next RAF
+      // render overwrites it (wasting the mark) and the replaceChild can mis-route
+      // that render. Find only over settled content.
+      acceptNode: (n) => (n.parentElement && n.parentElement.closest('script,style,.bubble.cursor,.thinking.live') ? NodeFilter.FILTER_REJECT
         : n.nodeValue.toLowerCase().includes(needle) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
     });
     const nodes = [];
@@ -1706,12 +1838,17 @@
   // ---- terminal ------------------------------------------------------------
 
   function onControlOutput(ev) { appendTerminal(ev.data, ev.stream === 'stderr' ? 'stderr' : ''); }
+  const TERM_MAX_SPANS = 2000;
   function appendTerminal(text, cls) {
     const body = $('termBody');
     const span = document.createElement('span');
     if (cls) span.className = cls;
     span.textContent = text;
     body.appendChild(span);
+    // Cap scroll-back: a long build (npm install / gradle) emits thousands of lines
+    // and would grow the DOM unbounded. Drop the oldest spans past the cap.
+    let over = body.childElementCount - TERM_MAX_SPANS;
+    while (over-- > 0 && body.firstChild) body.removeChild(body.firstChild);
     body.scrollTop = body.scrollHeight;
   }
   function appendTerminalMeta(text) { appendTerminal(text + '\n', 'meta'); }
@@ -1777,7 +1914,7 @@
       const a = el('button', 'ghost', '🔗 Open PR: ' + ev.url);
       a.onclick = () => openExternal(ev.url);
       banner.appendChild(a);
-      const x = el('button', 'banner-x', '✕'); x.onclick = () => banner.remove();
+      const x = aria(el('button', 'banner-x', '✕'), 'Dismiss'); x.onclick = () => banner.remove();
       banner.appendChild(x);
     } else {
       toast(`GitHub ${ev.op}: ${ev.ok ? 'ok' : 'failed'} — ${ev.message || ''}`, ev.ok ? 'info' : 'error');
@@ -1906,6 +2043,9 @@
     if (text != null) e.textContent = text;
     return e;
   }
+  // Give an emoji/symbol-only control an accessible name (otherwise screen
+  // readers announce just the glyph, e.g. "✕").
+  function aria(e, label) { if (e) { e.setAttribute('aria-label', label); if (!e.title) e.title = label; } return e; }
   function elHtml(tag, cls, html) {
     const e = document.createElement(tag);
     if (cls) e.className = cls;
@@ -1934,7 +2074,37 @@
     d.appendChild(list);
     return d;
   }
-  function scrollDown() { const t = $('transcript'); t.scrollTop = t.scrollHeight; }
+  // Only auto-scroll when the user is already pinned to the bottom, so reading
+  // earlier content while the agent streams doesn't keep yanking them down. A user
+  // action (sending a message) re-pins via scrollDown(true).
+  function scrollDown(force) {
+    const t = $('transcript');
+    // During a bulk replay we suppress per-record scrolling and jump once at the
+    // end (hundreds of intermediate scrolls were wasted layout work).
+    if (state._replaying && !force) return;
+    if (force) state._pinBottom = true;
+    if (state._pinBottom !== false) {
+      // Jump INSTANTLY (the transcript has CSS scroll-behavior:smooth) so the
+      // auto-scroll doesn't animate through intermediate positions — those frames
+      // re-fire the scroll handler and made the jump button flicker / lag.
+      const prev = t.style.scrollBehavior; t.style.scrollBehavior = 'auto';
+      t.scrollTop = t.scrollHeight;
+      t.style.scrollBehavior = prev;
+    } else maybeShowJumpButton();
+  }
+  function nearBottom() { const t = $('transcript'); return t.scrollHeight - t.scrollTop - t.clientHeight < 120; }
+  function onTranscriptScroll() {
+    state._pinBottom = nearBottom();
+    if (state._pinBottom) { const j = document.getElementById('jumpBtn'); if (j) j.remove(); }
+    else maybeShowJumpButton(); // show "jump to latest" whenever the user is scrolled up
+  }
+  function maybeShowJumpButton() {
+    if (document.getElementById('jumpBtn')) return;
+    const j = el('button', 'jump-btn', '↓ New messages');
+    j.id = 'jumpBtn';
+    j.onclick = () => { j.remove(); scrollDown(true); };
+    document.body.appendChild(j);
+  }
   function toast(msg, kind, action) {
     const t = el('div', 'toast ' + (kind || 'info'));
     t.appendChild(el('span', '', msg));
@@ -1968,14 +2138,19 @@
 
   function doSend() {
     if (state.activity !== 'idle') return; // a turn is in flight or awaiting approval
+    state._pinBottom = true; // sending re-pins to the bottom so you see your message + reply
+    const j = document.getElementById('jumpBtn'); if (j) j.remove();
     const input = $('input');
     const text = input.value.trim();
     const images = state.attachments.map((a) => ({ mime: a.mime, dataBase64: a.dataBase64 }));
     if (!text && !images.length) return;
-    if (text) state.pendingSent.push(text); // only dedupe non-empty echoes
+    // Tag this send so its server echo stamps THIS bubble, not whichever bubble
+    // happens to be last (rapid double-send used to cross the wires).
+    const pendingId = 'p' + (++state._sendSeq);
+    if (text) state.pendingSent.push({ id: pendingId, text: text.trim() }); // only dedupe non-empty echoes
     // Paint the feedback FIRST — button -> Stop, typing dots — before serializing
     // and sending the (possibly large) payload, so big prompts still feel instant.
-    addUserMessage(text + (images.length ? `\n📎 ${images.length} image${images.length === 1 ? '' : 's'}` : ''));
+    addUserMessage(text + (images.length ? `\n📎 ${images.length} image${images.length === 1 ? '' : 's'}` : ''), null, pendingId);
     input.value = '';
     clearAttachments();
     autoGrow();
@@ -2028,7 +2203,7 @@
       const chip = el('div', 'attach-chip');
       const img = document.createElement('img');
       img.src = a.url; chip.appendChild(img);
-      const x = el('button', 'attach-x', '✕');
+      const x = aria(el('button', 'attach-x', '✕'), 'Remove attachment');
       x.onclick = () => { state.attachments.splice(i, 1); renderAttachments(); };
       chip.appendChild(x);
       tray.appendChild(chip);
@@ -2145,6 +2320,8 @@
 
   function init() {
     $('brokerUrl') && ($('brokerUrl').value = state.url);
+    state._pinBottom = true;
+    $('transcript').addEventListener('scroll', onTranscriptScroll, { passive: true });
 
     // While the agent is working the send button becomes a Stop button.
     const sendOrStop = () => {

@@ -94,6 +94,7 @@ class MainActivity : ComponentActivity(), MainActions {
     override fun saveFile(name: String, content: String) {
         runCatching {
             val dir = File(cacheDir, "exports").apply { mkdirs() }
+            dir.listFiles()?.forEach { it.delete() } // don't let exports (conversation text) accumulate in cache
             val f = File(dir, name)
             f.writeText(content)
             val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", f)
@@ -132,8 +133,16 @@ class MainActivity : ComponentActivity(), MainActions {
     }
 
     override fun openExternal(url: String) {
+        // Only let web/Expo links out. A compromised page (e.g. XSS in agent output)
+        // could otherwise launch arbitrary intent:// / file:// / deep-link URIs.
+        val u = Uri.parse(url)
+        val scheme = (u.scheme ?: "").lowercase()
+        if (scheme != "http" && scheme != "https" && scheme != "exp") {
+            Toast.makeText(this, "Blocked link ($scheme)", Toast.LENGTH_SHORT).show()
+            return
+        }
         runCatching {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            startActivity(Intent(Intent.ACTION_VIEW, u).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }.onFailure { Toast.makeText(this, "Can't open: $url", Toast.LENGTH_SHORT).show() }
     }
 

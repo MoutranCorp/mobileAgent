@@ -36,6 +36,8 @@ export class BrokerServer {
     this.config = config;
     this.clients = new Set();
     this._nativeFingerprint = null;
+    this._pendingTurn = new Map(); // sessionKey -> { turnId, checkpointId, text } for revert stamping
+    this._turnCheckpoints = {};    // sessionKey -> checkpoint id taken before the active turn
 
     // All outbound events flow through one hook so we can record the transcript
     // and detect native-dep changes before broadcasting.
@@ -95,7 +97,6 @@ export class BrokerServer {
 
   async stop() {
     if (this._resTimer) { clearInterval(this._resTimer); this._resTimer = null; } // stop sampling before engines die
-    this.transcript.replay(); // flush any pending text record to disk
     this.runner.stopAll();
     // Force-close client sockets (don't wait on a polite close handshake) and
     // destroy any lingering keep-alive HTTP/WebSocket sockets — otherwise
@@ -114,6 +115,10 @@ export class BrokerServer {
       })(),
       new Promise((r) => setTimeout(r, 2000)),
     ]);
+    // Flush AFTER engines stop so any text they emitted during async shutdown — and
+    // every background session's buffer, not just the active one — reaches disk.
+    try { this.transcript.flushAll(); } catch { /* ignore */ }
+    try { this.session.flushSessionsFile?.(); } catch { /* ignore */ }
   }
 
   // --- websocket --------------------------------------------------------------
@@ -126,7 +131,7 @@ export class BrokerServer {
       this.clients.delete(ws);
       this._log(`client disconnected (${this.clients.size} total)`);
     });
-    ws.on('error', () => this.clients.delete(ws));
+    ws.on('error', (err) => { this._log(`ws error: ${err?.message || err}`); this.clients.delete(ws); });
     // Greet with a full state snapshot.
     this._sendSnapshot(ws);
   }
@@ -141,10 +146,11 @@ export class BrokerServer {
     try {
       // Stamp the turn/checkpoint id onto the active turn's user_echo (FIFO, one in
       // flight) so its bubble can be reverted later. Must precede transcript.record.
-      if (ev.type === EventType.USER_ECHO && this._pendingTurn && key === activeKey) {
-        ev.turnId = this._pendingTurn.turnId;
-        ev.checkpointId = this._pendingTurn.checkpointId;
-        this._pendingTurn = null;
+      // (The engine emits this echo up front now — see claude-code `send()` — so it
+      // records ABOVE the agent's response and replays in order.)
+      if (ev.type === EventType.USER_ECHO) {
+        const pt = this._pendingTurn.get(key); // keyed per-session: a background echo can't steal it
+        if (pt) { ev.turnId = pt.turnId; ev.checkpointId = pt.checkpointId; this._pendingTurn.delete(key); }
       }
       this.transcript.record(ev); // routes by ev.sessionKey -> per-session buffer
       // Learn alias -> versioned id from the ACTIVE engine's init only (a background
@@ -193,8 +199,12 @@ export class BrokerServer {
     const IDLE_TTL_MS = 5 * 60 * 1000;
     let sample;
     try { sample = sampleResources(this.session.liveSessions()); } catch { return null; }
+    const lowMemPct = this.config.memEvictPct;
+    // Expose the active threshold + current usage so the UI can show how close we
+    // are to evicting (it was a hidden 88% constant before).
+    if (sample.mem) sample.mem.evictThreshold = lowMemPct;
     try { this.broadcast(event(EventType.RESOURCES, sample)); } catch { /* ignore */ }
-    for (const key of evictionCandidates(sample)) this.session.stopEngineKeepTranscript(key);
+    for (const key of evictionCandidates(sample, { lowMemPct })) this.session.stopEngineKeepTranscript(key);
     for (const s of sample.engines) {
       if (s.status === 'idle' && !s.pinned && !s.active && s.idleMs >= IDLE_TTL_MS) {
         this.session.stopEngineKeepTranscript(s.key);
@@ -232,7 +242,7 @@ export class BrokerServer {
     if (this.session.lastCapabilities) this.broadcast(this.session.lastCapabilities);
     const p = this.projects.getActive();
     if (p) this.broadcast(event(EventType.CHECKPOINTS, this.checkpoints.list(p.id, p.dir)));
-    this.broadcast(event(EventType.SESSIONS, { items: this.session.liveSessions(), activeKey: this.session.activeKey }));
+    this.broadcast(event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
   }
 
   _emitTurnChanges(key, proj) {
@@ -299,13 +309,15 @@ export class BrokerServer {
     }));
     this._send(ws, event(EventType.PERMISSION_MODE, { mode: this.session.permissionMode }));
     // Live sessions (so a reconnecting client restores the background busy badges).
-    this._send(ws, event(EventType.SESSIONS, { items: this.session.liveSessions(), activeKey: this.session.activeKey }));
+    this._send(ws, event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
     if (this.session.lastCapabilities) this._send(ws, this.session.lastCapabilities);
     // Replay the recorded conversation so reloads/reconnects don't lose history.
     // reset:true makes it idempotent — the server greets with a snapshot AND the
     // client sends `hello`, so two replays could otherwise double the transcript.
+    // Always send it (even when empty) so a reconnecting client can rebuild from
+    // reset:true in place instead of eagerly blanking on open (which flickered).
     const replay = this.transcript.replay();
-    if (replay.length) this._send(ws, event(EventType.TRANSCRIPT, { events: replay, reset: true }));
+    this._send(ws, event(EventType.TRANSCRIPT, { events: replay, reset: true }));
     if (active) this._send(ws, event(EventType.CHECKPOINTS, this.checkpoints.list(active.id, active.dir)));
     this._send(ws, event(EventType.PROMPTS, { items: this.prompts.list() }));
     this._send(ws, event(EventType.AUTOVERIFY, {
@@ -316,7 +328,10 @@ export class BrokerServer {
     // never render in a session that didn't build them; freshly-built apks surface
     // via _maybeBroadcastApks and persist through the per-session transcript.
     this._seedApks();
-    this._send(ws, event(EventType.RESOURCES, sampleResources(this.session.liveSessions())));
+    // Don't let a resource-sampling throw abort the rest of the greeting (effort,
+    // models) — the snapshot must always finish. (_lifecycleTick is already guarded.)
+    try { this._send(ws, event(EventType.RESOURCES, sampleResources(this.session.liveSessions()))); }
+    catch (e) { this._log(`resource sample failed: ${e?.message || e}`); }
     // Current effort + whatever model labels we already know (no probe spawn here).
     this._send(ws, event(EventType.EFFORT, { level: this.session.effort }));
     this._send(ws, this._modelsEvent());
@@ -370,10 +385,10 @@ export class BrokerServer {
     }
     try {
       await this._dispatch(ws, cmd);
-      this._send(ws, event(EventType.ack, { ofType: cmd.type, ok: true }));
+      this._send(ws, event(EventType.ACK, { ofType: cmd.type, ok: true }));
     } catch (e) {
       this._log(`command '${cmd.type}' failed: ${e.message}`);
-      this._send(ws, event(EventType.ack, { ofType: cmd.type, ok: false, message: e.message }));
+      this._send(ws, event(EventType.ACK, { ofType: cmd.type, ok: false, message: e.message }));
       this._send(ws, event(EventType.ERROR, { message: e.message }));
     }
   }
@@ -381,9 +396,11 @@ export class BrokerServer {
   async _dispatch(ws, cmd) {
     switch (cmd.type) {
       case CommandType.HELLO:
-        return this._sendSnapshot(ws);
+        // The full snapshot is already sent once on connection; re-sending it here
+        // (the client sends `hello` on open) just doubled every greeting event.
+        return;
       case CommandType.PING:
-        return this._send(ws, event('pong', {}));
+        return this._send(ws, event(EventType.PONG, {}));
 
       // conversation
       case CommandType.USER_MESSAGE: {
@@ -394,7 +411,6 @@ export class BrokerServer {
         if (proj && this.checkpoints.isRepo(proj.dir)) {
           const cp = this.checkpoints.snapshot(proj.id, proj.dir, (cmd.text || 'turn').slice(0, 60));
           if (cp) {
-            this._turnCheckpoints = this._turnCheckpoints || {};
             this._turnCheckpoints[this.session.activeKey] = cp.id; // per-session baseline
             checkpointId = cp.id;
             this.broadcast(event(EventType.CHECKPOINTS, this.checkpoints.list(proj.id, proj.dir)));
@@ -402,25 +418,38 @@ export class BrokerServer {
         }
         // Tag the upcoming user_echo so its bubble can be reverted to here later.
         // Set even when not a git repo (checkpointId null -> conversation-only revert).
+        // The engine emits the echo up front (claude-code `send()` / mock), so it
+        // records ABOVE the agent's response and replays in chronological order.
         this._turnSeq = (this._turnSeq || 0) + 1;
-        this._pendingTurn = { turnId: `t${this._turnSeq}`, checkpointId, text: cmd.text || '' };
+        this._pendingTurn.set(this.session.activeKey, { turnId: `t${this._turnSeq}`, checkpointId, text: cmd.text || '' });
         return this.session.sendUserMessage(cmd.text || '', cmd.images);
       }
-      case CommandType.SLASH_COMMAND:
-        return this.session.sendUserMessage(`/${cmd.name}${cmd.args ? ' ' + cmd.args : ''}`);
+      case CommandType.SLASH_COMMAND: {
+        // Validate the command name — it's interpolated into the prompt sent to the
+        // CLI; an empty/whitespace/newline name would send a malformed `/` line.
+        const name = String(cmd.name || '').trim();
+        if (!/^[\w][\w-]*$/.test(name)) {
+          return this._send(ws, event(EventType.ERROR, { message: `Invalid slash command: ${JSON.stringify(cmd.name)}` }));
+        }
+        return this.session.sendUserMessage(`/${name}${cmd.args ? ' ' + cmd.args : ''}`);
+      }
       case CommandType.COMPACT:
         return this.session.sendUserMessage(`/compact${cmd.focus ? ' ' + cmd.focus : ''}`);
       case CommandType.CLEAR:
         this.transcript.clear();
+        // Drop the stored resume id so the NEXT engine start doesn't `--resume` the
+        // just-cleared session (which would silently restore the model context the
+        // user asked to wipe). /clear itself blanks the live CLI session.
+        this.session.dropActiveResume();
         return this.session.sendUserMessage('/clear');
       case CommandType.INTERRUPT:
         return this.session.interrupt();
 
       // permissions
       case CommandType.APPROVE:
-        return this.session.respondPermission(cmd.id, 'allow', { updatedInput: cmd.updatedInput });
+        return this.session.respondPermission(cmd.id, 'allow', { updatedInput: cmd.updatedInput }, cmd.sessionKey);
       case CommandType.DENY:
-        return this.session.respondPermission(cmd.id, 'deny', { reason: cmd.reason });
+        return this.session.respondPermission(cmd.id, 'deny', { reason: cmd.reason }, cmd.sessionKey);
       case CommandType.SET_PERMISSION_MODE:
         await this.session.setPermissionMode(cmd.mode);
         return this.broadcast(event(EventType.PERMISSION_MODE, { mode: cmd.mode }));
@@ -432,15 +461,18 @@ export class BrokerServer {
         await this.session.newSession();
         this.transcript.setProject(this.session.activeKey);
         this.broadcast(event(EventType.TRANSCRIPT, { events: this.transcript.replay(), reset: true }));
-        this.broadcast(event(EventType.SESSIONS, { items: this.session.liveSessions(), activeKey: this.session.activeKey }));
+        this.broadcast(event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
         return;
       }
       case CommandType.SESSION_STOP:
+        if (!cmd.key || !this.session.meta.has(cmd.key)) return this._send(ws, event(EventType.ACK, { ok: false, message: 'Unknown session key' }));
         await this.session.stopEngineKeepTranscript(cmd.key);
-        return this.broadcast(event(EventType.SESSIONS, { items: this.session.liveSessions(), activeKey: this.session.activeKey }));
+        delete this._turnCheckpoints[cmd.key]; // drop the stale per-turn baseline
+        return this.broadcast(event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
       case CommandType.SESSION_PIN:
+        if (!cmd.key || !this.session.meta.has(cmd.key)) return this._send(ws, event(EventType.ACK, { ok: false, message: 'Unknown session key' }));
         this.session.setPinned(cmd.key, cmd.pinned);
-        return this.broadcast(event(EventType.SESSIONS, { items: this.session.liveSessions(), activeKey: this.session.activeKey }));
+        return this.broadcast(event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
       case CommandType.RESUME: {
         // Resume a session in ITS OWN project (so the engine spawns with the right
         // cwd and other projects' background engines stay alive — switching project
@@ -494,7 +526,7 @@ export class BrokerServer {
           }
         }
         this._sendSessionsList(ws);
-        this.broadcast(event(EventType.SESSIONS, { items: this.session.liveSessions(), activeKey: this.session.activeKey }));
+        this.broadcast(event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
         return;
       }
       case CommandType.LIST_SESSIONS: {
@@ -507,7 +539,7 @@ export class BrokerServer {
         }));
       }
       case CommandType.LIST_LIVE_SESSIONS:
-        return this._send(ws, event(EventType.SESSIONS, { items: this.session.liveSessions(), activeKey: this.session.activeKey }));
+        return this._send(ws, event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
       case CommandType.SWITCH_SESSION: {
         // A session key may be suffixed (projA#2), so resolve its folder via meta;
         // keep projects.activeId synced to the focused session's project.
@@ -614,7 +646,12 @@ export class BrokerServer {
         const removed = this.transcript.truncateBefore(cmd.turnId);
         // 3) Fork a fresh engine session — Claude sessions are append-only, so this
         //    is the honest way to make the agent forget the reverted turn onward.
+        const revertKey = this.session.activeKey;
         await this.session.newSession();
+        // Clear stale turn state for the reverted session so the next echo isn't
+        // stamped with a pre-revert turn/checkpoint id.
+        this._pendingTurn.delete(revertKey);
+        delete this._turnCheckpoints[revertKey];
         // 4) Push the rebuilt state to the UI.
         this.broadcast(event(EventType.TRANSCRIPT, { events: this.transcript.replay(), reset: true }));
         if (p) {

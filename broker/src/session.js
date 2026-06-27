@@ -245,16 +245,57 @@ export class SessionManager {
     return out;
   }
 
+  /** Live sessions PLUS "sleeping" ones — idle-evicted sessions whose engine was
+   *  torn down but whose meta + transcript survive (cold-resumable). The workspace
+   *  UI uses this so a dormant session stays in the tab strip as a 💤 tab instead of
+   *  silently vanishing; tapping it cold-resumes. (`liveSessions()` stays live-only
+   *  for resources/eviction.) */
+  uiSessions() {
+    const live = this.liveSessions();
+    const liveKeys = new Set(live.map((s) => s.key));
+    const now = Date.now();
+    const out = live.slice();
+    for (const [key, m] of this.meta) {
+      if (liveKeys.has(key)) continue; // already live
+      // The no-project scratch session is normally hidden, but if it was evicted
+      // while holding real history (a sessionId) it must still surface — otherwise
+      // it vanished irrecoverably until a reload.
+      if (key === MAIN_KEY && !m.sessionId) continue;
+      out.push({
+        key, projectId: m.projectId, profileId: m.profileId, model: m.model,
+        sessionId: m.sessionId, busy: false, lastStatus: 'idle',
+        active: key === this.activeKey, pid: null, status: 'sleeping',
+        idleMs: m.lastActivityTs ? Math.max(0, now - m.lastActivityTs) : 0,
+        pinned: !!m.pinned, title: m.title || (key === MAIN_KEY ? 'Main' : null), sleeping: true,
+      });
+    }
+    return out;
+  }
+
   async sendUserMessage(text, images) {
     const engine = await this.ensureEngine();
     if (!engine) return;
     await engine.send({ type: 'user_message', text, images });
   }
 
-  respondPermission(id, decision, extra) { if (this.engine) this.engine.respondPermission(id, decision, extra); }
+  respondPermission(id, decision, extra, key) {
+    // Route the decision to the engine that RAISED the request (the UI echoes back
+    // the request's sessionKey), not whatever happens to be active now — the user
+    // may have switched sessions while an approval was pending.
+    const e = (key && this.engines.get(key)) || this.engine;
+    if (e) e.respondPermission(id, decision, extra);
+  }
   interrupt() { if (this.engine) this.engine.interrupt(); }
 
   async switchEngine(profileId) { this._log(`switching engine -> ${profileId}`); return this.startEngine(profileId, {}); }
+
+  /** Forget the active key's resume id (used by /clear) so the next start is fresh. */
+  dropActiveResume() {
+    if (this._sessionByProject[this.activeKey]) {
+      delete this._sessionByProject[this.activeKey];
+      this._saveSessions();
+    }
+  }
 
   async switchModel(model) {
     this._log(`switching model -> ${model} (fresh session)`);
@@ -360,7 +401,7 @@ export class SessionManager {
     this.emit(ev);
   }
 
-  _emitSessions() { this.emit(event(EventType.SESSIONS, { items: this.liveSessions(), activeKey: this.activeKey })); }
+  _emitSessions() { this.emit(event(EventType.SESSIONS, { items: this.uiSessions(), activeKey: this.activeKey })); }
 
   _emitError(message) { this.emit(event(EventType.ERROR, { message })); }
   _log(message) {
@@ -371,7 +412,16 @@ export class SessionManager {
     try { if (fs.existsSync(this.sessionsFile)) return JSON.parse(fs.readFileSync(this.sessionsFile, 'utf8')); } catch { /* ignore */ }
     return {};
   }
+  // Debounced: SESSION_META can fire rapidly (each engine (re)start), and a
+  // synchronous write on every one stalls the event loop on slow (proot/eMMC) FS.
   _saveSessions() {
-    try { fs.writeFileSync(this.sessionsFile, JSON.stringify(this._sessionByProject, null, 2)); } catch { /* ignore */ }
+    if (this._sessionSaveTimer) return;
+    this._sessionSaveTimer = setTimeout(() => { this._sessionSaveTimer = null; this.flushSessionsFile(); }, 400);
+    this._sessionSaveTimer.unref?.();
+  }
+  /** Write sessions.json now (also used on shutdown to not lose a pending save). */
+  flushSessionsFile() {
+    if (this._sessionSaveTimer) { clearTimeout(this._sessionSaveTimer); this._sessionSaveTimer = null; }
+    try { fs.writeFileSync(this.sessionsFile, JSON.stringify(this._sessionByProject, null, 2), { mode: 0o600 }); } catch { /* ignore */ }
   }
 }

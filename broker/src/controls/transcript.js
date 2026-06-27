@@ -18,6 +18,11 @@ const KEEP = new Set([
   'apks', // build-artifact widgets persist for the session that produced them
 ]);
 const MAX_RECORDS = 1500;
+// Cap how many session buffers we hold in memory at once. Each can hold up to
+// MAX_RECORDS events, so without a cap a long-lived broker that views many
+// sessions accumulates them all. Evict the least-recently-touched non-active
+// buffer (flushing it first — it reloads from .jsonl on next access).
+const MAX_BUFFERS = 24;
 
 export class TranscriptStore {
   constructor(stateDir) {
@@ -34,7 +39,13 @@ export class TranscriptStore {
     if (!f || !fs.existsSync(f)) return [];
     try {
       const lines = fs.readFileSync(f, 'utf8').split('\n').filter(Boolean);
-      return lines.slice(-MAX_RECORDS).map((l) => JSON.parse(l));
+      // Parse per-line and skip corrupt records — a process killed mid-append leaves
+      // a partial last line that must not discard the whole transcript on reload.
+      const out = [];
+      for (const l of lines.slice(-MAX_RECORDS)) {
+        try { out.push(JSON.parse(l)); } catch { /* skip a torn line */ }
+      }
+      return out;
     } catch { return []; }
   }
 
@@ -42,8 +53,28 @@ export class TranscriptStore {
     if (key == null) key = this.activeKey;
     if (key == null) return null;
     let b = this.buffers.get(key);
-    if (!b) { b = { key, events: this._load(key), pendText: null, pendThink: null }; this.buffers.set(key, b); }
+    if (b) {
+      // Bump recency: delete+set moves it to the end of the Map's iteration order.
+      this.buffers.delete(key); this.buffers.set(key, b);
+      return b;
+    }
+    b = { key, events: this._load(key), pendText: null, pendThink: null };
+    this.buffers.set(key, b);
+    this._evictBuffers();
     return b;
+  }
+
+  /** Keep at most MAX_BUFFERS buffers; drop the oldest non-active ones (Map
+   *  iteration is insertion/recency order). Flush before dropping so nothing is
+   *  lost — the buffer reloads from disk on next access. */
+  _evictBuffers() {
+    if (this.buffers.size <= MAX_BUFFERS) return;
+    for (const [k, buf] of this.buffers) {
+      if (this.buffers.size <= MAX_BUFFERS) break;
+      if (k === this.activeKey) continue;
+      this._flush(buf);
+      this.buffers.delete(k);
+    }
   }
 
   /** Set which session the UI is viewing (its buffer is what replay() returns). */
@@ -88,9 +119,16 @@ export class TranscriptStore {
       }
       return;
     }
+    // Transient bookkeeping events (status/context/usage/session_meta/permission_*
+    // request) are NOT recorded and must NOT flush the streaming buffers — the real
+    // engine interleaves them between thinking/text deltas, and flushing here would
+    // shatter one reasoning/reply run into many tiny records (the mock never emits
+    // them mid-stream, so this only bites against the real CLI). Only a KEPT event is
+    // a genuine run boundary.
+    if (!KEEP.has(ev.type)) return;
     this._flushText(b);
     this._flushThink(b);
-    if (KEEP.has(ev.type)) this._commit(b, ev);
+    this._commit(b, ev);
   }
 
   _flushText(b) { if (b.pendText && b.pendText.delta) this._commit(b, b.pendText); b.pendText = null; }
@@ -112,6 +150,11 @@ export class TranscriptStore {
     return b.events.slice();
   }
 
+  /** Commit pending streamed text/thinking for EVERY session buffer to disk (not
+   *  just the active one) — used on shutdown so a background session's in-flight
+   *  reply isn't lost. */
+  flushAll() { for (const b of this.buffers.values()) this._flush(b); }
+
   clear() {
     const b = this._bufFor(this.activeKey);
     if (!b) return;
@@ -132,8 +175,8 @@ export class TranscriptStore {
 
   /** Drop the active session's user_echo with this turnId and everything after
    *  (a revert). Rewrites the .jsonl. Returns records removed, or null if absent. */
-  truncateBefore(turnId) {
-    const b = this._bufFor(this.activeKey);
+  truncateBefore(turnId, key = this.activeKey) {
+    const b = this._bufFor(key);
     if (!b) return null;
     this._flush(b);
     const idx = b.events.findIndex((e) => e.type === 'user_echo' && e.turnId === turnId);

@@ -39,6 +39,7 @@
     tab: 'files',
     scope: 'project',
     items: {}, // kind -> items
+    loaded: new Set(), // data keys whose first response has arrived (else: show "Loading…")
     caps: null,
     projects: [],
     profiles: [],
@@ -82,6 +83,10 @@
     open();
   }
   function close() { root.classList.add('hidden'); }
+  // Escape closes the modal (desktop expectation; harmless on touch).
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !root.classList.contains('hidden')) { e.stopPropagation(); close(); }
+  });
 
   function render() {
     root.innerHTML = '';
@@ -141,6 +146,14 @@
     } else if (m.tab === 'update') {
       send({ type: 'app_version' });
     }
+  }
+
+  // Empty-vs-loading: before a pane's first response arrives, an empty list means
+  // "still loading", not "nothing here" — show a spinner-y placeholder so the UI
+  // doesn't flash "No X yet" (and, after a scope switch, doesn't show stale data).
+  function mgrEmpty(noun, key) {
+    if (key && !m.loaded.has(key)) return el('div', 'mgr-empty', 'Loading…');
+    return el('div', 'mgr-empty', noun);
   }
 
   function renderPane() {
@@ -249,7 +262,14 @@
     const bar = el('div', 'scope-bar');
     ['project', 'user'].forEach((s) => {
       const b = el('button', 'chip' + (m.scope === s ? ' on' : ''), s);
-      b.onclick = () => { m.scope = s; renderPane(); requestTabData(); };
+      b.onclick = () => {
+        m.scope = s;
+        // The current list is now stale for the new scope — drop its loaded flag so
+        // renderPane shows "Loading…" until the new-scope response arrives (instead
+        // of briefly showing the old scope's items).
+        ['skills', 'agents', 'commands', 'output-styles', 'memory', 'settings', 'mcp', 'hooks'].forEach((k) => m.loaded.delete(k));
+        renderPane(); requestTabData();
+      };
       bar.appendChild(b);
     });
     return bar;
@@ -263,7 +283,7 @@
 
     const items = m.items[kind] || [];
     const list = el('div', 'mgr-list');
-    if (!items.length) list.appendChild(el('div', 'mgr-empty', `No ${noun}s in ${m.scope} scope yet.`));
+    if (!items.length) list.appendChild(mgrEmpty(`No ${noun}s in ${m.scope} scope yet.`, kind));
     for (const it of items) {
       const row = el('div', 'mgr-row');
       const info = el('div', 'mgr-row-info');
@@ -340,8 +360,12 @@
     const actions = el('div', 'mgr-editor-actions');
     const save = el('button', 'primary small', 'Save');
     save.onclick = () => {
-      if (!e.name.trim()) return alert('Name is required');
-      send({ type: 'config_write', kind, name: e.name.trim().replace(/[^a-zA-Z0-9_-]/g, '-'), scope: m.scope, fields: f, body: e.body });
+      const raw = e.name.trim();
+      if (!raw) return alert('Name is required');
+      const safe = raw.replace(/[^a-zA-Z0-9_-]/g, '-');
+      // Don't silently rewrite the typed name — tell the user what it'll be saved as.
+      if (safe !== raw && !confirm(`Names allow only letters, numbers, "-" and "_".\nSave as "${safe}"?`)) return;
+      send({ type: 'config_write', kind, name: safe, scope: m.scope, fields: f, body: e.body });
       m.editing = null;
     };
     const cancel = el('button', 'ghost small', 'Cancel');
@@ -415,6 +439,7 @@
       const inp = el('input', 'mgr-input'); inp.placeholder = `add ${bucket} rule…`;
       const addBtn = el('button', 'ghost small', 'Add');
       addBtn.onclick = () => { if (inp.value.trim()) { lists[bucket].push(inp.value.trim()); inp.value = ''; redraw(); } };
+      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addBtn.onclick(); } });
       addRow.appendChild(inp); addRow.appendChild(addBtn);
       sec.appendChild(addRow);
       pane.appendChild(sec);
@@ -437,7 +462,7 @@
     pane.appendChild(el('p', 'mgr-hint', 'Shell commands the harness runs on lifecycle events (e.g. lint on PostToolUse). The matcher targets a tool (e.g. Bash, Edit) or is blank for all.'));
     const items = m.items.hooks || [];
     const list = el('div', 'mgr-list');
-    if (!items.length) list.appendChild(el('div', 'mgr-empty', `No hooks in ${m.scope} scope.`));
+    if (!items.length) list.appendChild(mgrEmpty(`No hooks in ${m.scope} scope.`, 'hooks'));
     items.forEach((h) => {
       const row = el('div', 'mgr-row');
       const info = el('div', 'mgr-row-info');
@@ -445,7 +470,7 @@
       info.appendChild(el('div', 'mgr-row-desc', h.command));
       row.appendChild(info);
       const del = el('button', 'ghost small', 'Delete');
-      del.onclick = () => send({ type: 'config_delete', kind: 'hooks', name: h.name, scope: m.scope });
+      del.onclick = () => { if (confirm(`Delete hook for "${h.event}"?\n${h.command || ''}`)) send({ type: 'config_delete', kind: 'hooks', name: h.name, scope: m.scope }); };
       row.appendChild(del);
       list.appendChild(row);
     });
@@ -513,13 +538,20 @@
     const activeId = (live.find((s) => s.active) || {}).sessionId || m.activeSessionId || null;
 
     const items = m.items.sessions || [];
-    if (!items.length) { pane.appendChild(el('div', 'mgr-empty', 'No sessions yet.')); return; }
+    if (!items.length) { pane.appendChild(mgrEmpty('No sessions yet.', 'sessions')); return; }
 
+    // Group by projectId (stable), not the display name — two distinct projects
+    // that happen to share a folder name must not merge into one group. Fall back
+    // to the encoded dir or name when no id is known.
     const groups = new Map();
-    for (const s of items) { const k = s.project || 'project'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(s); }
-    const order = [...groups.entries()].sort((a, b) => (b[1][0]?.mtime || 0) - (a[1][0]?.mtime || 0));
+    for (const s of items) {
+      const k = s.projectId || s.projectDir || s.project || 'project';
+      if (!groups.has(k)) groups.set(k, { label: s.project || k, sess: [] });
+      groups.get(k).sess.push(s);
+    }
+    const order = [...groups.values()].sort((a, b) => (b.sess[0]?.mtime || 0) - (a.sess[0]?.mtime || 0));
 
-    for (const [project, sess] of order) {
+    for (const { label: project, sess } of order) {
       const head = el('div', 'mgr-label');
       if (sess.some((s) => busyById.get(s.id))) head.appendChild(workingDots());
       head.appendChild(document.createTextNode('📁 ' + project));
@@ -536,7 +568,10 @@
         name.appendChild(document.createTextNode(s.summary || s.id));
         info.appendChild(name);
         const tag = isActive ? ' · viewing' : busy ? ' · working…' : isLive ? ' · live' : '';
-        info.appendChild(el('div', 'mgr-row-desc', relTime(s.mtime) + ' · ' + s.id.slice(0, 8) + tag + (!s.projectId ? ' · folder unknown' : '')));
+        // The folder is already shown in the group header above; only flag the case
+        // where resuming can't reopen the original folder (it's not a tracked project,
+        // so --resume falls back to the active folder).
+        info.appendChild(el('div', 'mgr-row-desc', relTime(s.mtime) + ' · ' + s.id.slice(0, 8) + tag + (!s.projectId && !isLive ? ' · opens in active folder' : '')));
         row.appendChild(info);
 
         const actions = el('div', 'mgr-row-actions');
@@ -656,7 +691,11 @@
     const focusRow = el('div', 'mgr-newproj');
     const focus = el('input', 'mgr-input'); focus.placeholder = 'compact focus (optional, e.g. "keep the auth work")';
     const compact = el('button', 'primary small', 'Compact');
-    compact.onclick = () => { send({ type: 'compact', focus: focus.value.trim() || undefined }); close(); };
+    compact.onclick = () => {
+      send({ type: 'compact', focus: focus.value.trim() || undefined });
+      toast('Compacting conversation…');
+      close();
+    };
     focusRow.appendChild(focus); focusRow.appendChild(compact);
     pane.appendChild(focusRow);
 
@@ -678,19 +717,22 @@
     const caps = m.caps;
     if (!caps) { pane.appendChild(el('div', 'mgr-hint', 'Start a Claude engine to see live MCP status, tools and agents.')); return; }
     pane.appendChild(el('div', 'perm-bucket-title', 'LIVE (from engine)'));
+    // section() now takes PLAIN text and escapes internally (it used to take raw
+    // HTML — a footgun), so callers pass unescaped strings.
     section(pane, 'MCP servers', (caps.mcpServers || []).map((s) =>
-      `${esc(s.name || s)} — ${esc((s.status || 'unknown'))}`), 'No MCP servers configured.');
-    section(pane, 'Available tools', (caps.tools || []).map((t) => esc(typeof t === 'string' ? t : t.name)), 'No tools reported.');
-    section(pane, 'Subagents', (caps.agents || []).map((a) => `${esc(a.name || a)}${a.description ? ' — ' + esc(a.description) : ''}`), 'No subagents.');
-    section(pane, 'Slash commands', (caps.slashCommands || []).map((c) => esc(typeof c === 'string' ? c : c.name)), 'None.');
-    if (caps.plugins && caps.plugins.length) section(pane, 'Plugins', caps.plugins.map((p) => esc(p.name || p)), 'None.');
+      `${s.name || s} — ${s.status || 'unknown'}`), 'No MCP servers configured.');
+    section(pane, 'Available tools', (caps.tools || []).map((t) => (typeof t === 'string' ? t : t.name)), 'No tools reported.');
+    section(pane, 'Subagents', (caps.agents || []).map((a) => `${a.name || a}${a.description ? ' — ' + a.description : ''}`), 'No subagents.');
+    section(pane, 'Slash commands', (caps.slashCommands || []).map((c) => (typeof c === 'string' ? c : c.name)), 'None.');
+    if (caps.plugins && caps.plugins.length) section(pane, 'Plugins', caps.plugins.map((p) => p.name || p), 'None.');
     pane.appendChild(el('div', 'mgr-row-desc', `output style: ${esc(caps.outputStyle || 'default')} · auth: ${esc(caps.apiKeySource || 'oauth')}`));
   }
   function section(pane, title, lines, empty) {
     pane.appendChild(el('div', 'perm-bucket-title', title.toUpperCase()));
     const box = el('div', 'mgr-list');
     if (!lines.length) box.appendChild(el('div', 'mgr-empty', empty));
-    lines.forEach((l) => { const d = el('div', 'mgr-row'); d.innerHTML = `<code>${l}</code>`; box.appendChild(d); });
+    // Build via textContent — section escapes internally now (takes plain text).
+    lines.forEach((l) => { const d = el('div', 'mgr-row'); const code = document.createElement('code'); code.textContent = l; d.appendChild(code); box.appendChild(d); });
     pane.appendChild(box);
   }
 
@@ -796,18 +838,21 @@
     }
     // --- file view / inline edit ---
     if (m.openFile) {
+      let ta = null; // the edit textarea, set in the editing branch below
+      const dirty = () => m.editingFile && ta && ta.value !== m.openFile.content;
+      const confirmDiscard = () => !dirty() || confirm(`Discard unsaved changes to ${m.openFile.path}?`);
       const back = el('button', 'ghost small', '← back');
-      back.onclick = () => { m.openFile = null; m.editingFile = false; renderPane(); };
+      back.onclick = () => { if (!confirmDiscard()) return; m.openFile = null; m.editingFile = false; renderPane(); };
       pane.appendChild(back);
       pane.appendChild(el('div', 'mgr-row-name', m.openFile.path));
       if (m.editingFile) {
-        const ta = el('textarea', 'mgr-textarea file-edit');
+        ta = el('textarea', 'mgr-textarea file-edit');
         ta.value = m.openFile.content;
         pane.appendChild(ta);
         const save = el('button', 'primary small', 'Save');
         save.onclick = () => { send({ type: 'files_write', path: m.openFile.path, content: ta.value }); m.openFile.content = ta.value; m.editingFile = false; renderPane(); };
         const cancel = el('button', 'ghost small', 'Cancel');
-        cancel.onclick = () => { m.editingFile = false; renderPane(); };
+        cancel.onclick = () => { if (!confirmDiscard()) return; m.editingFile = false; renderPane(); };
         pane.appendChild(save); pane.appendChild(cancel);
       } else {
         const pre = el('pre', 'file-view');
@@ -876,7 +921,11 @@
       const commitRow = el('div', 'mgr-newproj');
       const msg = el('input', 'mgr-input'); msg.placeholder = 'commit message';
       const commit = el('button', 'primary small', 'Commit all');
-      commit.onclick = () => { send({ type: 'git', op: 'commit', message: msg.value || undefined }); msg.value = ''; };
+      commit.onclick = () => {
+        const message = msg.value.trim();
+        if (!message) { msg.focus(); msg.placeholder = 'enter a commit message first'; return; } // don't send an empty/undefined message
+        send({ type: 'git', op: 'commit', message }); msg.value = '';
+      };
       commitRow.appendChild(msg); commitRow.appendChild(commit);
       pane.appendChild(commitRow);
     }
@@ -921,7 +970,7 @@
       info.onclick = () => { const inp = document.getElementById('input'); inp.value = p.text; close(); inp.focus(); };
       row.appendChild(info);
       const del = el('button', 'ghost small', 'Delete');
-      del.onclick = () => send({ type: 'prompts_delete', name: p.name });
+      del.onclick = () => { if (confirm(`Delete saved prompt "${p.name}"?`)) send({ type: 'prompts_delete', name: p.name }); };
       row.appendChild(del);
       list.appendChild(row);
     });
@@ -1155,8 +1204,9 @@
       if (root.classList.contains('hidden') === false) renderPane();
       return;
     }
-    if (ev.kind === 'settings') { m.items.settings = ev; if (m.tab === 'permissions') renderPane(); return; }
+    if (ev.kind === 'settings') { m.loaded.add('settings'); m.items.settings = ev; if (m.tab === 'permissions') renderPane(); return; }
     if (ev.kind === 'sessions') { m.sessionsLiveBusy = ev.liveBusy || {}; m.activeSessionId = ev.activeSessionId || null; }
+    m.loaded.add(ev.kind);
     m.items[ev.kind] = ev.items || [];
     if ((m.tab === ev.kind) || (ev.kind === 'sessions' && m.tab === 'sessions')) renderPane();
   }
@@ -1167,7 +1217,7 @@
   }
   function onCapabilities(ev) { m.caps = ev; if (m.tab === 'mcp') renderPane(); }
   function onContext(ev) { m.lastContext = ev; if (m.tab === 'context') renderPane(); }
-  function onProjects(ev) { m.projects = ev.projects || []; if (m.tab === 'projects') renderPane(); }
+  function onProjects(ev) { m.loaded.add('projects'); m.projects = ev.projects || []; if (m.tab === 'projects') renderPane(); }
   function onWorkspaceBrowse(ev) { m.browse = ev; if (!root.classList.contains('hidden') && m.tab === 'projects') renderPane(); }
   function onProfiles(ev) { m.profiles = ev.profiles || []; if (!root.classList.contains('hidden') && m.tab === 'engine') renderPane(); }
   function onCheckpoints(ev) { m.checkpoints = { items: ev.items || [], enabled: !!ev.enabled }; if (m.tab === 'checkpoints') renderPane(); }
@@ -1198,7 +1248,7 @@
     m.openFile = null; m.diffView = null;
     if (!root.classList.contains('hidden') && m.tab === 'files') renderPane();
   }
-  function onPrompts(ev) { m.prompts = ev.items || []; if (!root.classList.contains('hidden') && m.tab === 'prompts') renderPane(); }
+  function onPrompts(ev) { m.loaded.add('prompts'); m.prompts = ev.items || []; if (!root.classList.contains('hidden') && m.tab === 'prompts') renderPane(); }
   function onScripts(ev) { m.scripts = { items: ev.items || [], running: ev.running || [] }; if (!root.classList.contains('hidden') && m.tab === 'scripts') renderPane(); }
   function onAutoVerify(ev) {
     m.autoverify = { enabled: ev.enabled, command: ev.command, maxIterations: ev.maxIterations };

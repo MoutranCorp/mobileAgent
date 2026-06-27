@@ -76,7 +76,9 @@ export const EventType = Object.freeze({
   APP_VERSION: 'app_version', // { sha, subject, when, branch, dirty }  current app build
   APP_UPDATE: 'app_update', // { state?: 'updating', ok, upToDate?, fromSha, toSha, needsReload, needsRestart, ... }
   REVERTED: 'reverted', // { ok, checkpointId, removed, restoredFiles, text, message? } result of a revert
-  ack: 'ack', // { ofType, ok, message? }  acknowledges a received command
+  ACK: 'ack', // { ofType, ok, message? }  acknowledges a received command
+  PONG: 'pong', // {}  reply to a PING keepalive
+  ack: 'ack', // deprecated alias for ACK — kept so existing references don't break
 });
 
 /** Command types accepted UI -> broker. */
@@ -95,7 +97,7 @@ export const CommandType = Object.freeze({
   SWITCH_ENGINE: 'switch_engine', // { profileId }
   SWITCH_MODEL: 'switch_model', // { model }
   MODELS_LIST: 'models_list', // { refresh? } resolve alias -> version
-  SET_EFFORT: 'set_effort', // { level } low|medium|high|xhigh|max
+  SET_EFFORT: 'set_effort', // { level } low|medium|high|xhigh|max|ultracode
   LIST_SESSIONS: 'list_sessions', // { scope?: 'all' } on-disk session list
   LIST_LIVE_SESSIONS: 'list_live_sessions', // {} currently-running engines
   SWITCH_SESSION: 'switch_session', // { key } bring a live session to the foreground (no engine stop)

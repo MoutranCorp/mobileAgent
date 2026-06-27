@@ -29,8 +29,10 @@ export class Updater {
   async _toplevel() {
     if (this._top) return this._top;
     const r = await this._git(['rev-parse', '--show-toplevel']);
-    this._top = r.code === 0 && r.stdout ? r.stdout : this.cwd;
-    return this._top;
+    // Cache ONLY a successful resolution — a transient failure (.git not yet present,
+    // FS hiccup) must not permanently pin the toplevel to the cwd fallback.
+    if (r.code === 0 && r.stdout) { this._top = r.stdout; return this._top; }
+    return this.cwd;
   }
 
   /** Current version: short sha, subject, relative time, branch, dirty flag. */
@@ -46,6 +48,18 @@ export class Updater {
   /** Run `git pull --ff-only` and classify what changed. */
   async update() {
     const top = await this._toplevel();
+    // Pre-check for a dirty tree: `git pull --ff-only` fails opaquely when there
+    // are local edits. Surface it as an actionable message instead.
+    const dirty = await this._git(['status', '--porcelain'], { cwd: top });
+    if (dirty.code === 0 && dirty.stdout.trim()) {
+      return {
+        ok: false,
+        dirty: true,
+        message: 'Local changes would be overwritten by update — commit, stash, or discard them first.',
+        log: dirty.stdout,
+        top,
+      };
+    }
     const before = (await this._git(['rev-parse', 'HEAD'], { cwd: top })).stdout;
     const pull = await this._git(['pull', '--ff-only'], { cwd: top, timeout: 90000 });
     const after = (await this._git(['rev-parse', 'HEAD'], { cwd: top })).stdout;

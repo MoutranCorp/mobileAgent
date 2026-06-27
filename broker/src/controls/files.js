@@ -24,6 +24,16 @@ export class Files {
     if (!root) return null;
     const abs = path.resolve(root, rel || '.');
     if (abs !== root && !abs.startsWith(root + path.sep)) return null;
+    // Defend against symlink escape (e.g. project/link -> /etc): path.resolve does
+    // NOT follow symlinks, so resolve the real path of the deepest existing ancestor
+    // and require it to still live under the real project root.
+    try {
+      const realRoot = fs.realpathSync(root);
+      let probe = abs;
+      while (!fs.existsSync(probe) && probe !== path.dirname(probe)) probe = path.dirname(probe);
+      const real = fs.realpathSync(probe);
+      if (real !== realRoot && !real.startsWith(realRoot + path.sep)) return null;
+    } catch { return null; }
     return abs;
   }
 
@@ -202,7 +212,12 @@ export class Files {
         if (content.indexOf(NUL) !== -1 || !content.includes(query)) continue;
         const count = content.split(query).length - 1;
         const next = content.split(query).join(replacement == null ? '' : replacement);
-        try { fs.writeFileSync(childAbs, next); } catch { continue; }
+        // Atomic per-file write: a process killed mid-loop should never leave a
+        // truncated/half-written file. Write a sibling temp then rename over it
+        // (rename is atomic on the same filesystem).
+        const tmp = `${childAbs}.tmp-${process.pid}`;
+        try { fs.writeFileSync(tmp, next); fs.renameSync(tmp, childAbs); }
+        catch { try { fs.rmSync(tmp, { force: true }); } catch { /* ignore */ } continue; }
         filesChanged++; replacements += count; files.push({ path: childRel, count });
       }
     };

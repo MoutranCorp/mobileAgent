@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import { EngineAdapter } from './base.js';
 import { JsonLineBuffer } from '../jsonl.js';
 import { PermissionBridge } from '../mcp/permission-bridge.js';
@@ -10,6 +11,10 @@ import { EventType, StatusState, CommandType } from '../protocol.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PERMISSION_SERVER = path.join(__dirname, '..', 'mcp', 'permission-server.js');
+
+// How long an approval may wait on the UI before we fail-closed (auto-deny) so a
+// closed tab / dropped socket can't block the CLI's permission-server forever.
+const PERMISSION_TIMEOUT_MS = Number(process.env.BROKER_PERMISSION_TIMEOUT_MS) || 180000;
 
 // Permission modes that gate via our MCP permission-prompt tool (UI approval).
 // The other modes (acceptEdits/plan/bypassPermissions/auto/dontAsk) pass straight
@@ -75,7 +80,12 @@ export class ClaudeCodeEngine extends EngineAdapter {
 
     if (gated) {
       // Proper approval flow via the permission MCP tool (UI approve/deny).
+      // A per-engine shared secret authenticates the permission-server to the
+      // bridge, so another local process can't inject allow/deny decisions or read
+      // pending tool inputs over the loopback (matters on shared-localhost Android).
+      const ipcToken = crypto.randomBytes(16).toString('hex');
       this.bridge = new PermissionBridge({
+        token: ipcToken,
         onRequest: (req) => this._onPermission(req),
         log: this.log,
       });
@@ -85,7 +95,7 @@ export class ClaudeCodeEngine extends EngineAdapter {
           broker: {
             command: process.execPath, // node
             args: [PERMISSION_SERVER],
-            env: { BROKER_IPC_PORT: String(port), BROKER_IPC_HOST: '127.0.0.1' },
+            env: { BROKER_IPC_PORT: String(port), BROKER_IPC_HOST: '127.0.0.1', BROKER_IPC_TOKEN: ipcToken },
           },
         },
       });
@@ -134,6 +144,11 @@ export class ClaudeCodeEngine extends EngineAdapter {
     });
 
     this.proc.stdout.on('data', (chunk) => this._onStdout(chunk));
+    // Process any final line that lacked a trailing newline (legal in stream-json).
+    this.proc.stdout.on('end', () => {
+      const tail = this.buffer.flush((err, raw) => this.log(`stream-json parse error (flush): ${err.message} :: ${raw.slice(0, 200)}`));
+      for (const msg of tail) this._handleStreamMessage(msg);
+    });
     this.proc.stderr.on('data', (chunk) => {
       const text = chunk.toString('utf8');
       this.log(`[claude stderr] ${text.trimEnd()}`);
@@ -141,10 +156,25 @@ export class ClaudeCodeEngine extends EngineAdapter {
 
     this.proc.on('exit', (code, signal) => {
       this.log(`claude exited code=${code} signal=${signal}`);
+      // A crash/exit bypasses _teardown — flush any in-flight approvals so the
+      // permission-server (and the UI) never hang waiting on a dead engine.
+      this._failPendingPermissions(`engine exited (${code ?? signal})`);
+      try { this.bridge?.stop(); } catch { /* ignore */ }
       this.emit('engine_state', 'stopped');
       this.state = 'stopped';
       this.emitStatus(StatusState.IDLE, `engine exited (${code ?? signal})`);
     });
+  }
+
+  /** Resolve every pending approval as a denial (engine gone / timed out) so no
+   *  permission Promise can hang the CLI's permission-server forever. */
+  _failPendingPermissions(reason) {
+    for (const [id, p] of this._pendingPermissions) {
+      if (p.timer) clearTimeout(p.timer);
+      try { this.emitEvent(EventType.PERMISSION_RESOLVED, { id, decision: 'deny' }); } catch { /* ignore */ }
+      p.resolve({ decision: 'deny', message: reason });
+    }
+    this._pendingPermissions.clear();
   }
 
   _onStdout(chunk) {
@@ -163,10 +193,16 @@ export class ClaudeCodeEngine extends EngineAdapter {
       case 'system':
         this._handleSystem(msg);
         break;
-      case 'assistant':
+      case 'assistant': {
         this._handleAssistant(msg.message, msg.parent_tool_use_id || this._lastParent);
-        this.emitStatus(StatusState.THINKING);
+        // Only fall back to THINKING for a message that actually had text/thinking —
+        // a tool-only message already set RUNNING via _emitToolCall and THINKING here
+        // would clobber it (status flicker).
+        const c = msg.message?.content;
+        const hadProse = Array.isArray(c) && c.some((b) => b.type === 'text' || b.type === 'thinking' || b.type === 'redacted_thinking');
+        if (hadProse) this.emitStatus(StatusState.THINKING);
         break;
+      }
       case 'user':
         this._handleUser(msg.message, msg.parent_tool_use_id || this._lastParent);
         break;
@@ -304,6 +340,9 @@ export class ClaudeCodeEngine extends EngineAdapter {
         // nested under a subagent (parentToolUseId set) is internal relay, not a
         // prompt — emitting it as USER_ECHO renders agent/relay text as a fake user
         // bubble. Guard it so only real prompts echo into the transcript.
+        // Drop the --replay-user-messages echo of the prompt we already emitted up
+        // front in _writeUser (else the prompt appears twice / misordered on reload).
+        if (this._pendingEcho != null && block.text === this._pendingEcho) { this._pendingEcho = null; continue; }
         this.emitEvent(EventType.USER_ECHO, { text: block.text });
       }
     }
@@ -358,6 +397,10 @@ export class ClaudeCodeEngine extends EngineAdapter {
   }
 
   _handleResult(msg) {
+    // The turn is over: tool_use→result mapping is done, so clear the id→name map
+    // (it otherwise grows unbounded across a long session). Done at result, not
+    // message_start, so a within-turn tool_result still resolves its name.
+    this._toolNames.clear();
     this.emitEvent(EventType.RESULT, {
       subtype: msg.subtype,
       durationMs: msg.duration_ms,
@@ -427,6 +470,11 @@ export class ClaudeCodeEngine extends EngineAdapter {
     if (!content.length) content.push({ type: 'text', text: ' ' });
     const line = JSON.stringify({ type: 'user', message: { role: 'user', content } });
     this.proc.stdin.write(line + '\n');
+    // Echo the prompt NOW, up front, so it records ABOVE the agent's response and
+    // replays in order. --replay-user-messages echoes it back too, but only AFTER
+    // the model has begun thinking (mid-stream), which would sort the prompt below
+    // the first thinking trace on reload. We drop that late duplicate in _handleUser.
+    if (text) { this._pendingEcho = text; this.emitEvent(EventType.USER_ECHO, { text }); }
     this.emitStatus(StatusState.THINKING);
   }
 
@@ -462,7 +510,18 @@ export class ClaudeCodeEngine extends EngineAdapter {
   _onPermission({ toolName, input }) {
     const id = `perm-${++this._permSeq}`;
     return new Promise((resolve) => {
-      this._pendingPermissions.set(id, { resolve, input });
+      // Fail-closed timeout: if the UI never answers (tab closed, socket dropped),
+      // auto-deny after PERMISSION_TIMEOUT_MS so the CLI's permission-server isn't
+      // blocked indefinitely.
+      const timer = setTimeout(() => {
+        if (!this._pendingPermissions.has(id)) return;
+        this._pendingPermissions.delete(id);
+        try { this.emitEvent(EventType.PERMISSION_RESOLVED, { id, decision: 'deny' }); } catch { /* ignore */ }
+        resolve({ decision: 'deny', message: 'Approval timed out' });
+        this.emitStatus(StatusState.THINKING);
+      }, PERMISSION_TIMEOUT_MS);
+      timer.unref?.();
+      this._pendingPermissions.set(id, { resolve, input, timer });
       this.emitEvent(EventType.PERMISSION_REQUEST, {
         id,
         action: classifyTool(toolName),
@@ -477,6 +536,7 @@ export class ClaudeCodeEngine extends EngineAdapter {
   respondPermission(id, decision, extra = {}) {
     const pending = this._pendingPermissions.get(id);
     if (!pending) return;
+    if (pending.timer) clearTimeout(pending.timer);
     this._pendingPermissions.delete(id);
     this.emitEvent(EventType.PERMISSION_RESOLVED, { id, decision });
     if (decision === 'allow' || decision === 'approve') {
@@ -488,10 +548,7 @@ export class ClaudeCodeEngine extends EngineAdapter {
   }
 
   async _teardown() {
-    for (const p of this._pendingPermissions.values()) {
-      p.resolve({ decision: 'deny', message: 'Engine stopped' });
-    }
-    this._pendingPermissions.clear();
+    this._failPendingPermissions('Engine stopped');
     if (this.proc) {
       try {
         this.proc.stdin.end();
@@ -518,7 +575,13 @@ export class ClaudeCodeEngine extends EngineAdapter {
 
 function windowForModel(model) {
   if (!model) return 200000;
-  return /\[1m\]|1m|-1m/i.test(model) ? 1000000 : 200000;
+  const m = String(model).toLowerCase();
+  // Match the 1M-context variants by an explicit, anchored token — the old
+  // /1m/ substring also matched incidental "1m" anywhere in an id. The marker
+  // appears as a "[1m]" suffix or a "-1m" segment on the model name.
+  if (/\[1m\]|(^|[^a-z0-9])1m($|[^a-z0-9])/.test(m)) return 1000000;
+  if (/(^|[^a-z0-9])500k($|[^a-z0-9])/.test(m)) return 500000;
+  return 200000;
 }
 
 function normalizeToolOutput(content) {

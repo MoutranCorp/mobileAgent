@@ -77,11 +77,12 @@
     if (before == null && after == null) {
       return `<pre>${escapeHtml(JSON.stringify(input, null, 2))}</pre>`;
     }
-    // Size guard: the LCS table is O(m*n); a whole-file diff of a large file would
-    // freeze the tab. Above a threshold, show a plain view instead of a diff.
+    // Size guard: the LCS table is O(m*n) Int32 cells; even ~1.5M cells (~6MB) is a
+    // GC spike mid-stream on a phone. Keep the table well under a megabyte — above
+    // ~400k cells (or 3000 total lines) show a plain view instead of a diff.
     const aLines = (before || '').split('\n').length;
     const bLines = (after || '').split('\n').length;
-    if (aLines * bLines > 1500000 || aLines + bLines > 6000) {
+    if (aLines * bLines > 400000 || aLines + bLines > 3000) {
       const text = (after || before || '').split('\n').slice(0, 400).join('\n');
       return `<div class="diff"><div class="meta">large file — showing first 400 lines</div><pre>${escapeHtml(text)}</pre></div>`;
     }

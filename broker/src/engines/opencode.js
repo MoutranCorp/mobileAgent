@@ -29,7 +29,10 @@ export class OpencodeEngine extends EngineAdapter {
   }
 
   async _spawn() {
-    const port = this.profile?.serverPort || 4096;
+    const port = this.profile?.serverPort || Number(process.env.OPENCODE_PORT) || 4096;
+    // If something is already serving on this port it may be a stale opencode (or a
+    // foreign server we'd mistakenly drive). Warn so the conflict is diagnosable.
+    if (await portInUse(port)) this.log(`[opencode] warning: port ${port} already in use — reusing it; set OPENCODE_PORT to avoid a conflict`);
     const env = { ...process.env, ...this.env };
     const args = ['serve', '--port', String(port), '--hostname', '127.0.0.1'];
     this.log(`spawning: ${this.bin} ${args.join(' ')}`);
@@ -48,8 +51,10 @@ export class OpencodeEngine extends EngineAdapter {
 
     this.baseUrl = `http://127.0.0.1:${port}`;
     await this._waitForServer();
+    // Subscribe BEFORE opening the session (and await the connection) so events
+    // emitted during session creation aren't missed by a late subscriber.
+    await this._subscribeEvents();
     await this._openSession();
-    this._subscribeEvents();
   }
 
   async _waitForServer(timeoutMs = 15000) {
@@ -81,31 +86,33 @@ export class OpencodeEngine extends EngineAdapter {
   }
 
   async _subscribeEvents() {
-    // SSE stream of all events (opencode: GET /event).
+    // SSE stream of all events (opencode: GET /event). Await only the CONNECTION
+    // here; consume the stream in the background so the caller can proceed once
+    // it's established (without blocking forever on the read loop).
     this._abort = new AbortController();
-    try {
-      const r = await fetch(`${this.baseUrl}/event`, {
-        headers: { accept: 'text/event-stream' },
-        signal: this._abort.signal,
-      });
-      if (!r.body) return;
-      const reader = r.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        let idx;
-        while ((idx = buf.indexOf('\n\n')) !== -1) {
-          const frame = buf.slice(0, idx);
-          buf = buf.slice(idx + 2);
-          this._onSseFrame(frame);
-        }
+    const r = await fetch(`${this.baseUrl}/event`, {
+      headers: { accept: 'text/event-stream' },
+      signal: this._abort.signal,
+    });
+    if (!r.body) return;
+    this._readSse(r.body).catch((e) => { if (e.name !== 'AbortError') this.log(`SSE error: ${e.message}`); });
+  }
+
+  async _readSse(body) {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) !== -1) {
+        const frame = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        this._onSseFrame(frame);
       }
-    } catch (e) {
-      if (e.name !== 'AbortError') this.log(`SSE error: ${e.message}`);
     }
   }
 
@@ -181,7 +188,7 @@ export class OpencodeEngine extends EngineAdapter {
     this.emitEvent(EventType.USER_ECHO, { text: cmd.text });
     this.emitStatus(StatusState.THINKING);
     try {
-      await fetch(`${this.baseUrl}/session/${this.opencodeSessionId}/message`, {
+      const r = await fetch(`${this.baseUrl}/session/${this.opencodeSessionId}/message`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -189,6 +196,8 @@ export class OpencodeEngine extends EngineAdapter {
           model: this.model || undefined,
         }),
       });
+      // A non-2xx POST silently looked like success before — surface it.
+      if (!r.ok) this.emitError(`opencode send failed: HTTP ${r.status} ${r.statusText || ''}`.trim());
     } catch (e) {
       this.emitError(`opencode send failed: ${e.message}`);
     }
@@ -216,14 +225,29 @@ export class OpencodeEngine extends EngineAdapter {
         /* ignore */
       }
     }
-    if (this.proc) {
-      try {
-        this.proc.kill('SIGTERM');
-      } catch {
-        /* ignore */
-      }
-      this.proc = null;
-    }
+    const p = this.proc;
+    this.proc = null;
+    if (!p) return;
+    // Await the process actually exiting (SIGTERM, then SIGKILL after a grace
+    // window) — returning before it dies left the port bound, so the next spawn
+    // bound the wrong/old server.
+    await new Promise((resolve) => {
+      let settled = false;
+      const finish = () => { if (!settled) { settled = true; clearTimeout(t); resolve(); } };
+      p.once('exit', finish);
+      try { p.kill('SIGTERM'); } catch { finish(); }
+      const t = setTimeout(() => { try { p.kill('SIGKILL'); } catch { /* ignore */ } finish(); }, 3000);
+    });
+  }
+}
+
+/** Best-effort check: does something already answer on 127.0.0.1:<port>? */
+async function portInUse(port) {
+  try {
+    await fetch(`http://127.0.0.1:${port}/app`, { method: 'GET', signal: AbortSignal.timeout(500) });
+    return true; // got a response -> something is listening
+  } catch {
+    return false; // refused/timed out -> free (or unreachable)
   }
 }
 
