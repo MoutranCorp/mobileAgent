@@ -104,11 +104,13 @@ class ProotRuntime(private val ctx: Context) {
             log("Reusing cached rootfs.tar from a previous attempt")
         }
 
-        log("Extracting rootfs (fake-root)…")
-        // Extract under proot --root-id so device nodes / chown / setuid succeed
-        // without real root; toybox tar does the actual unpacking.
+        log("Extracting rootfs…")
+        // The linuxcontainers Debian image has NO device nodes (containers get /dev
+        // from the runtime), so plain tar works — no proot/fake-root needed. chown-
+        // to-root / setuid bits fail harmlessly for our app uid (proot --root-id
+        // fakes uid 0 at run time anyway); we verify by sentinel, not exit code.
         val tar = firstExisting("/system/bin/tar", "/system/xbin/tar") ?: run { log("ERROR: no system tar"); return false }
-        val argv = prootHostBase() + listOf(tar, "-x", "-f", tarFile.absolutePath, "-C", rootfs.absolutePath)
+        val argv = listOf(tar, "-x", "-f", tarFile.absolutePath, "-C", rootfs.absolutePath)
         val ok = runProcess(argv, log)
         // Verify by sentinel rather than trusting the exit code (device-node mknod /
         // setuid bits fail harmlessly for a non-root extractor).
