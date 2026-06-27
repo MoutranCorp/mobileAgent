@@ -17,6 +17,12 @@
     <!-- Required for native notifications to appear on Android 13+ (declared so a
          targetSdk-28 install pre-grants it). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Browse the phone's shared storage in the File Manager + bind it into the
+         Debian guest. MANAGE_EXTERNAL_STORAGE gives broad access; legacy R/W is the
+         targetSdk-28 fallback. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
 
     <application
         android:name=".App"

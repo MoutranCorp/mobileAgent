@@ -58,8 +58,15 @@ unpack_deb "$SHMEM_DEB"
 proot_bin=$(find "$work/root" -type f -name proot | head -1)
 [ -n "$proot_bin" ] || { echo "✗ proot binary not found in .deb" >&2; exit 1; }
 
-rm -rf "$OUT_DIR"; mkdir -p "$OUT_DIR/lib"
+rm -rf "$OUT_DIR"; mkdir -p "$OUT_DIR/lib" "$OUT_DIR/libexec/proot"
 cp "$proot_bin" "$OUT_DIR/proot"; chmod +x "$OUT_DIR/proot"
+
+# proot needs its loader helper(s) (PROOT_LOADER) — without them it can't set up
+# the ptrace sandbox.
+for ldr in loader loader32; do
+  found=$(find "$work/root" -path "*/libexec/proot/$ldr" | head -1)
+  [ -n "$found" ] && { cp "$found" "$OUT_DIR/libexec/proot/$ldr"; chmod +x "$OUT_DIR/libexec/proot/$ldr"; echo "  loader: $ldr"; }
+done
 
 # Copy proot's NEEDED libs (except libc.so → Android Bionic) out of the unpacked
 # .debs. The lib filename inside Termux pkgs matches the SONAME.
