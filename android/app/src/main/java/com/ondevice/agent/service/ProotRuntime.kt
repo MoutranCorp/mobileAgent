@@ -125,18 +125,17 @@ class ProotRuntime(private val ctx: Context) {
      *  and skipping device nodes. Returns true if any regular file was written. */
     private fun extractTarXz(xzFile: File, dest: File, log: (String) -> Unit): Boolean {
         var files = 0; var links = 0; var skipped = 0
-        val destPath = dest.canonicalPath
         TarArchiveInputStream(XZCompressorInputStream(xzFile.inputStream().buffered())).use { tin ->
             while (true) {
                 val e = tin.nextTarEntry ?: break
                 val name = e.name.removePrefix("./").trimStart('/')
                 if (name.isEmpty() || name == ".") continue
+                // Guard against path traversal LEXICALLY — reject any '..' component.
+                // (Don't use canonicalPath: it resolves symlinks, so legitimate
+                // absolute symlinks — systemd masks → /dev/null, alternatives →
+                // /usr/bin/*, etc. — would be false-flagged and dropped.)
+                if (name.split('/').any { it == ".." }) { log("  skip unsafe path: $name"); skipped++; continue }
                 val out = File(dest, name)
-                // Guard against path traversal (../) escaping the rootfs.
-                val cp = out.canonicalPath
-                if (cp != destPath && !cp.startsWith(destPath + File.separator)) {
-                    log("  skip unsafe path: $name"); skipped++; continue
-                }
                 when {
                     e.isDirectory -> out.mkdirs()
                     e.isSymbolicLink -> {
@@ -214,6 +213,9 @@ class ProotRuntime(private val ctx: Context) {
 
     /** Install toolchain + the bundled broker into the guest. One-time. */
     fun provision(log: (String) -> Unit): Boolean {
+        // Idempotent — ensures the apt-no-sandbox + resolv.conf config is present even
+        // on a rootfs extracted by an older build (before that config was written).
+        writeGuestConfig()
         stageBrokerIntoGuest(log)
         val script = """
             set -e
@@ -311,6 +313,14 @@ class ProotRuntime(private val ctx: Context) {
             File(rootfs, "etc").mkdirs()
             File(rootfs, "etc/resolv.conf").writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
             File(rootfs, "etc/hosts").writeText("127.0.0.1 localhost\n::1 localhost\n")
+            // apt's http/https methods drop privileges to the `_apt` user via
+            // setresuid(2), which proot can't honor (Operation not permitted) — the
+            // download method then dies. Tell apt not to sandbox (proot-distro does
+            // the same). Check-Valid-Until off tolerates a clock skewed in the guest.
+            File(rootfs, "etc/apt/apt.conf.d").mkdirs()
+            File(rootfs, "etc/apt/apt.conf.d/99proot").writeText(
+                "APT::Sandbox::User \"root\";\nAcquire::Check-Valid-Until \"false\";\n"
+            )
         }
     }
 
