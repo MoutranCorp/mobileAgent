@@ -46,28 +46,39 @@ object ClaudeLogin {
                 proc = p
                 val reader = p.inputStream.bufferedReader()
                 val buf = CharArray(4096)
+                var logged = 0
                 while (true) {
                     val n = reader.read(buf); if (n < 0) break
                     out.append(buf, 0, n)
+                    val clean = stripAnsi(out.toString())
+                    // Stream new output to the runtime log (tokens redacted) so a stall is
+                    // diagnosable.
+                    if (clean.length > logged) {
+                        val chunk = clean.substring(logged).trim()
+                        if (chunk.isNotEmpty()) RuntimeController.log("[login] " + TOKEN_RE.replace(chunk, "[token]"))
+                        logged = clean.length
+                    }
                     if (_state.value.url == null) {
-                        val url = URL_RE.find(stripAnsi(out.toString()))?.value
-                        if (url != null) {
+                        URL_RE.find(clean)?.value?.let { url ->
                             RuntimeController.log("[login] auth url ready")
                             _state.value = State(Phase.AWAITING_CODE, url, "Open the link, approve, then paste the code below.")
                         }
                     }
+                    // Detect success from output too (claude may not exit promptly under
+                    // `script`): a printed token or an explicit success line.
+                    if (markSuccess(ctx, clean)) { runCatching { p.destroyForcibly() }; break }
                 }
                 val code = runCatching { p.waitFor() }.getOrDefault(-1)
                 proc = null
                 val text = stripAnsi(out.toString())
-                // setup-token may print a long-lived token; persist it as a backstop.
-                TOKEN_RE.find(text)?.value?.let { runCatching { KeystoreSecrets(ctx).put("CLAUDE_CODE_OAUTH_TOKEN", it) } }
-                val creds = File(rt.rootfs, "root/.claude/.credentials.json").exists()
-                val ok = code == 0 || creds || TOKEN_RE.containsMatchIn(text) || text.contains("success", true)
-                _state.value = if (ok)
-                    State(Phase.DONE, null, "Signed in ✓  Open the Agent tab and send a message.")
-                else
-                    State(Phase.ERROR, null, "Sign-in didn't complete (exit $code). Try again.")
+                if (_state.value.phase != Phase.DONE) {
+                    val creds = File(rt.rootfs, "root/.claude/.credentials.json").exists()
+                    if (markSuccess(ctx, text) || creds || code == 0) {
+                        _state.value = State(Phase.DONE, null, "Signed in ✓  Open the Agent tab and send a message.")
+                    } else {
+                        _state.value = State(Phase.ERROR, null, "Sign-in didn't complete (exit $code). Check the runtime log, then try again.")
+                    }
+                }
             } catch (t: Throwable) {
                 proc = null
                 RuntimeController.log("[login] error: ${t.message}")
@@ -83,10 +94,33 @@ object ClaudeLogin {
         _state.value = _state.value.copy(phase = Phase.VERIFYING, message = "Submitting code…")
         Thread {
             runCatching {
-                p.outputStream.write((code + "\n").toByteArray(Charsets.UTF_8))
+                // In a PTY, Enter is CR (\r), not LF — claude's raw-mode (ink) prompt only
+                // submits on CR; an \n leaves the code unsubmitted and it hangs. (A PTY's
+                // ICRNL also maps CR→NL for canonical readers, so CR is safe either way.)
+                p.outputStream.write((code + "\r").toByteArray(Charsets.UTF_8))
                 p.outputStream.flush()
             }.onFailure { RuntimeController.log("[login] submit error: ${it.message}") }
         }.apply { isDaemon = true; start() }
+        // Watchdog: never leave the UI stuck on "Submitting…".
+        Thread {
+            Thread.sleep(40_000)
+            if (_state.value.phase == Phase.VERIFYING) {
+                RuntimeController.log("[login] no completion 40s after code")
+                _state.value = State(Phase.ERROR, null, "No response after the code — see the runtime log. The code may be wrong/expired; try again.")
+                runCatching { proc?.destroyForcibly() }; proc = null
+            }
+        }.apply { isDaemon = true; start() }
+    }
+
+    /** Persist any printed token and flip to DONE if the output shows success. */
+    private fun markSuccess(ctx: Context, text: String): Boolean {
+        val tok = TOKEN_RE.find(text)?.value
+        val ok = tok != null || SUCCESS_RE.containsMatchIn(text)
+        if (ok) {
+            tok?.let { runCatching { KeystoreSecrets(ctx).put("CLAUDE_CODE_OAUTH_TOKEN", it) } }
+            _state.value = State(Phase.DONE, null, "Signed in ✓  Open the Agent tab and send a message.")
+        }
+        return ok
     }
 
     fun cancel() {
@@ -109,4 +143,5 @@ object ClaudeLogin {
 
     private val URL_RE = Regex("https://[A-Za-z0-9._~:/?#\\[\\]@!$&'()*+,;=%-]*oauth[A-Za-z0-9._~:/?#\\[\\]@!$&'()*+,;=%-]*")
     private val TOKEN_RE = Regex("sk-ant-[A-Za-z0-9_-]{20,}")
+    private val SUCCESS_RE = Regex("(?i)(login successful|logged in|successfully|authenticat|credentials? (saved|stored|written))")
 }
