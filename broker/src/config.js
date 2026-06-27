@@ -58,6 +58,9 @@ export function loadConfig(argv = process.argv.slice(2)) {
     defaultProfile,
     // Where Metro's base port starts; each project gets base + offset.
     metroBasePort: Number(process.env.METRO_BASE_PORT || 8081),
+    // Memory-pressure threshold (%) above which idle background engines are evicted.
+    // Configurable because the right value differs hugely between a phone and a PC.
+    memEvictPct: Number(process.env.BROKER_MEM_EVICT_PCT || 88),
     // Path to the claude binary (overridable for odd installs).
     claudeBin: process.env.CLAUDE_BIN || 'claude',
     // Default permission mode for the claude-code engine. Bypass-all by default

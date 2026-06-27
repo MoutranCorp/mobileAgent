@@ -199,8 +199,12 @@ export class BrokerServer {
     const IDLE_TTL_MS = 5 * 60 * 1000;
     let sample;
     try { sample = sampleResources(this.session.liveSessions()); } catch { return null; }
+    const lowMemPct = this.config.memEvictPct;
+    // Expose the active threshold + current usage so the UI can show how close we
+    // are to evicting (it was a hidden 88% constant before).
+    if (sample.mem) sample.mem.evictThreshold = lowMemPct;
     try { this.broadcast(event(EventType.RESOURCES, sample)); } catch { /* ignore */ }
-    for (const key of evictionCandidates(sample)) this.session.stopEngineKeepTranscript(key);
+    for (const key of evictionCandidates(sample, { lowMemPct })) this.session.stopEngineKeepTranscript(key);
     for (const s of sample.engines) {
       if (s.status === 'idle' && !s.pinned && !s.active && s.idleMs >= IDLE_TTL_MS) {
         this.session.stopEngineKeepTranscript(s.key);
