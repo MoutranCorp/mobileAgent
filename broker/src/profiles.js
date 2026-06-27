@@ -87,7 +87,7 @@ export class ProfileStore {
 
   _save(profiles) {
     try {
-      fs.writeFileSync(this.file, JSON.stringify(profiles, null, 2));
+      fs.writeFileSync(this.file, JSON.stringify(profiles, null, 2), { mode: 0o600 });
     } catch {
       /* state dir might be read-only in some setups */
     }

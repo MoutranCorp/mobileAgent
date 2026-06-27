@@ -62,10 +62,20 @@ export class ClaudeConfig {
 
   /** Delete a session .jsonl, most precisely by its literal encoded folder. */
   deleteSession(sessionId, { projectId = null, projectDir = null } = {}) {
+    // Guard against path traversal in caller-supplied values: a session id is a
+    // UUID-ish token; an encoded projectDir is a single folder name (Claude encodes
+    // separators as '-'), so neither may contain path separators or '..'.
+    if (!/^[A-Za-z0-9_-]+$/.test(String(sessionId))) return { error: 'invalid session id' };
+    if (projectDir != null && (/[\\/]/.test(String(projectDir)) || String(projectDir).includes('..'))) {
+      return { error: 'invalid project dir' };
+    }
     let base = null;
     if (projectDir) base = path.join(os.homedir(), '.claude', 'projects', projectDir);
     else base = this._dirForProject(projectId) || this._sessionsDir();
     const file = path.join(base, `${sessionId}.jsonl`);
+    // Final containment check: never delete outside ~/.claude/.
+    const claudeRoot = path.join(os.homedir(), '.claude');
+    if (!path.resolve(file).startsWith(claudeRoot + path.sep)) return { error: 'refused: outside the claude dir' };
     try {
       if (!fs.existsSync(file)) return { error: 'session file not found' };
       fs.rmSync(file, { force: true });

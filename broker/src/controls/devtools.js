@@ -94,43 +94,40 @@ export class DevTools {
     if (!project) return this._err('No active project for git.');
     const cwd = project.dir;
     const channel = 'git';
-    let cmd;
+    // Run git with an explicit argv (NO shell) so caller/agent-supplied values
+    // (paths, messages, URLs) can never be interpreted as shell syntax.
+    const git = (a) => this.runner.runArgs(channel, 'git', a, { cwd });
+    let res;
     switch (op) {
-      case 'init':
-        cmd = 'git init';
-        break;
-      case 'status':
-        cmd = 'git status --short --branch';
-        break;
-      case 'diff':
-        cmd = args.staged ? 'git diff --cached' : 'git diff';
-        break;
-      case 'log':
-        cmd = `git log --oneline -n ${Number(args.n) || 20}`;
-        break;
-      case 'add':
-        cmd = `git add ${args.paths ? quote(args.paths) : '-A'}`;
-        break;
-      case 'discard':
-        // Revert a tracked file to HEAD, or remove it if it's untracked. Scoped
-        // to the single path so nothing else is touched.
-        cmd = `git checkout HEAD -- ${quote(args.path)}; git clean -fq -- ${quote(args.path)}`;
-        break;
-      case 'commit': {
-        const msg = (args.message || 'Update from on-device agent').replace(/"/g, '\\"');
-        cmd = `git add -A && git commit -m "${msg}"`;
+      case 'init': res = await git(['init']); break;
+      case 'status': res = await git(['status', '--short', '--branch']); break;
+      case 'diff': res = await git(args.staged ? ['diff', '--cached'] : ['diff']); break;
+      case 'log': res = await git(['log', '--oneline', '-n', String(Number(args.n) || 20)]); break;
+      case 'add': {
+        const paths = Array.isArray(args.paths) ? args.paths : (args.paths ? [String(args.paths)] : null);
+        res = await git(['add', ...(paths || ['-A'])]);
         break;
       }
-      case 'push':
-        cmd = `git push ${args.remote || 'origin'} ${args.branch || 'HEAD'}`.trim();
+      case 'discard': {
+        // Revert a tracked file to HEAD, then remove it if untracked. Scoped to the
+        // single path so nothing else is touched.
+        const co = await git(['checkout', 'HEAD', '--', String(args.path)]);
+        const cl = await git(['clean', '-fq', '--', String(args.path)]);
+        res = { code: co.code || cl.code, stdout: (co.stdout || '') + (cl.stdout || ''), stderr: (co.stderr || '') + (cl.stderr || '') };
         break;
-      case 'remote-add':
-        cmd = `git remote add ${args.name || 'origin'} ${quote(args.url)}`;
+      }
+      case 'commit': {
+        const msg = args.message || 'Update from on-device agent';
+        const add = await git(['add', '-A']);
+        const ci = await git(['commit', '-m', msg]);
+        res = { code: add.code || ci.code, stdout: (add.stdout || '') + (ci.stdout || ''), stderr: (add.stderr || '') + (ci.stderr || '') };
         break;
+      }
+      case 'push': res = await git(['push', args.remote || 'origin', args.branch || 'HEAD']); break;
+      case 'remote-add': res = await git(['remote', 'add', args.name || 'origin', String(args.url)]); break;
       default:
         return this._err(`Unknown git op: ${op}`);
     }
-    const res = await this.runner.run(channel, cmd, { cwd });
     this.emit(event(EventType.GIT_STATUS, { op, code: res.code, output: res.stdout || res.stderr }));
     return res;
   }
@@ -188,10 +185,10 @@ export class DevTools {
     if (!project) return this._err('No active project to push.');
     const cwd = project.dir;
     if (commit) {
-      const msg = (message || 'Update from on-device agent').replace(/"/g, '\\"');
-      await this.runner.run('github', `git add -A && git commit -m "${msg}"`, { cwd });
+      await this.runner.runArgs('github', 'git', ['add', '-A'], { cwd });
+      await this.runner.runArgs('github', 'git', ['commit', '-m', message || 'Update from on-device agent'], { cwd });
     }
-    const res = await this.runner.run('github', 'git push -u origin HEAD', { cwd });
+    const res = await this.runner.runArgs('github', 'git', ['push', '-u', 'origin', 'HEAD'], { cwd });
     this.emit(event(EventType.GITHUB, {
       op: 'push', ok: res.code === 0, message: (res.stderr || res.stdout || '').trim(),
     }));
@@ -203,12 +200,11 @@ export class DevTools {
     if (!project) return this._err('No active project for PR.');
     const cwd = project.dir;
     // Push first so the branch exists on the remote.
-    await this.runner.run('github', 'git push -u origin HEAD', { cwd });
-    const t = (title || '').replace(/"/g, '\\"');
-    const b = (body || '').replace(/"/g, '\\"');
-    const flags = title ? `--title "${t}" --body "${b}"` : '--fill';
-    const baseFlag = base ? ` --base ${base}` : '';
-    const res = await this.runner.run('github', `gh pr create ${flags}${baseFlag}`, { cwd });
+    await this.runner.runArgs('github', 'git', ['push', '-u', 'origin', 'HEAD'], { cwd });
+    const prArgs = ['pr', 'create'];
+    if (title) prArgs.push('--title', title, '--body', body || ''); else prArgs.push('--fill');
+    if (base) prArgs.push('--base', base);
+    const res = await this.runner.runArgs('github', 'gh', prArgs, { cwd });
     const url = (res.stdout || '').match(/https?:\/\/\S+/)?.[0] || null;
     this.emit(event(EventType.GITHUB, {
       op: 'pr', ok: res.code === 0, url,
@@ -222,8 +218,8 @@ export class DevTools {
     const project = this._resolveProject(projectId);
     if (!project) return this._err('No active project.');
     const cwd = project.dir;
-    const res = await this.runner.run('github',
-      `git remote add ${name} ${quote(url)} || git remote set-url ${name} ${quote(url)}`, { cwd });
+    let res = await this.runner.runArgs('github', 'git', ['remote', 'add', name, String(url)], { cwd });
+    if (res.code !== 0) res = await this.runner.runArgs('github', 'git', ['remote', 'set-url', name, String(url)], { cwd });
     this.emit(event(EventType.GITHUB, { op: 'remote', ok: res.code === 0, message: `origin → ${url}` }));
     return res;
   }
@@ -273,9 +269,4 @@ export class DevTools {
     this.emit(event(EventType.ERROR, { message }));
     return { error: message };
   }
-}
-
-function quote(s) {
-  if (s == null) return '';
-  return `"${String(s).replace(/"/g, '\\"')}"`;
 }
