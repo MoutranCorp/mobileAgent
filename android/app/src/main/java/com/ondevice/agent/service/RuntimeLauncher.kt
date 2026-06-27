@@ -171,15 +171,11 @@ class RuntimeLauncher(private val ctx: Context) {
 
     fun stop() {
         polling = false // tell the health poller to exit (was while(true), never stopped)
-        // destroyForcibly (SIGKILL) and, where ProcessHandle is available (API 26+),
-        // also kill descendants so the proot guest + Node broker don't orphan.
-        runCatching {
-            val p = process
-            if (p != null) {
-                runCatching { p.toHandle().descendants().forEach { it.destroyForcibly() } }
-                p.destroyForcibly()
-            }
-        }
+        // SIGKILL the launcher process. Android's java.lang.Process exposes neither
+        // ProcessHandle.descendants() nor pid(), so we can't portably reap the proot
+        // subtree from here; destroyForcibly() is still stronger than the previous
+        // SIGTERM, and proot forwards the kill to its tracees in the common case.
+        runCatching { process?.destroyForcibly() }
         process = null
         if (RuntimeController.state.value != RuntimeState.BOOTSTRAP_MISSING) {
             RuntimeController.setState(RuntimeState.STOPPED, "stopped")
