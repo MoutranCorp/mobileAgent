@@ -91,7 +91,8 @@ class RuntimeLauncher(private val ctx: Context) {
         )
     }
 
-    /** Run the one-time provisioning script (proot-distro install debian + toolchain). */
+    /** Run the one-time provisioning script (proot-distro install debian + toolchain
+     *  + deliver the bundled broker into the guest). */
     private fun provisionGuest(bm: BootstrapManager): Boolean {
         val sh = File(bm.usrDir, "bin/sh")
         val script = File(bm.scriptsDir, "setup-guest.sh")
@@ -99,9 +100,15 @@ class RuntimeLauncher(private val ctx: Context) {
             RuntimeController.log("[runtime] missing sh or setup-guest.sh — cannot provision")
             return false
         }
+        // Stage the bundled broker so setup-guest.sh can install it into the guest —
+        // no separate git clone needed (the self-contained, no-Termux route).
+        val brokerTar = runCatching { bm.stageBrokerTarball() }.getOrNull()
+        if (brokerTar != null) RuntimeController.log("[runtime] bundled broker staged at ${brokerTar.name}")
+        else RuntimeController.log("[runtime] no bundled broker — setup-guest will expect ~/agent-broker to exist")
         val pb = ProcessBuilder(sh.absolutePath, script.absolutePath)
             .directory(bm.rootDir).redirectErrorStream(true)
         applyEnv(pb, bm)
+        if (brokerTar != null) pb.environment()["BROKER_TARBALL"] = brokerTar.absolutePath
         val p = pb.start()
         p.inputStream.bufferedReader().forEachLine { RuntimeController.log(it) }
         return runCatching { p.waitFor() == 0 }.getOrDefault(false)
@@ -111,6 +118,7 @@ class RuntimeLauncher(private val ctx: Context) {
     private fun applyEnv(pb: ProcessBuilder, bm: BootstrapManager) {
         val env = pb.environment()
         val usr = bm.usrDir.absolutePath
+        val rootfs = bm.rootDir.absolutePath
         val home = File(bm.rootDir, "home")
         val tmp = File(bm.usrDir, "tmp")
         // proot/node fail to start with a missing HOME/TMPDIR — ensure they exist.
@@ -122,6 +130,24 @@ class RuntimeLauncher(private val ctx: Context) {
         env["LD_LIBRARY_PATH"] = "$usr/lib"
         env["TERM"] = "xterm-256color"
         env["WATCHMAN_DISABLE"] = "1"
+
+        // termux-exec: the bootstrap's binaries hardcode the Termux prefix
+        // (/data/data/com.termux/files/usr) in shebangs and exec/open paths, and
+        // can't be patched in place (our prefix is a different length). termux-exec
+        // is an LD_PRELOAD that rewrites those to OUR prefix at runtime — point it
+        // at our rootfs/prefix and it makes the stock Termux userland run under this
+        // app's data dir. (system-linker-exec wraps exec through the system linker
+        // for the API-29+ W^X case; harmless on our targetSdk-28 exec path.)
+        val preload = File(bm.usrDir, "lib/libtermux-exec-ld-preload.so")
+        if (preload.exists()) {
+            env["LD_PRELOAD"] = preload.absolutePath
+            env["TERMUX__ROOTFS"] = rootfs
+            env["TERMUX__PREFIX"] = usr
+            env["TERMUX_APP__DATA_DIR"] = ctx.applicationInfo.dataDir
+            env["TERMUX_EXEC__SYSTEM_LINKER_EXEC__MODE"] = "enable"
+            env["ANDROID__BUILD_VERSION_SDK"] = android.os.Build.VERSION.SDK_INT.toString()
+        }
+
         // Inject provider keys from the Android Keystore so they never touch disk
         // in plaintext or a project .env.
         for ((k, v) in KeystoreSecrets(ctx).all()) env[k] = v

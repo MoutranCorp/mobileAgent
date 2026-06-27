@@ -50,9 +50,13 @@ android {
         // (and exec of native binaries) breaks.
         jniLibs.useLegacyPackaging = true
     }
-    // Keep large asset payloads (bootstrap tarball) uncompressed.
+    // NOTE: aapt2 gunzips `.gz` assets at package time (stripping the suffix), so the
+    // bundled bootstrap/broker ship as plain `.tar`. We DELIBERATELY do NOT noCompress
+    // "tar" here: the tarballs are extracted to disk before use (never mmap'd/exec'd
+    // in place), so letting the zip DEFLATE them roughly halves the APK. Keep gz/xz/zst
+    // listed so any future already-compressed payload isn't re-deflated.
     androidResources {
-        noCompress += listOf("tar", "gz", "xz", "zst")
+        noCompress += listOf("gz", "xz", "zst")
     }
     lint {
         // These lint "issues" are deliberate, documented decisions for a PERSONAL
@@ -67,6 +71,20 @@ android {
         disable += setOf("ExpiredTargetSdkVersion", "BatteryLife")
     }
 }
+
+// Bundle the broker SOURCE into assets as broker.tar.gz so the app can deliver it
+// into the Debian guest with no separate repo/clone (node_modules are installed
+// on-device by setup-guest.sh — the auto-provision route). Regenerated every build
+// from ../broker; the artifact is gitignored.
+val stageBroker by tasks.registering(Tar::class) {
+    archiveFileName.set("broker.tar.gz")
+    destinationDirectory.set(layout.projectDirectory.dir("src/main/assets"))
+    compression = Compression.GZIP
+    from(rootProject.layout.projectDirectory.dir("../broker")) {
+        exclude("node_modules", "test", ".uishots", ".uitmp", "coverage", "**/*.log", ".uitmp/**")
+    }
+}
+tasks.named("preBuild") { dependsOn(stageBroker) }
 
 dependencies {
     // BOM 2024.06.00 (Compose 1.6.8) is solidly compatible with Kotlin 1.9.24 +

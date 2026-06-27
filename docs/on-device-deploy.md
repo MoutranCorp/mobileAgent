@@ -172,44 +172,53 @@ block the bundled Termux bootstrap + proot from launching. Tap through it.
 <a name="fallback-external-broker-mode"></a>
 ### Fallback: external-broker mode
 
-The APK installs and runs with **no bootstrap present**, in external-broker mode.
-This is the degraded fallback — useful for trying the UI before provisioning:
+If **no bootstrap is bundled**, the APK runs in external-broker mode. This is the
+degraded fallback — useful for trying the UI before provisioning:
 
 1. Run the broker on your computer: `cd ../broker && npm run dev` (or `--engine mock`).
 2. `adb reverse tcp:8765 tcp:8765`.
 3. In the app's **Agent** tab, tap **Load agent UI anyway**.
 
-## Known gaps (the pure-sideload path is incomplete)
+<a name="self-contained-auto-provision"></a>
+## Self-contained install (auto-provision — no separate Termux)
 
-These are **real code gaps**, not just doc staleness. Today, the only way to a working
-on-device broker is the **manual `provision-debian.sh` path above**. The app's own
-"install and provision itself" flow does not yet work end-to-end. TODOs for a future
-agent:
+The committed `dist/app-debug.apk` now **bundles a Termux bootstrap + the broker**,
+so the app provisions itself with **no separate Termux app**:
 
-1. **`setup-guest.sh` never delivers the broker.** The app ships
-   [`../android/app/src/main/assets/scripts/setup-guest.sh`](../android/app/src/main/assets/scripts/setup-guest.sh)
-   and runs it via `RuntimeLauncher`. But when `~/agent-broker` is absent it only
-   **logs** `place the broker at ~/agent-broker (git clone or copy)` and exits — it
-   never clones or copies anything. Meanwhile `RuntimeLauncher.kt` (line ~83) launches
-   `node $HOME/agent-broker/src/index.js`, which then **fails** because the directory
-   is empty. Only the manual `provision-debian.sh` (which copies from `$BROKER_SRC`)
-   actually populates `~/agent-broker`. **Fix:** teach `setup-guest.sh` to fetch the
-   broker (clone a repo URL or extract a bundled copy), mirroring `provision-debian.sh`.
-   (`setup-guest.sh` now at least **fails loudly** if `proot-distro` couldn't be
-   installed — previously `pkg ... || true` masked it and the failure surfaced later
-   as a cryptic `proot-distro: not found` — but it still does not deliver the broker.)
+1. Build the bootstrap once (any machine with `curl`/`unzip`): `ARCH=aarch64 bash
+   provisioning/make-bootstrap.sh` → writes `android/app/src/main/assets/bootstrap-aarch64.tar.gz`.
+   The broker is staged automatically by the Gradle `stageBroker` task.
+2. `cd android && ./gradlew :app:assembleDebug` → `app/build/outputs/apk/debug/app-debug.apk`.
+3. Install + open. On **first launch** the foreground service (`RuntimeLauncher`):
+   extracts the bootstrap → `setup-guest.sh` installs proot-distro + Debian + Node +
+   the Claude CLI and **drops the bundled broker into `~/agent-broker`** → launches it
+   → the WebView loads `http://127.0.0.1:8765/` (a browser works too). First run needs
+   network and takes minutes (one-time); later launches just start the broker.
+4. One manual step remains for the real engine: `proot-distro login debian -- claude`
+   then `/login`.
 
-2. **The bootstrap tarball is missing and unreproducible.** The app expects a Termux
-   arm64 bootstrap at `android/app/src/main/assets/bootstrap-aarch64.tar.{gz,xz,zst}`,
-   extracted by `BootstrapManager.extractBootstrap()`. It is **gitignored**
-   (`android/app/src/main/assets/bootstrap-*.tar.*` in both `.gitignore` and
-   `android/.gitignore`) and there is **no committed recipe/script** to build one — only
-   prose hand-waving in
-   [`../android/app/src/main/assets/README.md`](../android/app/src/main/assets/README.md)
-   ("obtain from termux/termux-packages, or snapshot a working `$PREFIX`"). Without this
-   tarball the app can only run in external-broker mode. **Fix:** commit a reproducible
-   `make-bootstrap` script (or document an exact, pinned source) and wire it into a
-   release build.
+The Termux binaries hardcode `/data/data/com.termux/files/usr`; the launcher runs
+them under **termux-exec** (`LD_PRELOAD` + `TERMUX__PREFIX`/`TERMUX__ROOTFS`) so they
+resolve to this app's data dir instead.
+
+## Known gaps
+
+1. ~~`setup-guest.sh` never delivers the broker.~~ **Done.** The broker is bundled
+   into the APK (`stageBroker` Gradle task → `assets/broker.tar.gz`), staged by
+   `BootstrapManager.stageBrokerTarball()`, and `setup-guest.sh` extracts it into the
+   guest's `~/agent-broker` (+ `npm install --omit=dev`). No clone needed.
+
+2. ~~The bootstrap tarball is missing and unreproducible.~~ **Done.**
+   [`provisioning/make-bootstrap.sh`](../provisioning/make-bootstrap.sh) builds it
+   reproducibly from the pinned official Termux release; the Gradle build bundles it.
+
+   **Still device-gated (the honest remaining risk):** the full exec/linker chain —
+   stock Termux binaries running under this app's prefix via termux-exec, then `pkg
+   install proot-distro`, `proot-distro install debian`, and the Debian toolchain —
+   has **not been validated on a real device from this build environment** (no
+   emulator/arm64 here). The pieces are wired; first-run on a real Pixel is what
+   proves it. Capture `RuntimeController.logs` (shown in the app's runtime panel) on
+   first launch to debug any failure.
 
 3. **The phase-0 gate can report success on failure.** In
    [`phase0-debian.sh`](../provisioning/phase0-debian.sh) the smoke tests use

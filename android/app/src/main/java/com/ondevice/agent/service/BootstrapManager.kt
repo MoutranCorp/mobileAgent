@@ -51,6 +51,32 @@ class BootstrapManager(private val ctx: Context) {
         }
     }
 
+    /** Where the bundled broker source tarball is staged for setup-guest.sh. (GNU
+     *  tar in the guest auto-detects gzip vs plain, so the name's suffix is moot.) */
+    val brokerTarball: File get() = File(rootDir, "broker.tar.gz")
+
+    // aapt2 gunzips `.gz` assets at package time and strips the suffix, so what we
+    // bundled as `broker.tar.gz` ships as `broker.tar`. Match by prefix so we find
+    // it either way (and survive a toolchain that keeps the .gz).
+    private fun brokerAssetName(): String? =
+        runCatching { ctx.assets.list("")?.firstOrNull { it.startsWith("broker.tar") } }.getOrNull()
+
+    /** Is the broker bundled in assets? (Built by the Gradle stageBroker task.) */
+    fun hasBundledBroker(): Boolean = brokerAssetName() != null
+
+    /**
+     * Copy the bundled broker tarball out of assets into the runtime dir so the
+     * Termux-side setup-guest.sh can drop it into the Debian guest. Returns the
+     * staged file, or null if no broker is bundled (older build / external mode).
+     */
+    fun stageBrokerTarball(): File? {
+        val name = brokerAssetName() ?: return null
+        rootDir.mkdirs()
+        val out = brokerTarball
+        ctx.assets.open(name).use { input -> out.outputStream().use { input.copyTo(it) } }
+        return out
+    }
+
     /**
      * Extract the bundled bootstrap tarball using the platform's toybox `tar`.
      * toybox `tar` transparently handles .tar and .tar.gz, but NOT .xz/.zst — so
