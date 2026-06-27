@@ -110,6 +110,17 @@ are cache-busted with `?v=__VER__` rewritten to a mtime-derived version at serve
 - **Select text** (`app.js` `enableBubbleSelection`): the message long-press menu
   has a **Select text** action that flips the bubble into native-selection mode
   and pre-selects it, so a specific span can be grabbed (alongside Copy-all).
+- **Scheduled jobs (cron)** (`controls/cron.js` + `managers.js` `renderCron`): a
+  **⏰ Scheduled** Manage tab where a saved prompt runs in a chosen folder on a
+  schedule (friendly presets **or** a raw 5-field cron expression). Per job: a
+  **fresh** session each run or **one persistent** session that accumulates
+  context; enable/disable, **run-now**, edit, delete, and open the last run.
+  Scheduling is evaluated **in-broker** (a 30s tick → `cron.due()`), so jobs fire
+  while the broker is alive (the foreground service keeps it up); the structure
+  leaves room for OS-level background wake (Android AlarmManager) later. Jobs fire
+  into a **background session** (`session.startDetached` — never disturbs the
+  foreground view) via `server._fireCronJob`. Jobs persist in
+  `<stateDir>/cron-jobs.json` (gitignored).
 - **File Manager** (`managers.js` `renderFileManager` + `controls/fsmanager.js`):
   a **whole-filesystem** browser (NOT project-scoped) over absolute paths (`~`
   expanded). Navigate (home/up/go-to-path), **new folder**, and per-entry

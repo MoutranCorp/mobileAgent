@@ -17,6 +17,7 @@ import { Checkpoints } from './controls/checkpoints.js';
 import { Files } from './controls/files.js';
 import { FileSystemManager } from './controls/fsmanager.js';
 import { UserSettings } from './controls/user-settings.js';
+import { CronManager } from './controls/cron.js';
 import { PromptLibrary } from './controls/prompts.js';
 import { AutoVerify } from './controls/autoverify.js';
 import { UsageLedger } from './controls/usage-ledger.js';
@@ -58,6 +59,9 @@ export class BrokerServer {
     const getProjectDir = () => this.projects.getActive()?.dir || config.projectsDir;
     this.files = new Files({ getProjectDir });
     this.fsman = new FileSystemManager(); // whole-filesystem File Manager (unsandboxed, loopback-only)
+    this.cron = new CronManager(config.stateDir); // scheduled agent jobs (in-broker scheduler)
+    this._cronKeys = new Map(); // live cron sessionKey -> jobId (capture sessionId + completion)
+    this._cronInflight = new Set(); // jobIds with a run currently in flight (avoid overlap)
     this.devtools = new DevTools({ config, runner: this.runner, projects: this.projects, emit });
     this.claudeConfig = new ClaudeConfig({ getProjectDir, getProjects: () => this.projects.list(), stateDir: config.stateDir });
     this.modelResolver = new ModelResolver({ stateDir: config.stateDir, claudeBin: config.claudeBin });
@@ -109,6 +113,7 @@ export class BrokerServer {
 
   async stop() {
     if (this._resTimer) { clearInterval(this._resTimer); this._resTimer = null; } // stop sampling before engines die
+    if (this._cronTimer) { clearInterval(this._cronTimer); this._cronTimer = null; }
     this.runner.stopAll();
     // Force-close client sockets (don't wait on a polite close handshake) and
     // destroy any lingering keep-alive HTTP/WebSocket sockets — otherwise
@@ -175,6 +180,21 @@ export class BrokerServer {
         const profile = this.session.meta.get(key)?.profileId || this.session.activeProfileId;
         this.usage.record({ inTok: ev.inTok, outTok: ev.outTok, cost: ev.cost, profile });
       }
+      // Cron bookkeeping: capture the session id (for persistent resume) and the
+      // run outcome for a job-owned session.
+      if (this._cronKeys.has(key)) {
+        const jobId = this._cronKeys.get(key);
+        if (ev.type === EventType.SESSION_META && ev.sessionId) {
+          this.cron.noteRun(jobId, { sessionId: ev.sessionId });
+          this._broadcastCron();
+        }
+        if (ev.type === EventType.RESULT) {
+          this.cron.noteRun(jobId, { status: ev.isError ? 'error' : 'ok' });
+          this._cronInflight.delete(jobId);
+          this._cronKeys.delete(key); // fresh runs are done; persistent re-keys on next fire
+          this._broadcastCron();
+        }
+      }
       if (ev.type === EventType.RESULT) {
         const proj = this._projectForKey(key);
         if (proj) {
@@ -232,6 +252,59 @@ export class BrokerServer {
     if (this._resTimer) return;
     this._resTimer = setInterval(() => this._lifecycleTick(), intervalMs);
     this._resTimer.unref?.();
+    // Cron scheduler: minute-resolution, so a 30s tick is plenty. Run one shortly
+    // after boot to catch jobs that came due while the broker was down.
+    this._cronTimer = setInterval(() => this._cronTick(), 30000);
+    this._cronTimer.unref?.();
+    setTimeout(() => this._cronTick(), 3000).unref?.();
+  }
+
+  /** Fire every cron job that's due. Exposed so tests can drive it deterministically. */
+  async _cronTick() {
+    let due;
+    try { due = this.cron.due(Date.now()); } catch { return; }
+    for (const job of due) {
+      if (this._cronInflight.has(job.id)) continue; // a previous run is still going
+      try { await this._fireCronJob(job); } catch (e) { this._log(`cron fire failed (${job.id}): ${e.message}`); }
+    }
+  }
+
+  /** Run one cron job in a background session (no foreground disruption). */
+  async _fireCronJob(job) {
+    const proj = job.projectId ? this.projects.get(job.projectId) : this.projects.getActive();
+    const cwd = proj?.dir || (job.projectId ? null : this.config.projectsDir);
+    if (!cwd) { // the folder was deleted — record the failure, don't retry-storm
+      this.cron.noteRun(job.id, { status: 'error', at: Date.now() });
+      this._broadcastCron();
+      return;
+    }
+    this._cronInflight.add(job.id);
+    // Mark it running NOW so `due()` won't re-pick it on the next tick.
+    this.cron.noteRun(job.id, { status: 'running', at: Date.now() });
+    let started;
+    if (job.sessionMode === 'persistent') {
+      started = await this.session.startDetached({ projectId: proj?.id || job.projectId, cwd, key: `cron:${job.id}`, resumeId: job.lastSessionId || null });
+    } else {
+      started = await this.session.startDetached({ projectId: proj?.id || job.projectId, cwd, fresh: true });
+    }
+    if (!started) {
+      this._cronInflight.delete(job.id);
+      this.cron.noteRun(job.id, { status: 'error' });
+      this._broadcastCron();
+      return;
+    }
+    this._cronKeys.set(started.key, job.id);
+    // The session id is already known after start (system/init); the event hook
+    // also catches any later change (e.g. a persistent-mode resume).
+    const sid = this.session.meta.get(started.key)?.sessionId || null;
+    await this.session.sendTo(started.key, job.prompt);
+    this.cron.noteRun(job.id, { sessionKey: started.key, sessionId: sid });
+    this._broadcastCron();
+    this.broadcast(event(EventType.TOAST, { message: `Cron “${job.name}” started`, level: 'info' }));
+  }
+
+  _broadcastCron() {
+    try { this.broadcast(event(EventType.CRON_JOBS, { jobs: this.cron.list() })); } catch { /* ignore */ }
   }
 
   /** (Re)send the cross-project sessions list with live-busy overlay. */
@@ -333,6 +406,7 @@ export class BrokerServer {
     this._send(ws, event(EventType.TRANSCRIPT, { events: replay, reset: true }));
     if (active) this._send(ws, event(EventType.CHECKPOINTS, this.checkpoints.list(active.id, active.dir)));
     this._send(ws, event(EventType.PROMPTS, { items: this.prompts.list() }));
+    this._send(ws, event(EventType.CRON_JOBS, { jobs: this.cron.list() }));
     this._send(ws, event(EventType.AUTOVERIFY, {
       enabled: this.autoverify.enabled, command: this.autoverify.command,
       maxIterations: this.autoverify.maxIterations, iteration: this.autoverify.iteration,
@@ -468,6 +542,29 @@ export class BrokerServer {
         return this.session.respondPermission(cmd.id, 'deny', { reason: cmd.reason }, cmd.sessionKey);
       case CommandType.QUESTION_RESPONSE:
         return this.session.respondQuestion(cmd.id, cmd.answers, cmd.sessionKey);
+
+      // Cron / scheduled jobs
+      case CommandType.CRON_CREATE: {
+        try { this.cron.create(cmd); }
+        catch (e) { this.broadcast(event(EventType.TOAST, { message: `Cron: ${e.message}`, level: 'error' })); }
+        return this._broadcastCron();
+      }
+      case CommandType.CRON_UPDATE: {
+        try { this.cron.update(cmd.id, cmd); }
+        catch (e) { this.broadcast(event(EventType.TOAST, { message: `Cron: ${e.message}`, level: 'error' })); }
+        return this._broadcastCron();
+      }
+      case CommandType.CRON_DELETE:
+        this.cron.remove(cmd.id);
+        return this._broadcastCron();
+      case CommandType.CRON_TOGGLE:
+        this.cron.toggle(cmd.id, cmd.enabled);
+        return this._broadcastCron();
+      case CommandType.CRON_RUN_NOW: {
+        const job = this.cron.get(cmd.id);
+        if (job) { try { await this._fireCronJob(job); } catch (e) { this._log(`cron run-now failed: ${e.message}`); } }
+        return;
+      }
       case CommandType.SET_PERMISSION_MODE:
         await this.session.setPermissionMode(cmd.mode);
         this.userSettings.patch({ engine: { permissionMode: cmd.mode } }); // remember it across restarts

@@ -954,6 +954,31 @@ mark.find-hit.current { background: var(--orange); color: #000; }
    double it with the global :focus-visible ring on the inner input. */
 .mgr-search-input:focus-visible { outline: none !important; }
 .mgr-pane { flex: 1; padding: 16px 18px 28px; overflow-y: auto; }
+
+/* ---- cron / scheduled jobs ---- */
+.mgr-row.cron-off { opacity: .6; }
+.cron-prompt { color: var(--label-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.cron-form { margin-top: 14px; background: var(--sys-bg-2); border: .5px solid var(--separator);
+  border-radius: var(--r-md); padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.cron-form-title { font-weight: 650; font-size: 14.5px; color: var(--label); }
+.cron-field { display: flex; flex-direction: column; gap: 5px; }
+.cron-field-label { font-size: 11.5px; font-weight: 600; color: var(--label-2); text-transform: uppercase; letter-spacing: .03em; }
+.cron-prompt-input { resize: vertical; min-height: 56px; font: inherit; }
+.cron-seg { display: flex; gap: 6px; }
+.cron-seg-btn { flex: 1; padding: 8px; border-radius: var(--r-sm); border: .5px solid var(--separator);
+  background: var(--fill-3); color: var(--label-2); font: inherit; font-size: 13px; font-weight: 560; cursor: pointer; }
+.cron-seg-btn.on { background: var(--accent); color: #fff; border-color: transparent; }
+.cron-hint { margin-top: 5px; }
+.cron-preset { display: flex; flex-direction: column; gap: 8px; }
+.cron-preset-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cron-preset-row .cron-field-label { text-transform: none; }
+.cron-n { width: 64px; flex: 0 0 auto; }
+.cron-preset-row select, .cron-preset-row input[type="time"] { flex: 0 0 auto; width: auto; }
+.cron-check { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--label); cursor: pointer; }
+.cron-check input { width: 18px; height: 18px; }
+.cron-form-actions { display: flex; gap: 8px; margin-top: 4px; }
+.cron-form-actions button { flex: 1; padding: 11px; border-radius: var(--r-sm); border: none; font: inherit; font-weight: 620; cursor: pointer; }
+.cron-form .mono { font-family: var(--mono); }
 /* Quick cross-fade when switching panes — replaces the old full-modal rebuild
    that re-ran the springy sheet-up slide on every chip tap. */
 .mgr-pane.pane-swap { animation: mgr-pane-in .19s var(--ease); }

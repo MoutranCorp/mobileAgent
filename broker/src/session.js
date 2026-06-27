@@ -353,6 +353,48 @@ export class SessionManager {
 
   async resume(sessionId) { return this.startEngine(this.activeProfileId, { resumeId: sessionId }); }
 
+  /**
+   * Start an engine for a background task (a cron job) WITHOUT changing which
+   * session the UI is viewing — the foreground activeKey/profile/model are
+   * preserved. `fresh` mints a new session in the folder; pass a stable `key` +
+   * `resumeId` to continue one persistent session. Returns { engine, key } or null.
+   */
+  async startDetached({ projectId, cwd, resumeId = null, fresh = false, key } = {}) {
+    const project = this._projectById(projectId) || (cwd ? { id: projectId || null, dir: cwd } : this.getActiveProject());
+    const pid = project?.id ?? null;
+    const saved = {
+      active: this.activeKey, profile: this.activeProfileId, model: this.currentModel,
+      status: this._lastStatus,
+      binding: pid != null ? this._activeKeyByProject.get(pid) : undefined,
+    };
+    const engine = await this.startEngine(this.activeProfileId, { key, project, cwd: cwd || project?.dir, resumeId, fresh });
+    const newKey = this.activeKey; // startEngine focused the (possibly minted) key; capture before restoring
+    // Restore the foreground view — the detached session runs in the background.
+    // Crucially also restore the project→activeKey binding, which startEngine
+    // (fresh) rebinds to the new session; leaving it would route the foreground
+    // folder's next new_session/restart into the cron session.
+    this.activeKey = saved.active;
+    this.activeProfileId = saved.profile;
+    this.currentModel = saved.model;
+    this._lastStatus = saved.status;
+    if (pid != null) {
+      if (saved.binding === undefined) this._activeKeyByProject.delete(pid);
+      else this._activeKeyByProject.set(pid, saved.binding);
+    }
+    this._emitSessions();
+    return engine ? { engine, key: newKey } : null;
+  }
+
+  /** Send a user message to a SPECIFIC session (not necessarily the active one). */
+  async sendTo(key, text, images) {
+    const engine = this.engines.get(key);
+    if (!engine) return false;
+    const m = this.meta.get(key);
+    if (m) { m.lastTurnTs = Date.now(); m.lastActivityTs = Date.now(); }
+    await engine.send({ type: 'user_message', text, images });
+    return true;
+  }
+
   /** Forget a key's persisted resume id (so a deleted session is never --resume'd)
    *  and tear down its engine if live. Used when a session's .jsonl is deleted. */
   /** All session keys (live or sleeping) bound to a given project id. */

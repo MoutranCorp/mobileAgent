@@ -73,6 +73,7 @@ export const EventType = Object.freeze({
   GITHUB: 'github', // { ok, url?, message, op }
   AUTOVERIFY: 'autoverify', // { enabled, command, maxIterations, state?, iteration? }
   USAGE_STATS: 'usage_stats', // { summary: { today, days, total } }
+  CRON_JOBS: 'cron_jobs', // { jobs: [{ id, name, prompt, projectId, schedule:{cron,label,source}, sessionMode, enabled, lastRun, lastStatus, lastSessionKey, lastSessionId, nextRun }] }
   CHECKPOINTS_DIFF: 'checkpoints_diff', // { id, files: [{status, path}], stat }
   TURN_CHANGES: 'turn_changes', // { checkpointId, files: [{status, path}], stat } what the agent changed this turn
   NATIVE_CHANGE: 'native_change', // { deps } native deps changed — offer rebuild
@@ -99,6 +100,12 @@ export const CommandType = Object.freeze({
   DENY: 'deny', // { id, reason? }
   SET_PERMISSION_MODE: 'set_permission_mode', // { mode } default|acceptEdits|plan|bypassPermissions
   QUESTION_RESPONSE: 'question_response', // { id, answers: [{ header?, question?, selected:[label], custom? }], sessionKey? }  answer an ask_user_question
+  // Cron / scheduled jobs
+  CRON_CREATE: 'cron_create', // { name?, prompt, projectId?, schedule:{cron|source/preset}, sessionMode?, enabled? }
+  CRON_UPDATE: 'cron_update', // { id, ...patch }
+  CRON_DELETE: 'cron_delete', // { id }
+  CRON_TOGGLE: 'cron_toggle', // { id, enabled? }
+  CRON_RUN_NOW: 'cron_run_now', // { id } fire immediately
   // Session / engine
   RESUME: 'resume', // { sessionId }
   NEW_SESSION: 'new_session', // {}

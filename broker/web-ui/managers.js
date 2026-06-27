@@ -14,6 +14,7 @@
 
   const TABS = [
     { id: 'update', label: '↻ Update' },
+    { id: 'cron', label: '⏰ Scheduled' },
     { id: 'files', label: 'Files' },
     { id: 'fileman', label: '🗂 File Manager' },
     { id: 'scripts', label: 'Scripts' },
@@ -56,6 +57,7 @@
     checkpoints: { items: [], enabled: false },
     checkpointDiff: null, // { id, files, stat }
     prompts: [],
+    cron: { jobs: [], form: null }, // scheduled jobs + the in-progress create/edit form
     scripts: { items: [], running: [] },
     autoverify: { enabled: false, command: 'npm test', maxIterations: 3 },
     usageStats: null,
@@ -256,6 +258,7 @@
     pane.innerHTML = '';
     switch (m.tab) {
       case 'update': return renderUpdate(pane);
+      case 'cron': return renderCron(pane);
       case 'files': return renderFiles(pane);
       case 'fileman': return renderFileManager(pane);
       case 'scripts': return renderScripts(pane);
@@ -698,6 +701,205 @@
       }
       pane.appendChild(list);
     }
+  }
+
+  // ---- cron / scheduled jobs ----------------------------------------------
+
+  const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  function relFuture(ms) {
+    if (!ms) return '—';
+    const s = Math.round((ms - nowMs()) / 1000);
+    if (s <= 0) return 'due';
+    if (s < 60) return 'in ' + s + 's';
+    const mn = Math.round(s / 60); if (mn < 60) return 'in ' + mn + 'm';
+    const h = Math.round(mn / 60); if (h < 24) return 'in ' + h + 'h';
+    return 'in ' + Math.round(h / 24) + 'd';
+  }
+  function cronProjects() {
+    const st = (window.Agent && window.Agent.state) || {};
+    return (st.projects && st.projects.length ? st.projects : m.projects) || [];
+  }
+  function projName(id) { const p = cronProjects().find((x) => x.id === id); return p ? p.name : (id || 'active folder'); }
+
+  function blankCronForm() {
+    const st = (window.Agent && window.Agent.state) || {};
+    return {
+      id: null, name: '', projectId: st.activeProjectId || null, prompt: '',
+      sessionMode: 'fresh', enabled: true,
+      schedKind: 'preset', preset: { every: 'days', n: 1, hour: 9, minute: 0, weekday: 1 }, cron: '0 9 * * *',
+    };
+  }
+
+  function renderCron(pane) {
+    pane.appendChild(el('p', 'mgr-hint', 'Scheduled jobs run a prompt in a folder on a schedule. They fire while the app is running (the broker must be alive).'));
+
+    if (!m.cron.form) {
+      const add = el('button', 'accent small', '+ New scheduled job');
+      add.onclick = () => { m.cron.form = blankCronForm(); renderPane(); };
+      pane.appendChild(add);
+    }
+
+    const jobs = m.cron.jobs || [];
+    if (!jobs.length && !m.cron.form) { pane.appendChild(mgrEmpty('No scheduled jobs yet.', 'cron')); }
+
+    const list = el('div', 'mgr-list');
+    for (const job of jobs) {
+      const row = el('div', 'mgr-row' + (job.enabled ? '' : ' cron-off'));
+      const info = el('div', 'mgr-row-info');
+      const name = el('div', 'mgr-row-name');
+      if (job.lastStatus === 'running') name.appendChild(workingDots());
+      name.appendChild(document.createTextNode((job.enabled ? '' : '⏸ ') + (job.name || job.schedule.label)));
+      info.appendChild(name);
+      const last = job.lastRun ? ` · last ${relTime(job.lastRun)}${job.lastStatus && job.lastStatus !== 'running' ? ' (' + job.lastStatus + ')' : ''}` : '';
+      const next = job.enabled ? ` · next ${relFuture(job.nextRun)}` : ' · disabled';
+      info.appendChild(el('div', 'mgr-row-desc', `${job.schedule.label} · 📁 ${projName(job.projectId)}${next}${last}`));
+      info.appendChild(el('div', 'mgr-row-desc cron-prompt', job.sessionMode === 'persistent' ? '↻ ' : '✦ ' + (job.prompt || '')));
+      row.appendChild(info);
+
+      const actions = el('div', 'mgr-row-actions');
+      const run = el('button', 'ghost small', '▶ Run'); run.title = 'Run now';
+      run.onclick = () => { send({ type: 'cron_run_now', id: job.id }); };
+      actions.appendChild(run);
+      if (job.lastSessionId) {
+        const view = el('button', 'icon-mini', '↗'); view.title = 'Open the last run';
+        view.onclick = () => { send({ type: 'resume', sessionId: job.lastSessionId, projectId: job.projectId || undefined }); close(); };
+        actions.appendChild(view);
+      }
+      const toggle = el('button', 'icon-mini', job.enabled ? '⏸' : '▶'); toggle.title = job.enabled ? 'Disable' : 'Enable';
+      toggle.onclick = () => send({ type: 'cron_toggle', id: job.id, enabled: !job.enabled });
+      actions.appendChild(toggle);
+      const edit = el('button', 'icon-mini', '✎'); edit.title = 'Edit';
+      edit.onclick = () => { m.cron.form = cronFormFromJob(job); renderPane(); };
+      actions.appendChild(edit);
+      const del = el('button', 'icon-mini danger', '🗑'); del.title = 'Delete';
+      del.onclick = () => { if (confirm(`Delete scheduled job “${job.name || job.schedule.label}”?`)) send({ type: 'cron_delete', id: job.id }); };
+      actions.appendChild(del);
+      row.appendChild(actions);
+      list.appendChild(row);
+    }
+    if (jobs.length) pane.appendChild(list);
+
+    if (m.cron.form) pane.appendChild(renderCronForm());
+  }
+
+  function cronFormFromJob(job) {
+    const f = blankCronForm();
+    f.id = job.id; f.name = job.name; f.projectId = job.projectId; f.prompt = job.prompt;
+    f.sessionMode = job.sessionMode; f.enabled = job.enabled;
+    if (job.schedule.source === 'preset' && job.schedule.preset) { f.schedKind = 'preset'; f.preset = { ...f.preset, ...job.schedule.preset }; }
+    else { f.schedKind = 'cron'; f.cron = job.schedule.cron; }
+    return f;
+  }
+
+  function renderCronForm() {
+    const f = m.cron.form;
+    const card = el('div', 'cron-form');
+    card.appendChild(el('div', 'cron-form-title', f.id ? 'Edit scheduled job' : 'New scheduled job'));
+
+    const field = (label, node) => { const w = el('label', 'cron-field'); w.appendChild(el('span', 'cron-field-label', label)); w.appendChild(node); return w; };
+
+    const nameIn = el('input', 'mgr-input'); nameIn.type = 'text'; nameIn.placeholder = 'Optional name'; nameIn.value = f.name || '';
+    nameIn.oninput = () => { f.name = nameIn.value; };
+    card.appendChild(field('Name', nameIn));
+
+    // Folder
+    const folder = el('select', 'mgr-input');
+    for (const p of cronProjects()) { const o = el('option', '', p.name); o.value = p.id; if (p.id === f.projectId) o.selected = true; folder.appendChild(o); }
+    if (!cronProjects().length) { const o = el('option', '', 'active folder'); o.value = ''; folder.appendChild(o); }
+    folder.onchange = () => { f.projectId = folder.value || null; };
+    card.appendChild(field('Folder', folder));
+
+    // Prompt
+    const prompt = el('textarea', 'mgr-input cron-prompt-input'); prompt.rows = 3; prompt.placeholder = 'What should the agent do each run?'; prompt.value = f.prompt || '';
+    prompt.oninput = () => { f.prompt = prompt.value; };
+    card.appendChild(field('Prompt', prompt));
+
+    // Schedule kind toggle
+    const segRow = el('div', 'cron-seg');
+    ['preset', 'cron'].forEach((k) => {
+      const b = el('button', 'cron-seg-btn' + (f.schedKind === k ? ' on' : ''), k === 'preset' ? 'Preset' : 'Cron expression');
+      b.onclick = () => { f.schedKind = k; renderPane(); };
+      segRow.appendChild(b);
+    });
+    card.appendChild(field('Schedule', segRow));
+
+    if (f.schedKind === 'preset') card.appendChild(renderPresetBuilder(f));
+    else {
+      const cronIn = el('input', 'mgr-input mono'); cronIn.type = 'text'; cronIn.placeholder = 'min hour dom mon dow'; cronIn.value = f.cron || '';
+      cronIn.oninput = () => { f.cron = cronIn.value; };
+      const wrap = el('div', '');
+      wrap.appendChild(cronIn);
+      wrap.appendChild(el('div', 'mgr-hint cron-hint', 'Five fields: minute hour day-of-month month day-of-week. e.g. “0 9 * * 1” = 9am every Monday.'));
+      card.appendChild(wrap);
+    }
+
+    // Session mode
+    const mode = el('select', 'mgr-input');
+    [['fresh', 'Fresh session each run'], ['persistent', 'One persistent session (accumulates context)']].forEach(([v, t]) => { const o = el('option', '', t); o.value = v; if (f.sessionMode === v) o.selected = true; mode.appendChild(o); });
+    mode.onchange = () => { f.sessionMode = mode.value; };
+    card.appendChild(field('Session', mode));
+
+    // Enabled
+    const enWrap = el('label', 'cron-check');
+    const en = el('input', ''); en.type = 'checkbox'; en.checked = f.enabled !== false; en.onchange = () => { f.enabled = en.checked; };
+    enWrap.appendChild(en); enWrap.appendChild(el('span', '', 'Enabled'));
+    card.appendChild(enWrap);
+
+    // Actions
+    const actions = el('div', 'cron-form-actions');
+    const save = el('button', 'accent', f.id ? 'Save changes' : 'Create job');
+    save.onclick = () => submitCronForm();
+    const cancel = el('button', 'ghost', 'Cancel');
+    cancel.onclick = () => { m.cron.form = null; renderPane(); };
+    actions.appendChild(save); actions.appendChild(cancel);
+    card.appendChild(actions);
+    return card;
+  }
+
+  function renderPresetBuilder(f) {
+    const wrap = el('div', 'cron-preset');
+    const p = f.preset;
+    const everySel = el('select', 'mgr-input');
+    [['minutes', 'minutes'], ['hours', 'hours'], ['days', 'days'], ['weeks', 'weeks']].forEach(([v, t]) => { const o = el('option', '', t); o.value = v; if (p.every === v) o.selected = true; everySel.appendChild(o); });
+    everySel.onchange = () => { p.every = everySel.value; renderPane(); };
+
+    const nIn = el('input', 'mgr-input cron-n'); nIn.type = 'number'; nIn.min = '1'; nIn.value = String(p.n || 1);
+    nIn.oninput = () => { p.n = Math.max(1, parseInt(nIn.value, 10) || 1); };
+
+    const row1 = el('div', 'cron-preset-row');
+    row1.appendChild(el('span', 'cron-field-label', 'Every'));
+    if (p.every !== 'days' || p.n !== 1) row1.appendChild(nIn);
+    row1.appendChild(everySel);
+    wrap.appendChild(row1);
+
+    if (p.every !== 'minutes') {
+      const row2 = el('div', 'cron-preset-row');
+      if (p.every === 'weeks') {
+        const wd = el('select', 'mgr-input');
+        WEEKDAYS.forEach((name, i) => { const o = el('option', '', name); o.value = String(i); if (Number(p.weekday) === i) o.selected = true; wd.appendChild(o); });
+        wd.onchange = () => { p.weekday = parseInt(wd.value, 10); };
+        row2.appendChild(el('span', 'cron-field-label', 'On')); row2.appendChild(wd);
+      }
+      const time = el('input', 'mgr-input'); time.type = 'time';
+      time.value = `${String(p.hour ?? 9).padStart(2, '0')}:${String(p.minute ?? 0).padStart(2, '0')}`;
+      time.onchange = () => { const [h, mn] = time.value.split(':').map(Number); p.hour = h || 0; p.minute = mn || 0; };
+      row2.appendChild(el('span', 'cron-field-label', p.every === 'hours' ? 'At minute' : 'At')); row2.appendChild(time);
+      wrap.appendChild(row2);
+    }
+    return wrap;
+  }
+
+  function submitCronForm() {
+    const f = m.cron.form;
+    if (!f.prompt || !f.prompt.trim()) { window.Agent.toast('A scheduled job needs a prompt', 'error'); return; }
+    const schedule = f.schedKind === 'preset'
+      ? { source: 'preset', preset: f.preset }
+      : { source: 'cron', cron: (f.cron || '').trim() };
+    const payload = { name: f.name, prompt: f.prompt, projectId: f.projectId, schedule, sessionMode: f.sessionMode, enabled: f.enabled };
+    if (f.id) send({ type: 'cron_update', id: f.id, ...payload });
+    else send({ type: 'cron_create', ...payload });
+    m.cron.form = null;
+    renderPane();
   }
 
   // ---- projects ------------------------------------------------------------
@@ -1431,6 +1633,7 @@
   function onCapabilities(ev) { m.caps = ev; if (m.tab === 'mcp') renderPane(); }
   function onContext(ev) { m.lastContext = ev; if (m.tab === 'context') renderPane(); }
   function onProjects(ev) { m.loaded.add('projects'); m.projects = ev.projects || []; if (m.tab === 'projects') renderPane(); }
+  function onCronJobs(ev) { m.cron.jobs = ev.jobs || []; if (m.tab === 'cron') renderPane(); }
   function onWorkspaceBrowse(ev) { m.browse = ev; if (!root.classList.contains('hidden') && m.tab === 'projects') renderPane(); }
   function onProfiles(ev) { m.profiles = ev.profiles || []; if (!root.classList.contains('hidden') && m.tab === 'engine') renderPane(); }
   function onCheckpoints(ev) { m.checkpoints = { items: ev.items || [], enabled: !!ev.enabled }; if (m.tab === 'checkpoints') renderPane(); }
@@ -1485,6 +1688,6 @@
     open, openTab, close, onConfig, onCapabilities, onContext, onProjects, onProfiles, onResources,
     onCheckpoints, onFiles, onFile, onFileDiff, onFileGrep, onPrompts, onScripts,
     onAutoVerify, onUsageStats, onCheckpointDiff, onWorkspaceBrowse,
-    onAppVersion, onAppUpdate, onSessions, onFsList, onUserSettings,
+    onAppVersion, onAppUpdate, onSessions, onFsList, onUserSettings, onCronJobs,
   };
 })();

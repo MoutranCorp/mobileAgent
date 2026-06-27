@@ -31,3 +31,4 @@ Thumbs.db
 .claude/scheduled_tasks.lock
 .claude/*.lock
 broker/.uitmp/
+**/cron-jobs.json

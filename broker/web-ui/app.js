@@ -299,6 +299,7 @@
       case 'file_diff': if (window.Managers) window.Managers.onFileDiff(ev); break;
       case 'file_grep': if (window.Managers) window.Managers.onFileGrep(ev); break;
       case 'prompts': if (window.Managers) window.Managers.onPrompts(ev); break;
+      case 'cron_jobs': if (window.Managers) window.Managers.onCronJobs(ev); break;
       case 'scripts': if (window.Managers) window.Managers.onScripts(ev); break;
       case 'github': onGithub(ev); break;
       case 'autoverify': onAutoVerify(ev); break;
