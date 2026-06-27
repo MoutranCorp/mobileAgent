@@ -14,8 +14,9 @@ import net from 'node:net';
  * One bridge per claude-code engine instance keeps permission routing isolated.
  */
 export class PermissionBridge {
-  constructor({ host = '127.0.0.1', onRequest, log } = {}) {
+  constructor({ host = '127.0.0.1', token = null, onRequest, log } = {}) {
     this.host = host;
+    this.token = token; // shared secret the permission-server must present
     this.onRequest = onRequest || (async () => ({ decision: 'allow' }));
     this.log = log || (() => {});
     this.server = null;
@@ -54,6 +55,12 @@ export class PermissionBridge {
           continue;
         }
         if (req.kind !== 'permission') continue;
+        // Reject anything that doesn't present the shared secret — fail closed.
+        if (this.token && req.token !== this.token) {
+          this.log('permission bridge: rejected request with bad/missing token');
+          try { socket.write(JSON.stringify({ id: req.id, decision: 'deny', message: 'unauthorized' }) + '\n'); } catch { /* ignore */ }
+          continue;
+        }
         let decision;
         try {
           decision = await this.onRequest({ toolName: req.tool_name, input: req.input });

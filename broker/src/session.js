@@ -274,7 +274,13 @@ export class SessionManager {
     await engine.send({ type: 'user_message', text, images });
   }
 
-  respondPermission(id, decision, extra) { if (this.engine) this.engine.respondPermission(id, decision, extra); }
+  respondPermission(id, decision, extra, key) {
+    // Route the decision to the engine that RAISED the request (the UI echoes back
+    // the request's sessionKey), not whatever happens to be active now — the user
+    // may have switched sessions while an approval was pending.
+    const e = (key && this.engines.get(key)) || this.engine;
+    if (e) e.respondPermission(id, decision, extra);
+  }
   interrupt() { if (this.engine) this.engine.interrupt(); }
 
   async switchEngine(profileId) { this._log(`switching engine -> ${profileId}`); return this.startEngine(profileId, {}); }

@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import { EngineAdapter } from './base.js';
 import { JsonLineBuffer } from '../jsonl.js';
 import { PermissionBridge } from '../mcp/permission-bridge.js';
@@ -10,6 +11,10 @@ import { EventType, StatusState, CommandType } from '../protocol.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PERMISSION_SERVER = path.join(__dirname, '..', 'mcp', 'permission-server.js');
+
+// How long an approval may wait on the UI before we fail-closed (auto-deny) so a
+// closed tab / dropped socket can't block the CLI's permission-server forever.
+const PERMISSION_TIMEOUT_MS = Number(process.env.BROKER_PERMISSION_TIMEOUT_MS) || 180000;
 
 // Permission modes that gate via our MCP permission-prompt tool (UI approval).
 // The other modes (acceptEdits/plan/bypassPermissions/auto/dontAsk) pass straight
@@ -75,7 +80,12 @@ export class ClaudeCodeEngine extends EngineAdapter {
 
     if (gated) {
       // Proper approval flow via the permission MCP tool (UI approve/deny).
+      // A per-engine shared secret authenticates the permission-server to the
+      // bridge, so another local process can't inject allow/deny decisions or read
+      // pending tool inputs over the loopback (matters on shared-localhost Android).
+      const ipcToken = crypto.randomBytes(16).toString('hex');
       this.bridge = new PermissionBridge({
+        token: ipcToken,
         onRequest: (req) => this._onPermission(req),
         log: this.log,
       });
@@ -85,7 +95,7 @@ export class ClaudeCodeEngine extends EngineAdapter {
           broker: {
             command: process.execPath, // node
             args: [PERMISSION_SERVER],
-            env: { BROKER_IPC_PORT: String(port), BROKER_IPC_HOST: '127.0.0.1' },
+            env: { BROKER_IPC_PORT: String(port), BROKER_IPC_HOST: '127.0.0.1', BROKER_IPC_TOKEN: ipcToken },
           },
         },
       });
@@ -141,10 +151,25 @@ export class ClaudeCodeEngine extends EngineAdapter {
 
     this.proc.on('exit', (code, signal) => {
       this.log(`claude exited code=${code} signal=${signal}`);
+      // A crash/exit bypasses _teardown — flush any in-flight approvals so the
+      // permission-server (and the UI) never hang waiting on a dead engine.
+      this._failPendingPermissions(`engine exited (${code ?? signal})`);
+      try { this.bridge?.stop(); } catch { /* ignore */ }
       this.emit('engine_state', 'stopped');
       this.state = 'stopped';
       this.emitStatus(StatusState.IDLE, `engine exited (${code ?? signal})`);
     });
+  }
+
+  /** Resolve every pending approval as a denial (engine gone / timed out) so no
+   *  permission Promise can hang the CLI's permission-server forever. */
+  _failPendingPermissions(reason) {
+    for (const [id, p] of this._pendingPermissions) {
+      if (p.timer) clearTimeout(p.timer);
+      try { this.emitEvent(EventType.PERMISSION_RESOLVED, { id, decision: 'deny' }); } catch { /* ignore */ }
+      p.resolve({ decision: 'deny', message: reason });
+    }
+    this._pendingPermissions.clear();
   }
 
   _onStdout(chunk) {
@@ -470,7 +495,18 @@ export class ClaudeCodeEngine extends EngineAdapter {
   _onPermission({ toolName, input }) {
     const id = `perm-${++this._permSeq}`;
     return new Promise((resolve) => {
-      this._pendingPermissions.set(id, { resolve, input });
+      // Fail-closed timeout: if the UI never answers (tab closed, socket dropped),
+      // auto-deny after PERMISSION_TIMEOUT_MS so the CLI's permission-server isn't
+      // blocked indefinitely.
+      const timer = setTimeout(() => {
+        if (!this._pendingPermissions.has(id)) return;
+        this._pendingPermissions.delete(id);
+        try { this.emitEvent(EventType.PERMISSION_RESOLVED, { id, decision: 'deny' }); } catch { /* ignore */ }
+        resolve({ decision: 'deny', message: 'Approval timed out' });
+        this.emitStatus(StatusState.THINKING);
+      }, PERMISSION_TIMEOUT_MS);
+      timer.unref?.();
+      this._pendingPermissions.set(id, { resolve, input, timer });
       this.emitEvent(EventType.PERMISSION_REQUEST, {
         id,
         action: classifyTool(toolName),
@@ -485,6 +521,7 @@ export class ClaudeCodeEngine extends EngineAdapter {
   respondPermission(id, decision, extra = {}) {
     const pending = this._pendingPermissions.get(id);
     if (!pending) return;
+    if (pending.timer) clearTimeout(pending.timer);
     this._pendingPermissions.delete(id);
     this.emitEvent(EventType.PERMISSION_RESOLVED, { id, decision });
     if (decision === 'allow' || decision === 'approve') {
@@ -496,10 +533,7 @@ export class ClaudeCodeEngine extends EngineAdapter {
   }
 
   async _teardown() {
-    for (const p of this._pendingPermissions.values()) {
-      p.resolve({ decision: 'deny', message: 'Engine stopped' });
-    }
-    this._pendingPermissions.clear();
+    this._failPendingPermissions('Engine stopped');
     if (this.proc) {
       try {
         this.proc.stdin.end();

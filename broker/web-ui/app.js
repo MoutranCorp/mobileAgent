@@ -1318,8 +1318,8 @@
       const actions = el('div', 'approval-actions');
       const go = el('button', 'accent', 'Approve plan & proceed');
       const keep = el('button', 'ghost', 'Keep planning');
-      go.onclick = () => { setActivity('working', 'Working…'); send({ type: 'approve', id: ev.id }); };
-      keep.onclick = () => { setActivity('working', 'Working…'); send({ type: 'deny', id: ev.id, reason: 'Keep planning' }); };
+      go.onclick = () => { setActivity('working', 'Working…'); send({ type: 'approve', id: ev.id, sessionKey: ev.sessionKey }); };
+      keep.onclick = () => { setActivity('working', 'Working…'); send({ type: 'deny', id: ev.id, reason: 'Keep planning', sessionKey: ev.sessionKey }); };
       actions.appendChild(go); actions.appendChild(keep);
       card.appendChild(actions);
       $('transcript').appendChild(card);
@@ -1338,8 +1338,8 @@
     const actions = el('div', 'approval-actions');
     const allow = el('button', 'accent', 'Approve');
     const deny = el('button', 'danger', 'Deny');
-    allow.onclick = () => { setActivity('working', 'Working…'); send({ type: 'approve', id: ev.id }); };
-    deny.onclick = () => { setActivity('working', 'Working…'); send({ type: 'deny', id: ev.id }); };
+    allow.onclick = () => { setActivity('working', 'Working…'); send({ type: 'approve', id: ev.id, sessionKey: ev.sessionKey }); };
+    deny.onclick = () => { setActivity('working', 'Working…'); send({ type: 'deny', id: ev.id, sessionKey: ev.sessionKey }); };
     actions.appendChild(allow); actions.appendChild(deny);
     card.appendChild(actions);
     $('transcript').appendChild(card);

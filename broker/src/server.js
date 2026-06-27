@@ -422,9 +422,9 @@ export class BrokerServer {
 
       // permissions
       case CommandType.APPROVE:
-        return this.session.respondPermission(cmd.id, 'allow', { updatedInput: cmd.updatedInput });
+        return this.session.respondPermission(cmd.id, 'allow', { updatedInput: cmd.updatedInput }, cmd.sessionKey);
       case CommandType.DENY:
-        return this.session.respondPermission(cmd.id, 'deny', { reason: cmd.reason });
+        return this.session.respondPermission(cmd.id, 'deny', { reason: cmd.reason }, cmd.sessionKey);
       case CommandType.SET_PERMISSION_MODE:
         await this.session.setPermissionMode(cmd.mode);
         return this.broadcast(event(EventType.PERMISSION_MODE, { mode: cmd.mode }));
