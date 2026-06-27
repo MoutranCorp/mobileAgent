@@ -106,8 +106,10 @@ dependencies {
 
     // Lightweight WebSocket + HTTP for the native status client and health checks.
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    // Pure-Java XZ decompressor for the downloaded Debian rootfs (.tar.xz) — the
-    // on-device toybox tar can't do xz.
+    // Extract the downloaded Debian rootfs (.tar.xz) in pure Java: toybox tar can't
+    // do xz, and (more importantly) can't create hardlinks in app storage. The
+    // commons-compress reader lets us turn hardlinks into relative symlinks.
+    implementation("org.apache.commons:commons-compress:1.26.1")
     implementation("org.tukaani:xz:1.9")
 
     debugImplementation("androidx.compose.ui:ui-tooling")

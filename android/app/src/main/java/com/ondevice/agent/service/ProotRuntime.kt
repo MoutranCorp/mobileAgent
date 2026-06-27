@@ -2,11 +2,13 @@ package com.ondevice.agent.service
 
 import android.content.Context
 import android.os.Build
+import android.system.Os
 import com.ondevice.agent.RuntimeConfig
 import com.ondevice.agent.secrets.KeystoreSecrets
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import org.tukaani.xz.XZInputStream
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
+import org.apache.commons.compress.compressors.xz.XZCompressorInputStream
 import java.io.File
 import java.util.concurrent.TimeUnit
 
@@ -82,44 +84,93 @@ class ProotRuntime(private val ctx: Context) {
 
     // ---- rootfs download + extract ---------------------------------------
 
-    /** Download the Debian arm64 rootfs (.tar.xz), xz-decompress, extract under proot. */
+    /** Download the Debian arm64 rootfs (.tar.xz) and extract it in pure Java. */
     fun downloadAndExtractRootfs(log: (String) -> Unit): Boolean {
         rootfs.mkdirs(); tmpDir.mkdirs()
-        val tarFile = File(rootDir, "rootfs.tar")
-        // Cache the decompressed tar so a failed extraction retry skips the ~90MB
-        // download + xz-decompress.
-        if (!tarFile.exists()) {
+        val xzFile = File(rootDir, "rootfs.tar.xz")
+        // Cache the download so a failed extraction retry skips the ~90MB fetch.
+        if (!xzFile.exists()) {
             val url = resolveRootfsUrl(log) ?: run { log("ERROR: could not resolve a Debian rootfs URL"); return false }
-            val xzFile = File(rootDir, "rootfs.tar.xz")
             log("Downloading Debian rootfs…")
-            if (!download(url, xzFile, log)) { log("ERROR: rootfs download failed"); return false }
-            log("Decompressing rootfs (xz)…")
-            runCatching {
-                XZInputStream(xzFile.inputStream().buffered()).use { i ->
-                    tarFile.outputStream().buffered().use { o -> i.copyTo(o) }
-                }
-            }.onFailure { log("ERROR: xz decompress: ${it.message}"); tarFile.delete(); xzFile.delete(); return false }
-            xzFile.delete()
+            if (!download(url, xzFile, log)) { log("ERROR: rootfs download failed"); xzFile.delete(); return false }
         } else {
-            log("Reusing cached rootfs.tar from a previous attempt")
+            log("Reusing cached rootfs.tar.xz from a previous attempt")
         }
 
         log("Extracting rootfs…")
-        // The linuxcontainers Debian image has NO device nodes (containers get /dev
-        // from the runtime), so plain tar works — no proot/fake-root needed. chown-
-        // to-root / setuid bits fail harmlessly for our app uid (proot --root-id
-        // fakes uid 0 at run time anyway); we verify by sentinel, not exit code.
-        val tar = firstExisting("/system/bin/tar", "/system/xbin/tar") ?: run { log("ERROR: no system tar"); return false }
-        val argv = listOf(tar, "-x", "-f", tarFile.absolutePath, "-C", rootfs.absolutePath)
-        val ok = runProcess(argv, log)
-        // Verify by sentinel rather than trusting the exit code (device-node mknod /
-        // setuid bits fail harmlessly for a non-root extractor).
-        val extracted = File(rootfs, "bin/bash").exists() || File(rootfs, "usr/bin/bash").exists() || File(rootfs, "bin/sh").exists()
-        if (!extracted) { log("ERROR: rootfs extraction failed (exit ok=$ok, no shell found)"); return false }
-        tarFile.delete()
+        // Pure-Java extraction (commons-compress) instead of system/toybox tar:
+        //  - toybox tar can't decompress xz, and
+        //  - more importantly, Android blocks hardlinks (link(2)) in app storage, so
+        //    a real tar dies on the many hardlinked binaries (perl, coreutils, …).
+        // We stream the .tar.xz, turn every hardlink into a relative symlink, skip
+        // device nodes (the linuxcontainers image has none), and preserve perms.
+        // No fake-root/proot needed: there are no device nodes to mknod and we fake
+        // uid 0 at run time.
+        val extracted = runCatching { extractTarXz(xzFile, rootfs, log) }
+            .onFailure { log("ERROR: rootfs extract: ${it.message}") }
+            .getOrDefault(false) &&
+            (File(rootfs, "bin/bash").exists() || File(rootfs, "usr/bin/bash").exists() || File(rootfs, "bin/sh").exists())
+        if (!extracted) { log("ERROR: rootfs extraction failed (no shell found)"); return false }
+        xzFile.delete()
         writeGuestConfig()
         rootfsMarker.writeText("ok")
         return true
+    }
+
+    /** Stream-extract a .tar.xz into [dest], converting hardlinks→relative symlinks
+     *  and skipping device nodes. Returns true if any regular file was written. */
+    private fun extractTarXz(xzFile: File, dest: File, log: (String) -> Unit): Boolean {
+        var files = 0; var links = 0; var skipped = 0
+        val destPath = dest.canonicalPath
+        TarArchiveInputStream(XZCompressorInputStream(xzFile.inputStream().buffered())).use { tin ->
+            while (true) {
+                val e = tin.nextTarEntry ?: break
+                val name = e.name.removePrefix("./").trimStart('/')
+                if (name.isEmpty() || name == ".") continue
+                val out = File(dest, name)
+                // Guard against path traversal (../) escaping the rootfs.
+                val cp = out.canonicalPath
+                if (cp != destPath && !cp.startsWith(destPath + File.separator)) {
+                    log("  skip unsafe path: $name"); skipped++; continue
+                }
+                when {
+                    e.isDirectory -> out.mkdirs()
+                    e.isSymbolicLink -> {
+                        out.parentFile?.mkdirs(); out.delete()
+                        runCatching { Os.symlink(e.linkName, out.absolutePath) }
+                            .onFailure { log("  symlink fail $name -> ${e.linkName}: ${it.message}") }
+                        links++
+                    }
+                    e.isLink -> { // hardlink → relative symlink to the target within the rootfs
+                        out.parentFile?.mkdirs(); out.delete()
+                        val rel = relativeLink(name, e.linkName.removePrefix("./").trimStart('/'))
+                        runCatching { Os.symlink(rel, out.absolutePath) }
+                            .onFailure { log("  hardlink fail $name -> $rel: ${it.message}") }
+                        links++
+                    }
+                    e.isCharacterDevice || e.isBlockDevice || e.isFIFO -> skipped++
+                    else -> { // regular file
+                        out.parentFile?.mkdirs(); out.delete()
+                        out.outputStream().buffered().use { o -> tin.copyTo(o) }
+                        runCatching { Os.chmod(out.absolutePath, e.mode and 0xFFF) }
+                        files++
+                    }
+                }
+            }
+        }
+        log("  extracted $files files, $links links, skipped $skipped special")
+        return files > 0
+    }
+
+    /** Relative symlink target from [entryName] (a file) to [targetRootRel] (a path
+     *  relative to the rootfs root), e.g. ("usr/bin/perl5.36.0","usr/bin/perl")→"perl". */
+    private fun relativeLink(entryName: String, targetRootRel: String): String {
+        val fromDir = entryName.trim('/').split("/").dropLast(1)
+        val to = targetRootRel.trim('/').split("/")
+        var i = 0
+        while (i < fromDir.size && i < to.size && fromDir[i] == to[i]) i++
+        val rel = (List(fromDir.size - i) { ".." } + to.drop(i)).joinToString("/")
+        return rel.ifEmpty { "." }
     }
 
     /** Find the newest linuxcontainers Debian arm64 build and build its rootfs URL. */
@@ -201,12 +252,11 @@ class ProotRuntime(private val ctx: Context) {
 
     // ---- proot command construction --------------------------------------
 
-    /** proot WITHOUT a guest root — to run a host tool (tar) under fake-root.
-     *  --no-seccomp is essential: proot's seccomp acceleration makes traced
-     *  syscalls return ENOSYS ("Function not implemented") on many devices/kernels
-     *  (e.g. chdir during tar -C). proot-distro passes it for the same reason. */
+    /** proot base flags. Seccomp acceleration makes some traced syscalls return
+     *  ENOSYS on certain kernels; we disable it via the PROOT_NO_SECCOMP=1 env in
+     *  applyEnv() rather than a CLI flag — proot 5.1.107 has no `--no-seccomp`. */
     private fun prootHostBase(): List<String> =
-        listOf(prootBin.absolutePath, "--kill-on-exit", "--root-id", "--link2symlink", "--no-seccomp")
+        listOf(prootBin.absolutePath, "--kill-on-exit", "--root-id", "--link2symlink")
 
     /** proot entering the Debian guest, running `sh -lc <script>`. */
     private fun prootGuest(script: String): List<String> {
@@ -270,6 +320,4 @@ class ProotRuntime(private val ctx: Context) {
         p.inputStream.bufferedReader().forEachLine(log)
         p.waitFor() == 0
     }.getOrElse { log("process error: ${it.message}"); false }
-
-    private fun firstExisting(vararg paths: String): String? = paths.firstOrNull { File(it).exists() }
 }
