@@ -90,10 +90,15 @@ are cache-busted with `?v=__VER__` rewritten to a mtime-derived version at serve
   connect snapshot as `user_settings`; the client persists changes via
   `user_settings_patch` (deep-merge). Tabs also keep a localStorage fast-cache and
   hydrate from the durable store if that cache is empty.
-- **Manage chip row** (`managers.js`): an expandable **search chip** (always
+- **Manage chip row** (`managers.js`): the chips live in a single frosted
+  **"liquid glass" container** (the app's `--mat-bar`/`--blur` recipe); the active
+  chip floats above with the accent fill. An expandable **search chip** (always
   first) filters the panes as you type, and picked panes promote to the front
   (most-recently-used ordering, persisted in user settings) so frequent screens
   stay at the left edge.
+- **Slash-command highlight** (`app.js` `syncSlashHighlight`): a leading
+  `/command` in the composer lights up in place (accent token over a backdrop that
+  mirrors the textarea); ordinary prose typing is untouched.
 - **File Manager** (`managers.js` `renderFileManager` + `controls/fsmanager.js`):
   a **whole-filesystem** browser (NOT project-scoped) over absolute paths (`~`
   expanded). Navigate (home/up/go-to-path), **new folder**, and per-entry
@@ -241,11 +246,15 @@ the transcript survive for cold resume. (5 min ≈ prompt-cache TTL.)
 
 ### Folder switcher & sessions
 
-The folder pill is a button → a **folder switcher sheet**: each folder expands to its
-sessions + "New chat here" + "Open another folder". It lists the **latest 3 on-disk
-sessions per folder** (`list_sessions scope:all` → grouped by `projectId`, top-3 by
-mtime → `state.recentSessionsByProject`). Live ones are flagged and tap=`switchTab`;
-historical tap=`RESUME {sessionId, projectId, projectDir}` (NOT `switch_session`).
+The folder pill is a button → a **folder switcher sheet**: folders are ordered
+**most-recently-active first** and each header carries a compact **"+ New"** pill
+(no separate row). It lists the **latest 3 on-disk sessions per folder**
+(`list_sessions scope:all` → grouped by `projectId`, top-3 by mtime →
+`state.recentSessionsByProject`). Live ones are flagged, tap=`switchTab`, and their
+dot takes the **folder's colour** when open as a tab; historical tap=`RESUME
+{sessionId, projectId, projectDir}` (NOT `switch_session`). The "ago" label uses a
+broker-tracked **`lastTurnTs`** (last prompt/response, *not* tab focus or file
+mtime) for live sessions, falling back to the transcript mtime for historical ones.
 Ambiguous-encoding sessions bucket under "Folder unknown". Resume is **project-aware**
 (`claude-config` re-encodes each known project dir to map a session folder →
 projectId), so it resumes in the right cwd and seeds from the right `.jsonl` without
