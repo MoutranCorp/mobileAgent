@@ -617,6 +617,17 @@
       const open = el('button', 'ghost small', p.active ? 'Active' : 'Open');
       if (!p.active) open.onclick = () => { send({ type: 'open_project', projectId: p.id }); close(); };
       row.appendChild(open);
+      const del = el('button', 'icon-mini danger', '🗑');
+      del.title = p.external ? 'Remove from list' : 'Delete project';
+      del.onclick = () => {
+        // Managed projects (under ~/projects) are deleted from disk; external
+        // workspaces are only forgotten — never rm a folder the user opened.
+        const msg = p.external
+          ? `Remove “${p.name}” from your workspaces?\n\nThe folder on disk is left untouched — only this app forgets it.`
+          : `Delete “${p.name}”?\n\nThis permanently deletes its folder, all its conversations and checkpoints from storage. This can’t be undone.`;
+        if (confirm(msg)) send({ type: 'project_delete', id: p.id });
+      };
+      row.appendChild(del);
       list.appendChild(row);
     }
     if (!m.projects.length) list.appendChild(el('div', 'mgr-empty', 'No workspaces yet — open a folder below.'));

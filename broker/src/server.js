@@ -19,7 +19,7 @@ import { PromptLibrary } from './controls/prompts.js';
 import { AutoVerify } from './controls/autoverify.js';
 import { UsageLedger } from './controls/usage-ledger.js';
 import { sampleResources, evictionCandidates } from './controls/resources.js';
-import { SessionManager } from './session.js';
+import { SessionManager, MAIN_KEY } from './session.js';
 import { EventType, CommandType, event } from './protocol.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -522,6 +522,7 @@ export class BrokerServer {
             await this.session.newSession(); // fresh session for the foreground
             this.broadcast(event(EventType.TRANSCRIPT, { events: this.transcript.replay(), reset: true }));
           } else {
+            this.transcript.remove(liveEntry.key); // also drop the broker-side transcript file
             await this.session.forgetSession(liveEntry.key); // drop the dead id + engine
           }
         }
@@ -770,6 +771,33 @@ export class BrokerServer {
         this._nativeFingerprint = null;
         this.broadcast(event(EventType.PROJECTS, this.projects.snapshot()));
         await this._switchView(this.projects.activeId);
+        return;
+      }
+      case CommandType.PROJECT_DELETE: {
+        const proj = this.projects.get(cmd.id);
+        if (!proj) { this.broadcast(event(EventType.ERROR, { message: 'Project not found.' })); return; }
+        // 1) Tear down every live/sleeping session bound to this project and drop
+        //    each one's broker-side transcript file.
+        for (const key of this.session.keysForProject(proj.id)) {
+          this.transcript.remove(key);
+          await this.session.forgetSession(key);
+        }
+        // 2) Delete the project's Claude session transcripts + checkpoint bookkeeping.
+        this.claudeConfig.deleteProjectSessions(proj.dir);
+        this.checkpoints.deleteProject(proj.id);
+        // 3) Delete the project itself (folder from disk for a managed project;
+        //    just forget an external workspace) and re-point the active project.
+        const res = this.projects.deleteProject(cmd.id);
+        if (res.error) { this.broadcast(event(EventType.ERROR, { message: `Delete failed: ${res.error}` })); return; }
+        this._nativeFingerprint = null;
+        // 4) If the deleted project was active, bring the new active project (or the
+        //    no-project scratch) into the foreground.
+        if (res.wasActive) await this._switchView(res.newActiveId || MAIN_KEY);
+        this.broadcast(event(EventType.PROJECTS, this.projects.snapshot()));
+        this.broadcast(event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
+        this.broadcast(event(EventType.TOAST, {
+          message: res.dirDeleted ? `Deleted “${proj.name}” and its files.` : `Removed “${proj.name}”.`,
+        }));
         return;
       }
 

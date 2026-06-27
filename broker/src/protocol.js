@@ -112,6 +112,7 @@ export const CommandType = Object.freeze({
   CREATE_PROJECT: 'create_project', // { name, template? }
   OPEN_PROJECT: 'open_project', // { projectId }
   OPEN_PATH: 'open_path', // { path }  open an arbitrary folder as the workspace
+  PROJECT_DELETE: 'project_delete', // { id }  delete a project (managed -> from disk; external -> forget) + its sessions/checkpoints
   WORKSPACE_BROWSE: 'workspace_browse', // { path? }  list subdirs for the folder picker
   // Harness config (skills / agents / commands / memory / settings)
   CONFIG_LIST: 'config_list', // { kind, scope? }

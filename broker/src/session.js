@@ -3,7 +3,7 @@ import path from 'node:path';
 import { createEngine } from './engines/index.js';
 import { EventType, StatusState, event } from './protocol.js';
 
-const MAIN_KEY = '__main__'; // session key when no project is open
+export const MAIN_KEY = '__main__'; // session key when no project is open
 
 /**
  * SessionManager — owns one engine PER PROJECT (the session key) so background
@@ -336,6 +336,13 @@ export class SessionManager {
 
   /** Forget a key's persisted resume id (so a deleted session is never --resume'd)
    *  and tear down its engine if live. Used when a session's .jsonl is deleted. */
+  /** All session keys (live or sleeping) bound to a given project id. */
+  keysForProject(projectId) {
+    const out = [];
+    for (const [key, m] of this.meta) if (m && m.projectId === projectId) out.push(key);
+    return out;
+  }
+
   async forgetSession(key) {
     const m = this.meta.get(key);
     const pid = m?.projectId;

@@ -22,6 +22,15 @@ export class Checkpoints {
   _store(projectId) {
     return path.join(this.dir, `${safe(projectId)}.json`);
   }
+  /** Forget all checkpoint bookkeeping for a project (used when it's deleted). The
+   *  checkpoints are git stashes/commits in the project's own repo, which goes away
+   *  with the folder; this just removes our index/store files for it. */
+  deleteProject(projectId) {
+    const base = path.join(this.dir, safe(projectId));
+    for (const f of [`${base}.json`, `${base}.index`, `${base}.diffindex`]) {
+      try { fs.rmSync(f, { force: true }); } catch { /* ignore */ }
+    }
+  }
   _list(projectId) {
     try { return JSON.parse(fs.readFileSync(this._store(projectId), 'utf8')); } catch { return []; }
   }

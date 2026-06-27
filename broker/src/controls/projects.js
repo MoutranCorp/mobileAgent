@@ -202,6 +202,42 @@ export class ProjectManager {
     return { project: this.get(safe) };
   }
 
+  /**
+   * Delete a project. A MANAGED project (a subdirectory of projectsDir) is removed
+   * from disk; an EXTERNAL workspace (a folder the user opened from elsewhere) is
+   * only forgotten from the list — we never rm a user's arbitrary folder. Also
+   * drops the project's persisted Metro port and, if it was active, re-points the
+   * active project to a survivor (or null).
+   *
+   * Returns { ok, project, dirDeleted, wasActive, newActiveId } or { error }.
+   */
+  deleteProject(id) {
+    const p = this.get(id);
+    if (!p) return { error: 'project not found' };
+    const wasActive = this.activeId === id;
+    let dirDeleted = false;
+    if (!p.external) {
+      // Containment: only ever delete a DIRECT child of projectsDir from disk.
+      const root = path.resolve(this.config.projectsDir);
+      const abs = path.resolve(p.dir);
+      if (abs !== root && abs.startsWith(root + path.sep)) {
+        try { fs.rmSync(abs, { recursive: true, force: true }); dirDeleted = true; }
+        catch (e) { return { error: `could not delete folder: ${e.message}` }; }
+      }
+    }
+    // Forget an external workspace from the opened-folders list (leave its files).
+    if (Array.isArray(this._meta.workspaces)) {
+      this._meta.workspaces = this._meta.workspaces.filter((w) => w !== p.dir);
+    }
+    if (this._meta.ports) delete this._meta.ports[id];
+    if (wasActive) {
+      const survivor = this.list().find((x) => x.id !== id) || null;
+      this.activeId = survivor ? survivor.id : null;
+    }
+    this._saveMeta();
+    return { ok: true, project: p, dirDeleted, wasActive, newActiveId: this.activeId };
+  }
+
   snapshot() {
     return { projects: this.list(), activeProjectId: this.activeId };
   }

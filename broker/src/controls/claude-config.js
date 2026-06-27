@@ -68,6 +68,36 @@ export class ClaudeConfig {
   }
   sessionsDirForProject(projectId) { return this._dirForProject(projectId); }
 
+  /** Delete ALL of a project's Claude session transcripts: the whole
+   *  ~/.claude/projects/<encoded-cwd>/ folder. Used when a project is deleted.
+   *  Contained to under ~/.claude/projects. Returns { ok, removed } or { error }. */
+  deleteProjectSessions(projectDir) {
+    if (!projectDir) return { error: 'no project dir' };
+    const enc = encodeCwd(projectDir);
+    const root = path.join(os.homedir(), '.claude', 'projects');
+    const dir = path.join(root, enc);
+    if (path.resolve(dir) === root || !path.resolve(dir).startsWith(root + path.sep)) {
+      return { error: 'refused: outside the claude projects dir' };
+    }
+    // Also drop any stored titles for sessions that lived in this folder.
+    try {
+      const titles = this._readTitles();
+      let changed = false;
+      if (fs.existsSync(dir)) {
+        for (const n of safeReaddir(dir)) {
+          const id = n.replace(/\.jsonl$/, '');
+          if (titles[id]) { delete titles[id]; changed = true; }
+        }
+      }
+      if (changed) this._writeTitles(titles);
+    } catch { /* best-effort */ }
+    try {
+      if (!fs.existsSync(dir)) return { ok: true, removed: 0 };
+      fs.rmSync(dir, { recursive: true, force: true });
+      return { ok: true, removed: 1 };
+    } catch (e) { return { error: e.message }; }
+  }
+
   /** Delete a session .jsonl, most precisely by its literal encoded folder. */
   deleteSession(sessionId, { projectId = null, projectDir = null } = {}) {
     // Guard against path traversal in caller-supplied values: a session id is a

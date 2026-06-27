@@ -163,6 +163,16 @@ export class TranscriptStore {
     if (f) { try { fs.writeFileSync(f, ''); } catch { /* ignore */ } }
   }
 
+  /** Permanently drop a session's transcript: forget its buffer AND delete the
+   *  on-disk .jsonl (used when a session/project is deleted from storage). */
+  remove(key) {
+    if (key == null) return;
+    this.buffers.delete(key);
+    if (this.activeKey === key) this.activeKey = null;
+    const f = this._file(key);
+    if (f) { try { fs.rmSync(f, { force: true }); } catch { /* ignore */ } }
+  }
+
   /** Replace the active session's transcript wholesale (resume from .jsonl). */
   replace(events) {
     const b = this._bufFor(this.activeKey);
