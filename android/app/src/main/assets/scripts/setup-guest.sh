@@ -7,8 +7,19 @@
 set -e
 
 echo "[setup-guest] installing proot-distro + debian…"
-pkg update -y || true
-pkg install -y proot-distro git || true
+# pkg is Termux's package manager. If the bundled bootstrap shipped without it
+# (or it can't reach a mirror) the install below is a no-op — so don't mask the
+# outcome with `|| true` and march on; verify proot-distro actually exists and
+# fail loudly with an actionable message, otherwise the failure surfaces much
+# later as a cryptic `proot-distro: not found` mid-provision.
+pkg update -y || echo "[setup-guest] warn: pkg update failed (offline mirror?) — continuing"
+pkg install -y proot-distro git || echo "[setup-guest] warn: pkg install failed — checking for an existing proot-distro"
+if ! command -v proot-distro >/dev/null 2>&1; then
+  echo "[setup-guest] ERROR: proot-distro is not installed and pkg could not install it." >&2
+  echo "[setup-guest] The bundled Termux bootstrap must pre-include proot-distro (and git)," >&2
+  echo "[setup-guest] or the device needs network access to a Termux package mirror." >&2
+  exit 1
+fi
 proot-distro install debian || echo "[setup-guest] debian already installed"
 
 echo "[setup-guest] provisioning toolchain inside debian…"

@@ -20,7 +20,17 @@ BROKER_DEST="$HOME/agent-broker"
 
 step "Ensuring toolchain"
 apt-get update -y
-apt-get install -y nodejs npm git curl ca-certificates
+apt-get install -y git curl ca-certificates
+# Debian's apt nodejs is EOL (Node 12 on Bullseye / 18 on Bookworm) — below the
+# broker's required Node >=21. Install a current LTS from NodeSource when needed.
+node_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+if [ "${node_major:-0}" -lt 21 ]; then
+  step "Installing Node 22 (NodeSource) — apt's nodejs is too old"
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  apt-get install -y nodejs
+else
+  apt-get install -y npm
+fi
 have claude || npm install -g @anthropic-ai/claude-code
 ok "node $(node --version), npm $(npm --version)"
 

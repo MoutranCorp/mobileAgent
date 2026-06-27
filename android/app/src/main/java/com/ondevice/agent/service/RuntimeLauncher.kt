@@ -15,6 +15,8 @@ class RuntimeLauncher(private val ctx: Context) {
 
     @Volatile private var process: Process? = null
     @Volatile private var pumpThread: Thread? = null
+    @Volatile private var pollThread: Thread? = null
+    @Volatile private var polling = false
 
     fun launch() {
         RuntimeController.setState(RuntimeState.STARTING, "Preparing runtime…")
@@ -143,11 +145,13 @@ class RuntimeLauncher(private val ctx: Context) {
      * reports the wait so the UI isn't stuck silently in STARTING.
      */
     private fun pollHealth() {
-        Thread {
+        if (pollThread?.isAlive == true) return // never run two pollers (restart used to leak one)
+        polling = true
+        pollThread = Thread {
             val url = RuntimeConfig.brokerUrl(ctx)
             val deadline = System.currentTimeMillis() + 90_000
             var announced = false
-            while (true) {
+            while (polling) {
                 if (BrokerHealth.isUp(url)) {
                     RuntimeController.setState(RuntimeState.RUNNING, "broker is up")
                     RuntimeController.log("[runtime] broker healthy at $url")
@@ -162,11 +166,20 @@ class RuntimeLauncher(private val ctx: Context) {
                 }
                 Thread.sleep(if (announced) 5000 else 1000)
             }
-        }.apply { isDaemon = true }.start()
+        }.apply { isDaemon = true; start() }
     }
 
     fun stop() {
-        runCatching { process?.destroy() }
+        polling = false // tell the health poller to exit (was while(true), never stopped)
+        // destroyForcibly (SIGKILL) and, where ProcessHandle is available (API 26+),
+        // also kill descendants so the proot guest + Node broker don't orphan.
+        runCatching {
+            val p = process
+            if (p != null) {
+                runCatching { p.toHandle().descendants().forEach { it.destroyForcibly() } }
+                p.destroyForcibly()
+            }
+        }
         process = null
         if (RuntimeController.state.value != RuntimeState.BOOTSTRAP_MISSING) {
             RuntimeController.setState(RuntimeState.STOPPED, "stopped")
