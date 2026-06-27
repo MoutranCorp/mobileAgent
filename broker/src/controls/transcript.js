@@ -119,6 +119,11 @@ export class TranscriptStore {
     return b.events.slice();
   }
 
+  /** Commit pending streamed text/thinking for EVERY session buffer to disk (not
+   *  just the active one) — used on shutdown so a background session's in-flight
+   *  reply isn't lost. */
+  flushAll() { for (const b of this.buffers.values()) this._flush(b); }
+
   clear() {
     const b = this._bufFor(this.activeKey);
     if (!b) return;

@@ -400,7 +400,16 @@ export class SessionManager {
     try { if (fs.existsSync(this.sessionsFile)) return JSON.parse(fs.readFileSync(this.sessionsFile, 'utf8')); } catch { /* ignore */ }
     return {};
   }
+  // Debounced: SESSION_META can fire rapidly (each engine (re)start), and a
+  // synchronous write on every one stalls the event loop on slow (proot/eMMC) FS.
   _saveSessions() {
-    try { fs.writeFileSync(this.sessionsFile, JSON.stringify(this._sessionByProject, null, 2)); } catch { /* ignore */ }
+    if (this._sessionSaveTimer) return;
+    this._sessionSaveTimer = setTimeout(() => { this._sessionSaveTimer = null; this.flushSessionsFile(); }, 400);
+    this._sessionSaveTimer.unref?.();
+  }
+  /** Write sessions.json now (also used on shutdown to not lose a pending save). */
+  flushSessionsFile() {
+    if (this._sessionSaveTimer) { clearTimeout(this._sessionSaveTimer); this._sessionSaveTimer = null; }
+    try { fs.writeFileSync(this.sessionsFile, JSON.stringify(this._sessionByProject, null, 2), { mode: 0o600 }); } catch { /* ignore */ }
   }
 }

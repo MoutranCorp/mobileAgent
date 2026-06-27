@@ -36,6 +36,8 @@ export class BrokerServer {
     this.config = config;
     this.clients = new Set();
     this._nativeFingerprint = null;
+    this._pendingTurn = new Map(); // sessionKey -> { turnId, checkpointId, text } for revert stamping
+    this._turnCheckpoints = {};    // sessionKey -> checkpoint id taken before the active turn
 
     // All outbound events flow through one hook so we can record the transcript
     // and detect native-dep changes before broadcasting.
@@ -95,7 +97,6 @@ export class BrokerServer {
 
   async stop() {
     if (this._resTimer) { clearInterval(this._resTimer); this._resTimer = null; } // stop sampling before engines die
-    this.transcript.replay(); // flush any pending text record to disk
     this.runner.stopAll();
     // Force-close client sockets (don't wait on a polite close handshake) and
     // destroy any lingering keep-alive HTTP/WebSocket sockets — otherwise
@@ -114,6 +115,10 @@ export class BrokerServer {
       })(),
       new Promise((r) => setTimeout(r, 2000)),
     ]);
+    // Flush AFTER engines stop so any text they emitted during async shutdown — and
+    // every background session's buffer, not just the active one — reaches disk.
+    try { this.transcript.flushAll(); } catch { /* ignore */ }
+    try { this.session.flushSessionsFile?.(); } catch { /* ignore */ }
   }
 
   // --- websocket --------------------------------------------------------------
@@ -143,10 +148,9 @@ export class BrokerServer {
       // flight) so its bubble can be reverted later. Must precede transcript.record.
       // (The engine emits this echo up front now — see claude-code `send()` — so it
       // records ABOVE the agent's response and replays in order.)
-      if (ev.type === EventType.USER_ECHO && this._pendingTurn && key === activeKey) {
-        ev.turnId = this._pendingTurn.turnId;
-        ev.checkpointId = this._pendingTurn.checkpointId;
-        this._pendingTurn = null;
+      if (ev.type === EventType.USER_ECHO) {
+        const pt = this._pendingTurn.get(key); // keyed per-session: a background echo can't steal it
+        if (pt) { ev.turnId = pt.turnId; ev.checkpointId = pt.checkpointId; this._pendingTurn.delete(key); }
       }
       this.transcript.record(ev); // routes by ev.sessionKey -> per-session buffer
       // Learn alias -> versioned id from the ACTIVE engine's init only (a background
@@ -383,7 +387,9 @@ export class BrokerServer {
   async _dispatch(ws, cmd) {
     switch (cmd.type) {
       case CommandType.HELLO:
-        return this._sendSnapshot(ws);
+        // The full snapshot is already sent once on connection; re-sending it here
+        // (the client sends `hello` on open) just doubled every greeting event.
+        return;
       case CommandType.PING:
         return this._send(ws, event('pong', {}));
 
@@ -396,7 +402,6 @@ export class BrokerServer {
         if (proj && this.checkpoints.isRepo(proj.dir)) {
           const cp = this.checkpoints.snapshot(proj.id, proj.dir, (cmd.text || 'turn').slice(0, 60));
           if (cp) {
-            this._turnCheckpoints = this._turnCheckpoints || {};
             this._turnCheckpoints[this.session.activeKey] = cp.id; // per-session baseline
             checkpointId = cp.id;
             this.broadcast(event(EventType.CHECKPOINTS, this.checkpoints.list(proj.id, proj.dir)));
@@ -407,7 +412,7 @@ export class BrokerServer {
         // The engine emits the echo up front (claude-code `send()` / mock), so it
         // records ABOVE the agent's response and replays in chronological order.
         this._turnSeq = (this._turnSeq || 0) + 1;
-        this._pendingTurn = { turnId: `t${this._turnSeq}`, checkpointId, text: cmd.text || '' };
+        this._pendingTurn.set(this.session.activeKey, { turnId: `t${this._turnSeq}`, checkpointId, text: cmd.text || '' });
         return this.session.sendUserMessage(cmd.text || '', cmd.images);
       }
       case CommandType.SLASH_COMMAND:
@@ -440,9 +445,12 @@ export class BrokerServer {
         return;
       }
       case CommandType.SESSION_STOP:
+        if (!cmd.key || !this.session.meta.has(cmd.key)) return this._send(ws, event('ack', { ok: false, message: 'Unknown session key' }));
         await this.session.stopEngineKeepTranscript(cmd.key);
+        delete this._turnCheckpoints[cmd.key]; // drop the stale per-turn baseline
         return this.broadcast(event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
       case CommandType.SESSION_PIN:
+        if (!cmd.key || !this.session.meta.has(cmd.key)) return this._send(ws, event('ack', { ok: false, message: 'Unknown session key' }));
         this.session.setPinned(cmd.key, cmd.pinned);
         return this.broadcast(event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
       case CommandType.RESUME: {
@@ -618,7 +626,12 @@ export class BrokerServer {
         const removed = this.transcript.truncateBefore(cmd.turnId);
         // 3) Fork a fresh engine session — Claude sessions are append-only, so this
         //    is the honest way to make the agent forget the reverted turn onward.
+        const revertKey = this.session.activeKey;
         await this.session.newSession();
+        // Clear stale turn state for the reverted session so the next echo isn't
+        // stamped with a pre-revert turn/checkpoint id.
+        this._pendingTurn.delete(revertKey);
+        delete this._turnCheckpoints[revertKey];
         // 4) Push the rebuilt state to the UI.
         this.broadcast(event(EventType.TRANSCRIPT, { events: this.transcript.replay(), reset: true }));
         if (p) {
