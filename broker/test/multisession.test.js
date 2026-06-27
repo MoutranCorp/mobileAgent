@@ -192,3 +192,40 @@ test('SWITCH_SESSION keeps projects.activeId synced to the focused session proje
     assert.equal(server.projects.activeId, 'projA');
   } finally { ws.close(); await server.stop(); }
 });
+
+// Regression: two concurrent sessions in the SAME folder must each get their OWN
+// Claude session id. The bug: a fresh tab fell back to _sessionByProject[projectId]
+// and RESUMED the folder's first session, so every tab wrote into one .jsonl and
+// only one session showed up in "All sessions".
+test('concurrent sessions in the same folder get DISTINCT session ids (no resume collision)', async () => {
+  const { server, ws, send, open } = await boot(['projA']);
+  const waitState = async (fn, ms = 9000) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) { if (fn()) return; await new Promise((r) => setTimeout(r, 25)); }
+    throw new Error('timeout waiting for state');
+  };
+  try {
+    await open('projA');
+    await waitState(() => server.session.meta.get('projA')?.sessionId);
+    const id1 = server.session.meta.get('projA').sessionId;
+
+    send({ type: 'new_session' }); // fresh concurrent tab in the same folder
+    await waitState(() => server.session.meta.get('projA#1')?.sessionId);
+    const id2 = server.session.meta.get('projA#1').sessionId;
+
+    assert.ok(id1 && id2, 'both sessions resolved a session id');
+    assert.notEqual(id1, id2, 'concurrent fresh sessions must NOT share a Claude session id');
+
+    // A third tab too — still distinct.
+    send({ type: 'new_session' });
+    await waitState(() => server.session.meta.get('projA#2')?.sessionId);
+    const id3 = server.session.meta.get('projA#2').sessionId;
+    assert.equal(new Set([id1, id2, id3]).size, 3, 'three tabs -> three distinct sessions');
+
+    // The persisted resume map is keyed by session KEY, not the folder, so each
+    // tab's id is recoverable independently.
+    assert.equal(server.session._sessionByProject['projA'], id1);
+    assert.equal(server.session._sessionByProject['projA#1'], id2);
+    assert.equal(server.session._sessionByProject['projA#2'], id3);
+  } finally { ws.close(); await server.stop(); }
+});

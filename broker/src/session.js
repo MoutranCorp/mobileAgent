@@ -136,7 +136,15 @@ export class SessionManager {
     const cwd = opts.cwd || project?.dir || prevMeta?.cwd || this.config.projectsDir;
     const projectId = prevMeta?.projectId ?? project?.id ?? null; // an existing session's own folder id wins (cold-resume after a fallback)
     const env = this.secrets.envForProfile(profile);
-    const resolvedResume = resumeId ?? prevMeta?.sessionId ?? (projectId ? this._sessionByProject[projectId] : null) ?? null;
+    // Resolve the resume id. A FRESH tab must get its OWN brand-new Claude session
+    // (resume nothing) — otherwise it inherits the folder's existing session and
+    // every concurrent tab writes into the SAME .jsonl, so they collapse into one
+    // session (the "only one session shows in this folder" bug). The persisted
+    // fallback is keyed by SESSION KEY to match how it's written (line ~389); the
+    // first session's key === projectId, so cold-resume of a project still works.
+    const resolvedResume = opts.fresh
+      ? (resumeId ?? null)
+      : (resumeId ?? prevMeta?.sessionId ?? (key ? this._sessionByProject[key] : null) ?? null);
 
     // Keep the chosen model across non-model restarts; drop it on a profile change.
     const profileChanged = profileId !== this.activeProfileId;

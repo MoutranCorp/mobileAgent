@@ -15,6 +15,11 @@ import { EventType, StatusState, CommandType } from '../protocol.js';
  * It also genuinely touches the filesystem (creates/edits files in the project
  * dir) so the "files change in ~/projects/<app>" acceptance criteria is real.
  */
+// Module-level spawn counter so each fresh mock engine reports a UNIQUE session
+// id (like a real CLI), while a RESUMED spawn keeps the id it was given. Without
+// this every mock instance emitted the same id, hiding session-identity bugs.
+let _mockSpawnSeq = 0;
+
 export class MockEngine extends EngineAdapter {
   constructor(opts) {
     super(opts);
@@ -22,12 +27,15 @@ export class MockEngine extends EngineAdapter {
     this._interrupted = false;
     this._turn = 0;
     this._seq = 0;
+    this._resumeId = opts?.resumeId || null; // base ignores it; honor it here
   }
 
   async _spawn() {
     // Simulate the system/init handshake of a real harness.
     await delay(120);
-    this.setSession(`mock-${this.profile?.id || 'session'}-${this._stableId()}`);
+    // Resume keeps the given id; a fresh spawn mints a new unique one (mirrors how
+    // the real CLI assigns / re-uses a session id).
+    this.setSession(this._resumeId || `mock-${this.profile?.id || 'session'}-${++_mockSpawnSeq}`);
     // Mirror the claude-code capability surface so the UI's managers/palettes work offline.
     this.emitEvent(EventType.CAPABILITIES, {
       slashCommands: ['/compact', '/clear', '/init', '/review', '/help'],
