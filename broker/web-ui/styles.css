@@ -427,6 +427,9 @@ svg { display: block; }
   padding: 10px 14px; border-radius: var(--r-lg); line-height: 1.45; white-space: pre-wrap;
   word-wrap: break-word; font-size: 16px; max-width: 86%;
 }
+/* "Select text" mode: make this bubble freely selectable and hint it with a ring. */
+.bubble.selecting { user-select: text; -webkit-user-select: text; cursor: text;
+  outline: 2px solid rgba(var(--accent-rgb), .55); outline-offset: 2px; }
 .msg.user { align-items: flex-end; }
 .msg.user .role { display: none; }
 .msg.user .bubble { background: var(--user-grad); color: #fff; border-bottom-right-radius: 7px;

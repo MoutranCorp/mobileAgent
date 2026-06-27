@@ -96,6 +96,9 @@
     const copyBtn = el('button', 'action-item', 'Copy');
     copyBtn.onclick = () => { copyToClipboard(rawOfBubble(msgEl, isUser)); closeBubbleMenu(); };
     group.appendChild(copyBtn);
+    const selBtn = el('button', 'action-item', 'Select text');
+    selBtn.onclick = () => { closeBubbleMenu(); enableBubbleSelection(msgEl); };
+    group.appendChild(selBtn);
     if (isUser && msgEl.dataset.turnId) {
       const rev = el('button', 'action-item danger', 'Revert to here');
       rev.onclick = () => { closeBubbleMenu(); revertFromBubble(msgEl); };
@@ -111,6 +114,25 @@
     state._bubbleMenu = scrim;
   }
   function closeBubbleMenu() { if (state._bubbleMenu) { state._bubbleMenu.remove(); state._bubbleMenu = null; } }
+
+  // "Select text": flip the bubble into selectable mode and pre-select its contents
+  // so the OS selection handles appear immediately — the user drags the handles to
+  // narrow the selection, then copies with the native control. (Copy-all stays the
+  // quick path; this is for grabbing a specific span.)
+  function enableBubbleSelection(msgEl) {
+    const b = msgEl.querySelector('.bubble');
+    if (!b) return;
+    document.querySelectorAll('.bubble.selecting').forEach((x) => x.classList.remove('selecting'));
+    b.classList.add('selecting');
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(b);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } catch { /* selection API unavailable — class alone still enables manual select */ }
+    toast('Drag the handles to select, then copy', 'info');
+  }
 
   function buildRevertWarning(restoresFiles) {
     const files = restoresFiles
@@ -2475,8 +2497,15 @@
     // Long-press (touch) / right-click (desktop) a message bubble -> action menu.
     const bubbleAt = (e) => {
       const m = e.target.closest && e.target.closest('.msg.user, .msg.assistant');
-      return m && m.id !== 'activityRow' && m.querySelector('.bubble') ? m : null;
+      if (!m || m.id === 'activityRow' || !m.querySelector('.bubble')) return null;
+      if (m.querySelector('.bubble.selecting')) return null; // in text-select mode: let the OS handle the long-press
+      return m;
     };
+    // Drop text-select mode once the selection is cleared (user tapped away).
+    document.addEventListener('selectionchange', () => {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed) document.querySelectorAll('.bubble.selecting').forEach((x) => x.classList.remove('selecting'));
+    });
     let _lp = null, _lpStart = null;
     const tr = $('transcript');
     tr.addEventListener('touchstart', (e) => {
