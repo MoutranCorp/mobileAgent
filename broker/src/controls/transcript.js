@@ -18,6 +18,11 @@ const KEEP = new Set([
   'apks', // build-artifact widgets persist for the session that produced them
 ]);
 const MAX_RECORDS = 1500;
+// Cap how many session buffers we hold in memory at once. Each can hold up to
+// MAX_RECORDS events, so without a cap a long-lived broker that views many
+// sessions accumulates them all. Evict the least-recently-touched non-active
+// buffer (flushing it first — it reloads from .jsonl on next access).
+const MAX_BUFFERS = 24;
 
 export class TranscriptStore {
   constructor(stateDir) {
@@ -48,8 +53,28 @@ export class TranscriptStore {
     if (key == null) key = this.activeKey;
     if (key == null) return null;
     let b = this.buffers.get(key);
-    if (!b) { b = { key, events: this._load(key), pendText: null, pendThink: null }; this.buffers.set(key, b); }
+    if (b) {
+      // Bump recency: delete+set moves it to the end of the Map's iteration order.
+      this.buffers.delete(key); this.buffers.set(key, b);
+      return b;
+    }
+    b = { key, events: this._load(key), pendText: null, pendThink: null };
+    this.buffers.set(key, b);
+    this._evictBuffers();
     return b;
+  }
+
+  /** Keep at most MAX_BUFFERS buffers; drop the oldest non-active ones (Map
+   *  iteration is insertion/recency order). Flush before dropping so nothing is
+   *  lost — the buffer reloads from disk on next access. */
+  _evictBuffers() {
+    if (this.buffers.size <= MAX_BUFFERS) return;
+    for (const [k, buf] of this.buffers) {
+      if (this.buffers.size <= MAX_BUFFERS) break;
+      if (k === this.activeKey) continue;
+      this._flush(buf);
+      this.buffers.delete(k);
+    }
   }
 
   /** Set which session the UI is viewing (its buffer is what replay() returns). */
@@ -150,8 +175,8 @@ export class TranscriptStore {
 
   /** Drop the active session's user_echo with this turnId and everything after
    *  (a revert). Rewrites the .jsonl. Returns records removed, or null if absent. */
-  truncateBefore(turnId) {
-    const b = this._bufFor(this.activeKey);
+  truncateBefore(turnId, key = this.activeKey) {
+    const b = this._bufFor(key);
     if (!b) return null;
     this._flush(b);
     const idx = b.events.findIndex((e) => e.type === 'user_echo' && e.turnId === turnId);

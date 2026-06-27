@@ -15,7 +15,7 @@ export class ModelResolver {
     this.file = path.join(stateDir, 'models.json');
     this.claudeBin = claudeBin;
     this.cache = this._load();
-    this._inFlight = null;
+    this._chain = null;
   }
 
   _load() {
@@ -39,13 +39,17 @@ export class ModelResolver {
   /** Return [{alias, id, label}] for the given aliases, resolving misses. */
   async list(aliases, { cwd, env, refresh = false } = {}) {
     if (refresh) this.cache = {};
-    if (this._inFlight) await this._inFlight;
-    const missing = aliases.filter((a) => !this.cache[a]);
-    if (missing.length) {
-      this._inFlight = this._resolveAll(missing, { cwd, env });
-      await this._inFlight;
-      this._inFlight = null;
-    }
+    // Serialize all resolution through one chain. The old `_inFlight` guard was
+    // racy: two concurrent callers could both observe it null, both compute the
+    // same `missing` set, and both spawn resolvers (double work, possible
+    // duplicate caching). Recomputing `missing` *inside* the chained step means a
+    // later caller sees whatever an earlier step already cached.
+    const run = async () => {
+      const missing = aliases.filter((a) => !this.cache[a]);
+      if (missing.length) await this._resolveAll(missing, { cwd, env });
+    };
+    this._chain = (this._chain || Promise.resolve()).then(run, run);
+    await this._chain;
     return aliases.map((alias) => ({ alias, id: this.cache[alias] || null, label: labelFor(alias, this.cache[alias]) }));
   }
 

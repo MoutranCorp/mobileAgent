@@ -575,7 +575,13 @@ export class ClaudeCodeEngine extends EngineAdapter {
 
 function windowForModel(model) {
   if (!model) return 200000;
-  return /\[1m\]|1m|-1m/i.test(model) ? 1000000 : 200000;
+  const m = String(model).toLowerCase();
+  // Match the 1M-context variants by an explicit, anchored token — the old
+  // /1m/ substring also matched incidental "1m" anywhere in an id. The marker
+  // appears as a "[1m]" suffix or a "-1m" segment on the model name.
+  if (/\[1m\]|(^|[^a-z0-9])1m($|[^a-z0-9])/.test(m)) return 1000000;
+  if (/(^|[^a-z0-9])500k($|[^a-z0-9])/.test(m)) return 500000;
+  return 200000;
 }
 
 function normalizeToolOutput(content) {

@@ -124,6 +124,17 @@ export class Checkpoints {
       if (abs !== rootAbs && !abs.startsWith(rootAbs + path.sep)) continue;
       try { fs.rmSync(abs, { force: true }); removed++; } catch { /* ignore */ }
     }
+    // Second pass: remove now-empty directories the agent created during the turn.
+    // The file loop above only deletes files, leaving empty dirs that make the
+    // tree look "not fully restored". `--directory` lists untracked dirs; walk
+    // deepest-first and rmdir empties, never crossing the project root.
+    const untrackedDirs = git(['ls-files', '--others', '--directory', '--exclude-standard'], dir)
+      .stdout.split('\n').map((s) => s.trim()).filter((s) => s.endsWith('/'));
+    for (const relDir of untrackedDirs.sort((a, b) => b.length - a.length)) {
+      const abs = path.resolve(dir, relDir);
+      if (abs !== rootAbs && !abs.startsWith(rootAbs + path.sep)) continue;
+      try { fs.rmdirSync(abs); } catch { /* not empty or already gone — leave it */ }
+    }
     return { ok: true, id: cp.id, removed };
   }
 }

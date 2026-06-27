@@ -7,7 +7,7 @@ import path from 'node:path';
 import { WebSocket } from 'ws';
 import { loadConfig } from '../src/config.js';
 import { BrokerServer } from '../src/server.js';
-import { ClaudeConfig } from '../src/controls/claude-config.js';
+import { ClaudeConfig, encodeCwd } from '../src/controls/claude-config.js';
 import { TranscriptStore } from '../src/controls/transcript.js';
 import { labelFor, familyMatches, ModelResolver } from '../src/controls/model-resolver.js';
 import { MockEngine } from '../src/engines/mock.js';
@@ -207,4 +207,19 @@ test('ClaudeConfig hook delete removes only the targeted hook, not the whole gro
   const after = JSON.parse(fssync.readFileSync(path.join(proj, '.claude', 'settings.json'), 'utf8'));
   const cmds = after.hooks.PreToolUse[0].hooks.map((h) => h.command);
   assert.deepEqual(cmds, ['B'], 'only hook A removed; B survives');
+});
+
+test('encodeCwd matches Claude\'s real ~/.claude/projects folder encoding', () => {
+  // Every non-alphanumeric char -> '-', per character, NO run-collapsing. Verified
+  // char-for-char against real folder names produced by the claude CLI on disk.
+  assert.equal(encodeCwd('/home/user/mobileAgent'), '-home-user-mobileAgent');
+  // Leading '/-' yields a double dash (runs not collapsed).
+  assert.equal(
+    encodeCwd('/tmp/claude-0/-home-user-x/abc-123/scratchpad'),
+    '-tmp-claude-0--home-user-x-abc-123-scratchpad'
+  );
+  // Dots and underscores are encoded too (the old regex left these intact and
+  // collapsed runs, so these paths mapped to the wrong folder -> "folder unknown").
+  assert.equal(encodeCwd('/home/user/my.app_v2'), '-home-user-my-app-v2');
+  assert.equal(encodeCwd('/a//b'), '-a--b');
 });

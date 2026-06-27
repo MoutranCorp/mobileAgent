@@ -212,7 +212,12 @@ export class Files {
         if (content.indexOf(NUL) !== -1 || !content.includes(query)) continue;
         const count = content.split(query).length - 1;
         const next = content.split(query).join(replacement == null ? '' : replacement);
-        try { fs.writeFileSync(childAbs, next); } catch { continue; }
+        // Atomic per-file write: a process killed mid-loop should never leave a
+        // truncated/half-written file. Write a sibling temp then rename over it
+        // (rename is atomic on the same filesystem).
+        const tmp = `${childAbs}.tmp-${process.pid}`;
+        try { fs.writeFileSync(tmp, next); fs.renameSync(tmp, childAbs); }
+        catch { try { fs.rmSync(tmp, { force: true }); } catch { /* ignore */ } continue; }
         filesChanged++; replacements += count; files.push({ path: childRel, count });
       }
     };
