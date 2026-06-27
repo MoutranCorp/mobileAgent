@@ -845,7 +845,11 @@ mark.find-hit.current { background: var(--orange); color: #000; }
 .modal-card.mgr { width: min(820px, 100%); height: 92dvh; }
 .mgr-layout { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .mgr-tabs { display: flex; flex-direction: row; flex-wrap: nowrap; gap: 7px; padding: 4px 16px 14px;
-  overflow-x: auto; scrollbar-width: none; border-bottom: .5px solid var(--separator); }
+  overflow-x: auto; scrollbar-width: none; border-bottom: .5px solid var(--separator);
+  /* Fade the trailing edge so it's obvious the (20+) tab strip scrolls — the
+     scrollbar is hidden, so without this the offscreen tabs look absent. */
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent); }
 .mgr-tabs::-webkit-scrollbar { display: none; }
 .mgr-tab { flex: 0 0 auto; background: var(--fill-3); border: none; color: var(--label-2); text-align: center;
   padding: 8px 15px; border-radius: var(--r-pill); cursor: pointer; font-size: 13.5px; font-weight: 560; white-space: nowrap; }
