@@ -236,7 +236,20 @@ export class DevTools {
     }
     const project = this._resolveProject(projectId);
     const dir = cwd || project?.dir || this.config.projectsDir;
-    return this.runner.start('run', command, { cwd: dir });
+    return this.runner.start('run', this._maybePty(command), { cwd: dir });
+  }
+
+  /** Interactive CLIs (notably `claude` / `claude setup-token` for login) need a
+   *  TTY: over a plain pipe they block-buffer stdout (the login URL never prints)
+   *  and refuse interactive prompts. Allocate a real PTY with util-linux `script`
+   *  for `claude` commands so on-device login works; other commands run as-is. */
+  _maybePty(command) {
+    const cmd = command.trim();
+    if (!/^claude(\s|$)/.test(cmd)) return command;
+    const esc = `'${cmd.replace(/'/g, `'\\''`)}'`;
+    // `script -qec <cmd> /dev/null`: quiet, exit-code of child, run <cmd>, no typescript
+    // file. Fall back to the raw command if `script` isn't installed.
+    return `if command -v script >/dev/null 2>&1; then script -qec ${esc} /dev/null; else ${cmd}; fi`;
   }
 
   /** Raw keystrokes/lines to the running `run` command's stdin (no echo, no newline

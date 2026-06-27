@@ -2078,7 +2078,17 @@
     if (stop) stop.classList.toggle('hidden', !runActive);
   }
 
-  function onControlOutput(ev) { appendTerminal(ev.data, ev.stream === 'stderr' ? 'stderr' : ''); }
+  // Strip ANSI escape sequences (cursor moves, colors, OSC) — interactive CLIs run
+  // under a PTY (for on-device `claude` login) emit them and our plain terminal
+  // can't interpret them, so they'd show as garbage like "[1m" / "[?25l".
+  function stripAnsi(s) {
+    return String(s)
+      .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '') // OSC (e.g. window title)
+      .replace(/\x1b[@-Z\\-_]/g, '')                   // single-char ESC sequences
+      .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')       // CSI (colors, cursor)
+      .replace(/\r(?!\n)/g, '\n');                     // bare CR → newline
+  }
+  function onControlOutput(ev) { appendTerminal(stripAnsi(ev.data), ev.stream === 'stderr' ? 'stderr' : ''); }
   const TERM_MAX_SPANS = 2000;
   function appendTerminal(text, cls) {
     const body = $('termBody');

@@ -41,6 +41,10 @@ fun AgentWebView(
     AndroidView(
         modifier = modifier,
         factory = { ctx ->
+            runCatching {
+                val pkg = WebView.getCurrentWebViewPackage()
+                RuntimeController.log("[webui] WebView engine ${pkg?.packageName} ${pkg?.versionName}")
+            }
             WebView(ctx).apply {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
@@ -108,8 +112,26 @@ fun AgentWebView(
                     override fun doUpdateVisitedHistory(view: WebView, u: String?, isReload: Boolean) {
                         onCanGoBackChange(view.canGoBack())
                     }
+                    override fun onPageStarted(view: WebView, u: String?, favicon: android.graphics.Bitmap?) {
+                        RuntimeController.log("[webui] page started: $u")
+                        // Install an error catcher ASAP so an exception during init lands
+                        // in the runtime log even on the in-guest clone (no overlay yet).
+                        view.evaluateJavascript(
+                            "window.onerror=function(m,s,l,c,e){console.error('[jserr] '+m+' @'+s+':'+l+':'+c+(e&&e.stack?' '+e.stack:''));};" +
+                                "window.addEventListener('unhandledrejection',function(e){console.error('[jsrej] '+(e.reason&&e.reason.stack||e.reason));});",
+                            null,
+                        )
+                    }
                     override fun onPageFinished(view: WebView, u: String?) {
                         onCanGoBackChange(view.canGoBack())
+                        // Report whether the page actually built any DOM, so we can tell a
+                        // blank-but-loaded page (CSS/visibility) from a failed-to-build one
+                        // (JS) without guessing.
+                        view.evaluateJavascript(
+                            "(function(){try{var b=document.body;var app=document.getElementById('app');" +
+                                "return 'bodyLen='+(b?b.innerHTML.length:-1)+' appChildren='+(app?app.children.length:-1)+" +
+                                "' title='+document.title+' proto='+location.protocol+' err='+(window.__lasterr||'none');}catch(e){return 'probe-fail '+e;}})()"
+                        ) { r -> RuntimeController.log("[webui] page finished: $u :: ${r?.trim('"')}") }
                     }
                     override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                         if (!request.isForMainFrame) return // ignore sub-resource hiccups
