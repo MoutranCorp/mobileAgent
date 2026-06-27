@@ -85,19 +85,24 @@ class ProotRuntime(private val ctx: Context) {
     /** Download the Debian arm64 rootfs (.tar.xz), xz-decompress, extract under proot. */
     fun downloadAndExtractRootfs(log: (String) -> Unit): Boolean {
         rootfs.mkdirs(); tmpDir.mkdirs()
-        val url = resolveRootfsUrl(log) ?: run { log("ERROR: could not resolve a Debian rootfs URL"); return false }
-        val xzFile = File(rootDir, "rootfs.tar.xz")
-        log("Downloading Debian rootfs…")
-        if (!download(url, xzFile, log)) { log("ERROR: rootfs download failed"); return false }
-
         val tarFile = File(rootDir, "rootfs.tar")
-        log("Decompressing rootfs (xz)…")
-        runCatching {
-            XZInputStream(xzFile.inputStream().buffered()).use { i ->
-                tarFile.outputStream().buffered().use { o -> i.copyTo(o) }
-            }
-        }.onFailure { log("ERROR: xz decompress: ${it.message}"); return false }
-        xzFile.delete()
+        // Cache the decompressed tar so a failed extraction retry skips the ~90MB
+        // download + xz-decompress.
+        if (!tarFile.exists()) {
+            val url = resolveRootfsUrl(log) ?: run { log("ERROR: could not resolve a Debian rootfs URL"); return false }
+            val xzFile = File(rootDir, "rootfs.tar.xz")
+            log("Downloading Debian rootfs…")
+            if (!download(url, xzFile, log)) { log("ERROR: rootfs download failed"); return false }
+            log("Decompressing rootfs (xz)…")
+            runCatching {
+                XZInputStream(xzFile.inputStream().buffered()).use { i ->
+                    tarFile.outputStream().buffered().use { o -> i.copyTo(o) }
+                }
+            }.onFailure { log("ERROR: xz decompress: ${it.message}"); tarFile.delete(); xzFile.delete(); return false }
+            xzFile.delete()
+        } else {
+            log("Reusing cached rootfs.tar from a previous attempt")
+        }
 
         log("Extracting rootfs (fake-root)…")
         // Extract under proot --root-id so device nodes / chown / setuid succeed
@@ -105,8 +110,11 @@ class ProotRuntime(private val ctx: Context) {
         val tar = firstExisting("/system/bin/tar", "/system/xbin/tar") ?: run { log("ERROR: no system tar"); return false }
         val argv = prootHostBase() + listOf(tar, "-x", "-f", tarFile.absolutePath, "-C", rootfs.absolutePath)
         val ok = runProcess(argv, log)
+        // Verify by sentinel rather than trusting the exit code (device-node mknod /
+        // setuid bits fail harmlessly for a non-root extractor).
+        val extracted = File(rootfs, "bin/bash").exists() || File(rootfs, "usr/bin/bash").exists() || File(rootfs, "bin/sh").exists()
+        if (!extracted) { log("ERROR: rootfs extraction failed (exit ok=$ok, no shell found)"); return false }
         tarFile.delete()
-        if (!ok) { log("ERROR: rootfs extraction failed"); return false }
         writeGuestConfig()
         rootfsMarker.writeText("ok")
         return true
@@ -191,9 +199,12 @@ class ProotRuntime(private val ctx: Context) {
 
     // ---- proot command construction --------------------------------------
 
-    /** proot WITHOUT a guest root — to run a host tool (tar) under fake-root. */
+    /** proot WITHOUT a guest root — to run a host tool (tar) under fake-root.
+     *  --no-seccomp is essential: proot's seccomp acceleration makes traced
+     *  syscalls return ENOSYS ("Function not implemented") on many devices/kernels
+     *  (e.g. chdir during tar -C). proot-distro passes it for the same reason. */
     private fun prootHostBase(): List<String> =
-        listOf(prootBin.absolutePath, "--kill-on-exit", "--root-id", "--link2symlink")
+        listOf(prootBin.absolutePath, "--kill-on-exit", "--root-id", "--link2symlink", "--no-seccomp")
 
     /** proot entering the Debian guest, running `sh -lc <script>`. */
     private fun prootGuest(script: String): List<String> {
