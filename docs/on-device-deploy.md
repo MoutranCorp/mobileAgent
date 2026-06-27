@@ -26,6 +26,38 @@ lock, battery exemption, proot launch, Keystore secret injection — see
 > for that when the on-device proot runtime isn't provisioned yet. The on-device
 > localhost loop is the core goal; lead with it.
 
+## Self-contained APK: provisioning & updating (the current default)
+
+The sideloaded APK now bundles proot + the broker and provisions a Debian guest on
+first launch — no Termux, no manual scripts. The flow (in
+[`service/ProotRuntime.kt`](../android/app/src/main/java/com/ondevice/agent/service/ProotRuntime.kt),
+driven by [`RuntimeLauncher.kt`](../android/app/src/main/java/com/ondevice/agent/service/RuntimeLauncher.kt)),
+each step gated by its own marker so it runs once:
+
+1. **stage proot** out of `assets/proot-<arch>/`,
+2. **download + extract** the Debian rootfs (`.rootfs_ok`, version `ROOTFS_VERSION`),
+3. **provision the toolchain** — apt + Node 22 + Claude CLI (`.provisioned`),
+4. **deliver the broker source** (`.broker_source`, version `BROKER_SOURCE_VERSION`).
+
+**Updating the broker / UI = the in-app Update (git pull).** Step 4 delivers the
+broker as a real **git clone** at `/root/mobileAgent` (broker runs from
+`/root/mobileAgent/broker`), so the Manage → Update panel's `git pull --ff-only`
+works: web-ui changes apply on a browser reload, `broker/src` changes need a Stop+Start
+(Runtime tab). Bumping `BROKER_SOURCE_VERSION` re-runs *only* step 4, migrating an
+existing bundled install to a clone without re-downloading the rootfs or re-running apt.
+
+- **Private repo:** set a `GITHUB_TOKEN` (or `GIT_TOKEN`) secret in the Runtime tab. It's
+  injected into the guest env and stored as a git credential (`/root/.git-credentials`,
+  chmod 600) so both the clone and later pulls authenticate. Override the repo with a
+  `BROKER_REPO_URL` secret.
+- **Offline / no token:** the clone falls back to the bundled tarball at
+  `/root/agent-broker`; the app still runs, but in-app Update stays inert until a clone
+  succeeds. (To force a fresh self-contained build instead, install a new APK — but note
+  delivery is marker-gated, so bump `BROKER_SOURCE_VERSION` to make a reinstall re-deliver.)
+
+The script-based path below is the **dev/manual fallback** (and the repo-clone +
+`start-broker.sh` workflow), not the default.
+
 ## Manual provisioning — the happy path
 
 The provisioning scripts live in [`../provisioning`](../provisioning) and are the

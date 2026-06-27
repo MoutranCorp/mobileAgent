@@ -35,6 +35,7 @@ class ProotRuntime(private val ctx: Context) {
     private val tmpDir: File get() = File(rootDir, "tmp")
     private val rootfsMarker: File get() = File(rootDir, ".rootfs_ok")
     private val provisionedMarker: File get() = File(rootDir, ".provisioned")
+    private val brokerSourceMarker: File get() = File(rootDir, ".broker_source")
 
     private val arch: String = when (Build.SUPPORTED_ABIS.firstOrNull()) {
         "arm64-v8a" -> "aarch64"
@@ -211,22 +212,14 @@ class ProotRuntime(private val ctx: Context) {
 
     // ---- provisioning + run ----------------------------------------------
 
-    /** Install toolchain + the bundled broker into the guest. One-time. */
+    /** Install the toolchain (apt + Node + Claude CLI) into the guest. One-time.
+     *  Broker SOURCE delivery is separate — see ensureBrokerSource(). */
     fun provision(log: (String) -> Unit): Boolean {
         // Idempotent — ensures the apt-no-sandbox + resolv.conf config is present even
         // on a rootfs extracted by an older build (before that config was written).
         writeGuestConfig(log)
-        stageBrokerIntoGuest(log)
         val script = """
             export DEBIAN_FRONTEND=noninteractive
-            # One-shot proot diagnostic: confirms whether the fake /proc binds land and
-            # what the guest sees (libgcrypt FATALs if fips_enabled isn't readable).
-            echo "── proot diag ──"
-            echo "uid=[${'$'}(id -u 2>&1)] cwd=[${'$'}(pwd 2>&1)]"
-            echo "fips_enabled=[${'$'}(cat /proc/sys/crypto/fips_enabled 2>&1)]"
-            echo "cap_last_cap=[${'$'}(cat /proc/sys/kernel/cap_last_cap 2>&1)]"
-            echo "crypto-dir: ${'$'}(ls -la /proc/sys/crypto/ 2>&1 | head -3)"
-            echo "────────────────"
             set -e
             # -o APT::Sandbox::User=root: apt's download method drops privileges to the
             # `_apt` user via setresuid(2), which proot can't honor — passing it on the
@@ -238,13 +231,6 @@ class ProotRuntime(private val ctx: Context) {
             curl -fsSL https://deb.nodesource.com/setup_22.x | bash - || echo "warn: nodesource setup failed, falling back to distro node"
             ${'$'}APT install -y nodejs || ${'$'}APT install -y nodejs npm
             mkdir -p /root/projects
-            if [ -f /root/agent-broker.tar.gz ]; then
-              rm -rf /root/agent-broker.new; mkdir -p /root/agent-broker.new
-              tar xf /root/agent-broker.tar.gz -C /root/agent-broker.new
-              rm -rf /root/agent-broker; mv /root/agent-broker.new /root/agent-broker
-              rm -f /root/agent-broker.tar.gz
-              cd /root/agent-broker && npm install --omit=dev
-            fi
             npm install -g @anthropic-ai/claude-code || echo "warn: claude CLI install failed — install later for the real engine"
             node --version && npm --version
         """.trimIndent()
@@ -253,18 +239,76 @@ class ProotRuntime(private val ctx: Context) {
         return ok
     }
 
+    /**
+     * Deliver the broker SOURCE into the guest as a real **git clone** so the in-app
+     * Update (git pull) works for broker + UI. Falls back to the bundled tarball when
+     * a clone isn't possible (offline / private repo with no token). Re-runs whenever
+     * BROKER_SOURCE_VERSION changes, so an already-provisioned install migrates from a
+     * bundled copy to a clone WITHOUT wiping app data or re-downloading the rootfs.
+     *
+     * Private-repo clone: set a GITHUB_TOKEN (or GIT_TOKEN) secret in Runtime; it's
+     * injected into the guest env and stored as a git credential so `git pull` keeps
+     * working without baking the token into the remote URL.
+     */
+    fun ensureBrokerSource(log: (String) -> Unit): Boolean {
+        stageBrokerIntoGuest(log) // copy the bundled tarball as the offline fallback
+        val ok = runProcess(prootGuest(brokerSourceScript()), log)
+        if (ok) brokerSourceMarker.writeText(BROKER_SOURCE_VERSION)
+        return ok
+    }
+
+    fun isBrokerSourceReady(): Boolean =
+        runCatching { brokerSourceMarker.readText().trim() == BROKER_SOURCE_VERSION }.getOrDefault(false)
+
+    private fun brokerSourceScript(): String = """
+        set -e
+        git config --global --add safe.directory '*' || true
+        REPO_URL="${'$'}{BROKER_REPO_URL:-https://github.com/MoutranCorp/mobileAgent.git}"
+        TOKEN="${'$'}{GITHUB_TOKEN:-${'$'}{GIT_TOKEN:-}}"
+        if [ -n "${'$'}TOKEN" ]; then
+          git config --global credential.helper store
+          printf 'https://x-access-token:%s@github.com\n' "${'$'}TOKEN" > /root/.git-credentials
+          chmod 600 /root/.git-credentials
+        fi
+        CLONE_OK=0
+        rm -rf /root/mobileAgent.new
+        if git clone --depth 1 "${'$'}REPO_URL" /root/mobileAgent.new; then
+          rm -rf /root/mobileAgent; mv /root/mobileAgent.new /root/mobileAgent
+          ( cd /root/mobileAgent/broker && npm install --omit=dev ) && CLONE_OK=1
+        fi
+        rm -rf /root/mobileAgent.new
+        if [ "${'$'}CLONE_OK" = 1 ]; then
+          rm -rf /root/agent-broker; rm -f /root/agent-broker.tar.gz
+          echo "Broker is a git checkout at /root/mobileAgent — in-app Update (git pull) is live"
+        else
+          echo "git clone unavailable — using bundled broker (set a GITHUB_TOKEN secret to enable in-app Update on a private repo)"
+          if [ -f /root/agent-broker.tar.gz ]; then
+            rm -rf /root/agent-broker.new; mkdir -p /root/agent-broker.new
+            tar xf /root/agent-broker.tar.gz -C /root/agent-broker.new
+            [ -d /root/agent-broker/node_modules ] && mv /root/agent-broker/node_modules /root/agent-broker.new/ 2>/dev/null || true
+            rm -rf /root/agent-broker; mv /root/agent-broker.new /root/agent-broker
+            rm -f /root/agent-broker.tar.gz
+            ( cd /root/agent-broker && npm install --omit=dev )
+          fi
+        fi
+    """.trimIndent()
+
     /** Copy the bundled broker tarball straight into the guest's /root (host-side). */
     private fun stageBrokerIntoGuest(log: (String) -> Unit) {
         val name = runCatching { ctx.assets.list("")?.firstOrNull { it.startsWith("broker.tar") } }.getOrNull() ?: return
         val out = File(rootfs, "root/agent-broker.tar.gz")
         out.parentFile?.mkdirs()
         ctx.assets.open(name).use { i -> out.outputStream().use { i.copyTo(it) } }
-        log("Bundled broker delivered into the guest")
+        log("Bundled broker staged into the guest (fallback seed)")
     }
+
+    /** Where the broker runs from: the git checkout if present, else the bundled copy. */
+    private fun brokerGuestDir(): String =
+        if (File(rootfs, "root/mobileAgent/broker/src/index.js").exists()) "/root/mobileAgent/broker" else "/root/agent-broker"
 
     /** Argv to start the broker under proot. */
     fun brokerArgv(): List<String> = prootGuest(
-        "cd /root/agent-broker && exec node src/index.js " +
+        "cd ${brokerGuestDir()} && exec node src/index.js " +
             "--profile ${RuntimeConfig.defaultProfile(ctx)} --port ${RuntimeConfig.DEFAULT_PORT} --projects /root/projects --host 127.0.0.1"
     )
 
@@ -391,5 +435,8 @@ class ProotRuntime(private val ctx: Context) {
         // Bump when the rootfs extraction logic changes so a stale extraction from an
         // older build is discarded (app data survives install-over).
         private const val ROOTFS_VERSION = "2-symlink-extract"
+        // Bump to re-run broker-source delivery (e.g. to migrate an existing bundled
+        // install to a git clone) without re-running the toolchain/rootfs steps.
+        private const val BROKER_SOURCE_VERSION = "1-git-clone"
     }
 }

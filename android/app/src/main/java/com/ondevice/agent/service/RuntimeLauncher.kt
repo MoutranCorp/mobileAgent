@@ -47,9 +47,19 @@ class RuntimeLauncher(private val ctx: Context) {
         }
 
         if (!rt.isProvisioned()) {
-            RuntimeController.setState(RuntimeState.STARTING, "Installing toolchain + broker (one-time, minutes)…")
+            RuntimeController.setState(RuntimeState.STARTING, "Installing toolchain (one-time, minutes)…")
             if (!runCatching { rt.provision { RuntimeController.log(it) } }.getOrDefault(false)) {
                 RuntimeController.setState(RuntimeState.ERROR, "Provisioning failed — see logs"); return
+            }
+        }
+
+        // Deliver / refresh the broker source as a git clone (falls back to the bundled
+        // tarball). Re-runs on a version bump so an existing bundled install migrates to
+        // a clone — which is what makes the in-app Update (git pull) work.
+        if (!rt.isBrokerSourceReady()) {
+            RuntimeController.setState(RuntimeState.STARTING, "Setting up broker source (git clone, one-time)…")
+            if (!runCatching { rt.ensureBrokerSource { RuntimeController.log(it) } }.getOrDefault(false)) {
+                RuntimeController.setState(RuntimeState.ERROR, "Broker source setup failed — see logs"); return
             }
         }
 
