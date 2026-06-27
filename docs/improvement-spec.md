@@ -4,8 +4,30 @@
 > discussion-then-implementation. Compiled from a parallel code audit of the whole
 > tree (broker core, engines/approval, controls, web-ui core, managers/shell,
 > styling/a11y, Android/provisioning) plus live runtime probing of the UI at phone
-> size against the mock engine. **Nothing here is implemented yet** — it's the
-> backlog we discuss before picking work.
+> size against the mock engine.
+
+> **STATUS (2026-06): substantially implemented.** Worked through in batches on
+> `claude/fixes-and-features-scxb2u`. All **High** and **Med** items, and the large
+> majority of **Low** items, across §§1–7 are done — broker security (shell/path/
+> traversal/IPC), approval-flow routing, per-session lifecycle, UI scroll/memory/
+> reconnect/echo/find, markdown (tables/lang/escaping), color-mix→rgba compat,
+> a11y, managers loading/validation, engine + control papercuts, the opencode
+> adapter, and the Android/provisioning hardening. Each batch is its own commit;
+> the broker `node:test` suite stays green and UI changes were browser-smoke-tested.
+>
+> **Consciously deferred (with rationale), NOT bugs left unfixed:**
+> - §1:69 `_startLock` — re-audited as a correct promise-chain mutex (false positive).
+> - §1:74 effort/permission-mode → all *live* engines — restarting background
+>   engines mid-work is more disruptive than the cosmetic gap; new/restarted
+>   engines already adopt the current value.
+> - §4:145 rebuild tool-head/denial via `el()` — those fields already pass through
+>   `esc()`; pure defense-in-depth, no active hole.
+> - §5:171/174/175/178/181 — low-value manager UX (await-ack, rename ✕, dir-nav
+>   spinner, render-rebuild focus, broker-side child paths).
+> - §6:196 `bypassPermissions` default — a security-default flip is a product
+>   decision and the broker default must change in lockstep; left for the owner.
+> - §6:197 PWA PNG icon rasters — needs binary asset generation.
+> - §5:184 "On-Device Agent"/"Agent" — deliberate PWA `name`/`short_name` split.
 
 ## How to read this
 
