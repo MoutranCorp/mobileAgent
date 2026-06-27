@@ -12,7 +12,8 @@
     activeThinking: null,
     toolCards: new Map(), // id -> { el, head, body, name, isDiff, nested }
     approvals: new Map(), // id -> el
-    pendingSent: [], // normalized texts we optimistically rendered (dedupe echoes)
+    pendingSent: [], // [{id,text}] optimistically-rendered sends, matched to echoes by id
+    _sendSeq: 0,     // monotonic id for optimistic user bubbles (stamp the RIGHT one)
     profiles: [],
     activeProfileId: null,
     projects: [],
@@ -314,8 +315,12 @@
     if (!act && state.activeKey) ensureTab({ key: state.activeKey, projectId: state.activeProjectId });
     // Keep the focused tab synced to the broker's active session — unless the user is
     // currently on a FILE tab (a client-only view; don't yank them back to chat).
+    // Clear an in-flight switch once the broker confirms it as active.
+    if (state._pendingActiveKey && state.activeKey === state._pendingActiveKey) state._pendingActiveKey = null;
     const curTab = state.activeTabId ? tabById(state.activeTabId) : null;
-    if (!curTab || curTab.kind !== 'file') { state.activeTabId = state.activeKey; applyViewMode(); }
+    // Don't override the focused tab while a user-initiated switch is still in
+    // flight (its ACK hasn't arrived) — that caused a visible wrong-tab flash.
+    if ((!curTab || curTab.kind !== 'file') && !state._pendingActiveKey) { state.activeTabId = state.activeKey; applyViewMode(); }
     // "Done" nudge: a background session that finished a turn (busy -> idle) while
     // unfocused. (working/waiting indicators are derived live in renderTabs.)
     const nowBusy = {};
@@ -400,8 +405,13 @@
     if (t.kind === 'file') { applyViewMode(); renderFileView(t); renderTabs(); return; } // client-only, no broker switch
     state._optimisticUntil = 0; // show the destination tab's real state immediately
     applyViewMode();
-    if (t.key !== state.activeKey) send({ type: 'switch_session', key: t.key });
-    else renderTabs();
+    if (t.key !== state.activeKey) {
+      // Mark the switch in-flight: until the broker's SESSIONS reports this key as
+      // active, onSessions must not yank activeTabId back to the old session (which
+      // flashed the wrong tab).
+      state._pendingActiveKey = t.key;
+      send({ type: 'switch_session', key: t.key });
+    } else renderTabs();
   }
   function closeTab(id) {
     const idx = state.tabs.findIndex((t) => t.id === id);
@@ -866,18 +876,21 @@
   // Render an element's accumulated Markdown to HTML. We keep the raw source on
   // dataset.md so search/export can read the original syntax. Throttled to one
   // render per animation frame so long streaming replies stay smooth.
-  function renderMd(b) {
-    b.dataset.md = b._md || '';
+  function renderMd(b, final) {
+    // Only stamp the raw source onto dataset.md when finalizing — duplicating a
+    // large string into the DOM every streaming frame was pure waste (search/
+    // export of a finished bubble still read it; a live one falls back to text).
+    if (final) b.dataset.md = b._md || '';
     b.innerHTML = window.MD ? window.MD.render(b._md || '') : esc(b._md || '');
   }
   function scheduleMd(b) {
     if (b._mdPending) return;
-    b._mdPending = requestAnimationFrame(() => { b._mdPending = 0; renderMd(b); scrollDown(); });
+    b._mdPending = requestAnimationFrame(() => { b._mdPending = 0; renderMd(b, false); scrollDown(); });
   }
   function flushMd(b) {
     if (!b) return;
     if (b._mdPending) { cancelAnimationFrame(b._mdPending); b._mdPending = 0; }
-    if (b._md != null) renderMd(b);
+    if (b._md != null) renderMd(b, true);
   }
 
   function appendThinking(delta, parentId) {
@@ -991,10 +1004,14 @@
     const meta = ev && typeof ev === 'object' ? ev : {};
     if (text == null || text === '') return;
     const norm = String(text).trim();
-    const i = state.pendingSent.indexOf(norm);
+    const i = state.pendingSent.findIndex((e) => e.text === norm);
     if (i >= 0) { // our optimistic copy — keep it, just stamp the revert ids onto it
+      const { id } = state.pendingSent[i];
       state.pendingSent.splice(i, 1);
-      stampUserBubble(lastUserBubble(), meta);
+      // Stamp the bubble for THIS send (by id), not whatever bubble is last.
+      const bubble = id && $('transcript').querySelector('.msg.user[data-pending-id="' + id + '"]');
+      stampUserBubble(bubble || lastUserBubble(), meta);
+      if (bubble) delete bubble.dataset.pendingId;
       return;
     }
     addUserMessage(text, meta);
@@ -1017,12 +1034,13 @@
     }
   }
 
-  function addUserMessage(text, meta) {
+  function addUserMessage(text, meta, pendingId) {
     hideEmpty();
     finalizeAssistant();
     const msg = el('div', 'msg user');
     const ts = (meta && meta.ts) || nowIso();
     msg.dataset.ts = ts;
+    if (pendingId) msg.dataset.pendingId = pendingId;
     msg.appendChild(el('div', 'role', 'You'));
     msg.appendChild(el('div', 'bubble', text));
     appendTime(msg, ts);
@@ -1134,7 +1152,7 @@
   // (served from the project via /preview): html runs in a sandboxed iframe, svg/
   // images render as <img>, markdown renders rich. Each gets View source / Download
   // / Open-full controls. See [[implemented-features]] HTML microapp widget.
-  const fileWidgets = new Map(); // filePath -> widget state
+  const fileWidgets = new Map(); // projectRelPath -> widget state (normalized key)
   // A file_widget event renders a viewer for a file already on disk (e.g. a
   // Playwright screenshot dropped via the /widget endpoint) — no Write/Edit needed.
   function onFileWidget(ev) {
@@ -1181,7 +1199,10 @@
     if (!kind) return;
     hideEmpty();
     const url = htmlAppUrl(filePath); // /preview/<rel>
-    let w = fileWidgets.get(filePath);
+    // Key by the project-relative path so an absolute and a relative reference to
+    // the SAME file collapse onto one card instead of producing duplicates.
+    const wkey = projectRelPath(filePath);
+    let w = fileWidgets.get(wkey);
     if (w) { // file re-written: refresh in place + bump to the bottom
       w.url = url; w.kind = kind;
       $('transcript').appendChild(w.card);
@@ -1203,7 +1224,7 @@
     card.appendChild(head); card.appendChild(bodyEl); card.appendChild(codeEl);
     $('transcript').appendChild(card);
     w = { card, body: bodyEl, code: codeEl, url, filePath, fname, kind, running: kind === 'html', frame: null, codeShown: false };
-    fileWidgets.set(filePath, w);
+    fileWidgets.set(wkey, w);
 
     // Run/Hide only makes sense for the interactive html app.
     if (kind === 'html') {
@@ -1510,11 +1531,19 @@
 
   function applyTranscript(ev) {
     if (ev.reset) resetConversation();
-    for (const rec of ev.events || []) {
-      if (rec.type === 'result') { finalizeAssistant(); continue; }
-      handleEvent(rec);
+    // Replay flag: suppress the per-record scroll churn (setActivity/scrollDown
+    // fire for every replayed record); we scroll once after the loop.
+    state._replaying = true;
+    try {
+      for (const rec of ev.events || []) {
+        if (rec.type === 'result') { finalizeAssistant(); continue; }
+        handleEvent(rec);
+      }
+    } finally {
+      state._replaying = false;
     }
     finalizeAssistant();
+    scrollDown(true);
     // A replay is historical — replayed tool_call records call setActivity('working'),
     // which would leave the UI stuck "working" (Stop button, send blocked). Reset to
     // idle; live status events for the (re)started engine drive the real state.
@@ -1635,8 +1664,12 @@
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = name;
+    // Some WebViews ignore a click on an unattached anchor — attach it. Revoke
+    // generously later so a slow save isn't cut off mid-write.
+    a.style.display = 'none';
+    document.body.appendChild(a);
     a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 60000);
   }
 
   function onFileReplace(ev) {
@@ -2025,6 +2058,9 @@
   // action (sending a message) re-pins via scrollDown(true).
   function scrollDown(force) {
     const t = $('transcript');
+    // During a bulk replay we suppress per-record scrolling and jump once at the
+    // end (hundreds of intermediate scrolls were wasted layout work).
+    if (state._replaying && !force) return;
     if (force) state._pinBottom = true;
     if (state._pinBottom !== false) {
       // Jump INSTANTLY (the transcript has CSS scroll-behavior:smooth) so the
@@ -2087,10 +2123,13 @@
     const text = input.value.trim();
     const images = state.attachments.map((a) => ({ mime: a.mime, dataBase64: a.dataBase64 }));
     if (!text && !images.length) return;
-    if (text) state.pendingSent.push(text); // only dedupe non-empty echoes
+    // Tag this send so its server echo stamps THIS bubble, not whichever bubble
+    // happens to be last (rapid double-send used to cross the wires).
+    const pendingId = 'p' + (++state._sendSeq);
+    if (text) state.pendingSent.push({ id: pendingId, text: text.trim() }); // only dedupe non-empty echoes
     // Paint the feedback FIRST — button -> Stop, typing dots — before serializing
     // and sending the (possibly large) payload, so big prompts still feel instant.
-    addUserMessage(text + (images.length ? `\n📎 ${images.length} image${images.length === 1 ? '' : 's'}` : ''));
+    addUserMessage(text + (images.length ? `\n📎 ${images.length} image${images.length === 1 ? '' : 's'}` : ''), null, pendingId);
     input.value = '';
     clearAttachments();
     autoGrow();
