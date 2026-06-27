@@ -566,12 +566,20 @@ export class ClaudeConfig {
       return { ok: true };
     }
     if (kind === 'hooks') {
-      // name = `event#groupIndex#hookIndex`
-      const [event, gi] = String(name).split('#');
+      // name = `event#groupIndex#hookIndex`. Delete the SINGLE hook, not the whole
+      // group (a group can hold several hooks — the old code wiped all of them).
+      const [event, giStr, hiStr] = String(name).split('#');
+      const gi = Number(giStr), hi = Number(hiStr);
       const json = this._readSettingsRaw(scope);
-      if (json.hooks && json.hooks[event]) {
-        json.hooks[event].splice(Number(gi), 1);
-        if (!json.hooks[event].length) delete json.hooks[event];
+      const groups = json.hooks && json.hooks[event];
+      if (groups && groups[gi]) {
+        if (Number.isInteger(hi) && Array.isArray(groups[gi].hooks)) {
+          groups[gi].hooks.splice(hi, 1);
+          if (!groups[gi].hooks.length) groups.splice(gi, 1); // group emptied
+        } else {
+          groups.splice(gi, 1); // legacy name without a hook index
+        }
+        if (!groups.length) delete json.hooks[event];
         this._writeSettingsRaw(scope, json);
       }
       return { ok: true };

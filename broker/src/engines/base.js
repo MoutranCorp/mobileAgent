@@ -48,7 +48,14 @@ export class EngineAdapter extends EventEmitter {
   async start() {
     this.state = 'starting';
     this.emit('engine_state', 'starting');
-    await this._spawn();
+    try {
+      await this._spawn();
+    } catch (e) {
+      // Leave a clean 'stopped' state so stop()/a retry behaves (was stuck 'starting').
+      this.state = 'stopped';
+      this.emit('engine_state', 'stopped');
+      throw e;
+    }
     this.state = 'ready';
     this.emit('engine_state', 'ready');
   }

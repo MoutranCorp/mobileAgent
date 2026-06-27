@@ -29,8 +29,10 @@ export class Updater {
   async _toplevel() {
     if (this._top) return this._top;
     const r = await this._git(['rev-parse', '--show-toplevel']);
-    this._top = r.code === 0 && r.stdout ? r.stdout : this.cwd;
-    return this._top;
+    // Cache ONLY a successful resolution — a transient failure (.git not yet present,
+    // FS hiccup) must not permanently pin the toplevel to the cwd fallback.
+    if (r.code === 0 && r.stdout) { this._top = r.stdout; return this._top; }
+    return this.cwd;
   }
 
   /** Current version: short sha, subject, relative time, branch, dirty flag. */

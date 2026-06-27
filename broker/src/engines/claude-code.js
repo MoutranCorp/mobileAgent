@@ -144,6 +144,11 @@ export class ClaudeCodeEngine extends EngineAdapter {
     });
 
     this.proc.stdout.on('data', (chunk) => this._onStdout(chunk));
+    // Process any final line that lacked a trailing newline (legal in stream-json).
+    this.proc.stdout.on('end', () => {
+      const tail = this.buffer.flush((err, raw) => this.log(`stream-json parse error (flush): ${err.message} :: ${raw.slice(0, 200)}`));
+      for (const msg of tail) this._handleStreamMessage(msg);
+    });
     this.proc.stderr.on('data', (chunk) => {
       const text = chunk.toString('utf8');
       this.log(`[claude stderr] ${text.trimEnd()}`);
@@ -188,10 +193,16 @@ export class ClaudeCodeEngine extends EngineAdapter {
       case 'system':
         this._handleSystem(msg);
         break;
-      case 'assistant':
+      case 'assistant': {
         this._handleAssistant(msg.message, msg.parent_tool_use_id || this._lastParent);
-        this.emitStatus(StatusState.THINKING);
+        // Only fall back to THINKING for a message that actually had text/thinking —
+        // a tool-only message already set RUNNING via _emitToolCall and THINKING here
+        // would clobber it (status flicker).
+        const c = msg.message?.content;
+        const hadProse = Array.isArray(c) && c.some((b) => b.type === 'text' || b.type === 'thinking' || b.type === 'redacted_thinking');
+        if (hadProse) this.emitStatus(StatusState.THINKING);
         break;
+      }
       case 'user':
         this._handleUser(msg.message, msg.parent_tool_use_id || this._lastParent);
         break;
@@ -386,6 +397,10 @@ export class ClaudeCodeEngine extends EngineAdapter {
   }
 
   _handleResult(msg) {
+    // The turn is over: tool_use→result mapping is done, so clear the id→name map
+    // (it otherwise grows unbounded across a long session). Done at result, not
+    // message_start, so a within-turn tool_result still resolves its name.
+    this._toolNames.clear();
     this.emitEvent(EventType.RESULT, {
       subtype: msg.subtype,
       durationMs: msg.duration_ms,

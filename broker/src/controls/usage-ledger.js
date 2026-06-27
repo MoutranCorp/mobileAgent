@@ -47,7 +47,15 @@ export class UsageLedger {
       const p = (d.byProfile[profile] ||= { in: 0, out: 0, cost: 0, turns: 0 });
       p.in += inTok || 0; p.out += outTok || 0; p.cost += cost || 0; p.turns += 1;
     }
-    this._save();
+    this._scheduleSave();
+  }
+
+  // Coalesce writes — record() can fire several times a turn; a sync writeFileSync
+  // each time stalls the loop on slow (proot/eMMC) storage.
+  _scheduleSave() {
+    if (this._saveTimer) return;
+    this._saveTimer = setTimeout(() => { this._saveTimer = null; this._save(); }, 500);
+    this._saveTimer.unref?.();
   }
 
   summary() {

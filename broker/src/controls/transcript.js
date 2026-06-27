@@ -34,7 +34,13 @@ export class TranscriptStore {
     if (!f || !fs.existsSync(f)) return [];
     try {
       const lines = fs.readFileSync(f, 'utf8').split('\n').filter(Boolean);
-      return lines.slice(-MAX_RECORDS).map((l) => JSON.parse(l));
+      // Parse per-line and skip corrupt records — a process killed mid-append leaves
+      // a partial last line that must not discard the whole transcript on reload.
+      const out = [];
+      for (const l of lines.slice(-MAX_RECORDS)) {
+        try { out.push(JSON.parse(l)); } catch { /* skip a torn line */ }
+      }
+      return out;
     } catch { return []; }
   }
 

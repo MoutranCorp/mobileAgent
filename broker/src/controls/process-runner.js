@@ -116,8 +116,10 @@ export class ProcessRunner {
         /* ignore */
       }
     }, 3000);
-    child.once('exit', () => clearTimeout(t));
-    this.running.delete(channel);
+    // Remove from `running` only when the process actually exits — deleting eagerly
+    // made isRunning() return false while the child was still alive, so a quick
+    // restart could spawn a second instance (e.g. two Metros) on the same channel.
+    child.once('exit', () => { clearTimeout(t); this.running.delete(channel); });
     this.emit(event(EventType.CONTROL_STATUS, { channel, state: 'stopped' }));
     return true;
   }

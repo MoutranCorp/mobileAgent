@@ -177,3 +177,34 @@ test('e2e: creating a skill via the UI triggers a hot-reload toast', async () =>
   ws.close();
   await server.stop();
 });
+
+test('TranscriptStore skips a torn last line instead of dropping the whole file', async () => {
+  const state = await tmpDir('ts-torn-');
+  const ts = new TranscriptStore(state);
+  ts.setProject('p1');
+  ts.record({ type: 'user_echo', text: 'hi' });
+  ts.record({ type: 'assistant_text', delta: 'ok' });
+  ts.replay(); // flush pending text to disk
+  // Simulate a process killed mid-append: a partial JSON line at the end.
+  const f = path.join(state, 'transcripts', 'p1.jsonl');
+  fssync.appendFileSync(f, '{"type":"user_echo","text":"tor');
+  const reopened = new TranscriptStore(state);
+  reopened.setProject('p1');
+  const types = reopened.replay().map((e) => e.type);
+  assert.ok(types.includes('user_echo'), 'valid records survive');
+  assert.ok(types.includes('assistant_text'), 'valid records survive');
+  assert.equal(types.filter((t) => t === 'user_echo').length, 1, 'torn line skipped, not parsed');
+});
+
+test('ClaudeConfig hook delete removes only the targeted hook, not the whole group', async () => {
+  const proj = await tmpDir('hk-proj-');
+  fssync.mkdirSync(path.join(proj, '.claude'), { recursive: true });
+  fssync.writeFileSync(path.join(proj, '.claude', 'settings.json'), JSON.stringify({
+    hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'A' }, { type: 'command', command: 'B' }] }] },
+  }));
+  const cc = new ClaudeConfig({ getProjectDir: () => proj, getProjects: () => [], stateDir: proj });
+  cc.delete('hooks', 'PreToolUse#0#0', 'project');
+  const after = JSON.parse(fssync.readFileSync(path.join(proj, '.claude', 'settings.json'), 'utf8'));
+  const cmds = after.hooks.PreToolUse[0].hooks.map((h) => h.command);
+  assert.deepEqual(cmds, ['B'], 'only hook A removed; B survives');
+});
