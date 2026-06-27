@@ -1021,8 +1021,10 @@ mark.find-hit.current { background: var(--orange); color: #000; }
 /* Bigger tap targets for the small ✕ controls (were 16/20px — easy to mis-tap). */
 .tab-close { width: 24px; height: 24px; display: grid; place-items: center; }
 .attach-x { width: 26px; height: 26px; display: grid; place-items: center; }
-/* Wide markdown tables scroll horizontally instead of overflowing the viewport. */
-.bubble.md table { display: block; width: max-content; max-width: 100%; overflow-x: auto; }
+/* Wide markdown tables scroll horizontally (inside their wrapper) instead of
+   overflowing the viewport. MD.render emits each table inside a .table-wrap. */
+.bubble.md .table-wrap { overflow-x: auto; max-width: 100%; margin: 8px 0; }
+.bubble.md .table-wrap table { margin: 0; }
 /* Reduced motion: stop the "Thinking…" shimmer explicitly (a near-zero animation
    duration can still stutter). */
 @media (prefers-reduced-motion: reduce) {

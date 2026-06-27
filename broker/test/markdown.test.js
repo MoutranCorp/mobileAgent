@@ -30,7 +30,7 @@ test('ordered + unordered lists and links', () => {
 
 test('fenced code blocks escape HTML and are not formatted', () => {
   const h = MD.render('```js\nconst x = 1 < 2 && a > b;\n```');
-  assert.match(h, /<pre><code>const x = 1 &lt; 2 &amp;&amp; a &gt; b;<\/code><\/pre>/);
+  assert.match(h, /<pre><code class="language-js">const x = 1 &lt; 2 &amp;&amp; a &gt; b;<\/code><\/pre>/);
 });
 
 test('blockquote and horizontal rule', () => {
@@ -63,7 +63,7 @@ test('fenced code blocks get a copy button whose data-copy round-trips the raw t
 test('partial input mid-stream does not throw (unterminated fence)', () => {
   assert.doesNotThrow(() => MD.render('intro\n\n```js\nconst a ='));
   const h = MD.render('intro\n\n```js\nconst a =');
-  assert.match(h, /<pre><code>/);
+  assert.match(h, /<pre><code class="language-js">/);
 });
 
 test('link/autolink URLs cannot break out of the href attribute (XSS)', () => {
@@ -80,4 +80,44 @@ test('link/autolink URLs cannot break out of the href attribute (XSS)', () => {
   assert.match(MD.render('[x](javascript:alert(1))'), /href="#"/);
   // Ampersands in a normal URL are not double-escaped.
   assert.match(MD.render('[x](https://e.com/?a=1&b=2)'), /href="https:\/\/e\.com\/\?a=1&amp;b=2"/);
+});
+
+test('GFM tables render with headers, rows, and column alignment', () => {
+  const md = [
+    '| Name | Age | City |',
+    '|:-----|:---:|-----:|',
+    '| Ann  | 30  | NYC  |',
+    '| Bob  | 25  | LA   |',
+  ].join('\n');
+  const h = MD.render(md);
+  assert.match(h, /<table>/);
+  assert.match(h, /<th[^>]*>Name<\/th>/);
+  assert.match(h, /<th style="text-align:center">Age<\/th>/, 'center alignment from :--:');
+  assert.match(h, /<th style="text-align:right">City<\/th>/, 'right alignment from --:');
+  assert.match(h, /<td[^>]*>Ann<\/td>/);
+  assert.match(h, /<td style="text-align:right">LA<\/td>/);
+  assert.match(h, /class="table-wrap"/, 'wrapped for horizontal scroll');
+  // A '|' line with no delimiter row underneath is NOT a table.
+  assert.doesNotMatch(MD.render('a | b\nc | d'), /<table>/);
+});
+
+test('fenced code captures the language as data-lang + language- class', () => {
+  const h = MD.render('```python\nprint(1)\n```');
+  assert.match(h, /data-lang="python"/);
+  assert.match(h, /<code class="language-python">/);
+  // No language -> no attributes, still renders.
+  const plain = MD.render('```\nplain\n```');
+  assert.doesNotMatch(plain, /data-lang=/);
+  assert.match(plain, /<pre><code>plain<\/code><\/pre>/);
+});
+
+test('blockquote recursion is depth-capped (no stack blow-up)', () => {
+  const deep = Array.from({ length: 200 }, (_, i) => '>'.repeat(i + 1) + ' x').join('\n');
+  assert.doesNotThrow(() => MD.render(deep));
+});
+
+test('tab-indented sublist is treated as nested', () => {
+  const h = MD.render('- a\n\t- b');
+  // The nested item opens a second <ul> (tabs expanded to spaces).
+  assert.match(h, /<ul><li>a<\/li><ul><li>b<\/li><\/ul>/);
 });

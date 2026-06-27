@@ -2,10 +2,11 @@
  * markdown.js — a small, dependency-free, XSS-safe Markdown -> HTML renderer for
  * assistant messages. It escapes all HTML first, then layers Markdown on top, so
  * model output can never inject markup. Covers the elements chat replies use:
- * headings, bold/italic/strike, inline + fenced code, ordered/unordered lists
- * (one nesting level), blockquotes, links/autolinks, horizontal rules,
- * paragraphs and line breaks. Tolerant of partial input so it works mid-stream
- * (an unterminated ``` fence renders as an open code block).
+ * headings, bold/italic/strike, inline + fenced code (with a language tag),
+ * ordered/unordered lists (one nesting level), GFM tables, blockquotes,
+ * links/autolinks, horizontal rules, paragraphs and line breaks. Tolerant of
+ * partial input so it works mid-stream (an unterminated ``` fence renders as an
+ * open code block).
  *
  * Exposed as window.MD.render(src) -> html string.
  */
@@ -24,6 +25,23 @@
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;').replace(/\r/g, '').replace(/\n/g, '&#10;');
   }
+  function firstWord(s) { return String(s || '').trim().split(/\s+/)[0] || ''; }
+
+  // GFM table helpers. A table is a header row, a delimiter row (|---|:--:|),
+  // then body rows. Cells split on '|' with optional leading/trailing pipes.
+  function splitRow(line) {
+    return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(function (c) { return c.trim(); });
+  }
+  function isDelimRow(line) {
+    if (!line || line.indexOf('-') === -1) return false;
+    var cells = splitRow(line);
+    return cells.length > 0 && cells.every(function (c) { return /^:?-+:?$/.test(c); });
+  }
+  function alignOf(cell) {
+    var l = cell.charAt(0) === ':', r = cell.charAt(cell.length - 1) === ':';
+    return l && r ? 'center' : r ? 'right' : l ? 'left' : '';
+  }
+
   function safeUrl(u) {
     // Allow http(s), mailto and relative/anchor links; block javascript: etc.
     if (!/^(https?:\/\/|mailto:|\/|#)/i.test(u)) return '#';
@@ -82,22 +100,30 @@
     return { html: html, next: i };
   }
 
-  function render(src) {
+  function render(src, depth) {
+    depth = depth || 0;
     src = String(src == null ? '' : src).replace(/\r\n/g, '\n');
 
-    // Pull out fenced code blocks first (escaped, never further processed).
+    // Pull out fenced code blocks first (escaped, never further processed). The
+    // info string after ``` is captured as the language for syntax labelling.
     var blocks = [];
-    src = src.replace(/```[^\n`]*\n([\s\S]*?)```/g, function (_m, code) {
-      blocks.push(code.replace(/\n$/, ''));
+    src = src.replace(/```([^\n`]*)\n([\s\S]*?)```/g, function (_m, info, code) {
+      blocks.push({ code: code.replace(/\n$/, ''), lang: firstWord(info) });
       return '\n' + FENCE + (blocks.length - 1) + FENCE + '\n';
     });
     // Tolerate an unterminated fence while streaming.
     var open = src.indexOf('```');
     if (open !== -1) {
-      var rest = src.slice(open + 3).replace(/^[^\n`]*\n?/, '');
-      blocks.push(rest);
+      var after = src.slice(open + 3);
+      var nl = after.indexOf('\n');
+      var info = nl === -1 ? after : after.slice(0, nl);
+      blocks.push({ code: nl === -1 ? '' : after.slice(nl + 1), lang: firstWord(info) });
       src = src.slice(0, open) + '\n' + FENCE + (blocks.length - 1) + FENCE + '\n';
     }
+
+    // Expand tabs to spaces AFTER pulling code out (code keeps its real tabs) so
+    // a tab-indented sublist is seen as indented (a tab is length 1 otherwise).
+    src = src.replace(/\t/g, '    ');
 
     var lines = src.split('\n');
     var html = '';
@@ -108,9 +134,29 @@
       var m;
 
       if ((m = line.match(fenceRe))) {
-        var raw = blocks[+m[1]];
-        html += '<div class="code-block"><button class="code-copy" type="button" data-copy="' + escapeAttr(raw) + '">Copy</button>' +
-          '<pre><code>' + escapeHtml(raw) + '</code></pre></div>'; i++; continue;
+        var blk = blocks[+m[1]];
+        var raw = blk.code, lang = blk.lang;
+        var langAttr = lang ? ' data-lang="' + escapeAttr(lang) + '"' : '';
+        var codeClass = lang ? ' class="language-' + escapeAttr(lang) + '"' : '';
+        html += '<div class="code-block"' + langAttr + '><button class="code-copy" type="button" data-copy="' + escapeAttr(raw) + '">Copy</button>' +
+          '<pre><code' + codeClass + '>' + escapeHtml(raw) + '</code></pre></div>'; i++; continue;
+      }
+      // GFM table: header row + a delimiter row right under it.
+      if (line.indexOf('|') !== -1 && i + 1 < lines.length && isDelimRow(lines[i + 1])) {
+        var headers = splitRow(line);
+        var aligns = splitRow(lines[i + 1]).map(alignOf);
+        i += 2;
+        var body = [];
+        while (i < lines.length && !/^\s*$/.test(lines[i]) && lines[i].indexOf('|') !== -1) { body.push(splitRow(lines[i])); i++; }
+        var th = function (c, ci) { var a = aligns[ci] ? ' style="text-align:' + aligns[ci] + '"' : ''; return '<th' + a + '>' + inline(escapeHtml(c)) + '</th>'; };
+        var td = function (c, ci) { var a = aligns[ci] ? ' style="text-align:' + aligns[ci] + '"' : ''; return '<td' + a + '>' + inline(escapeHtml(c == null ? '' : c)) + '</td>'; };
+        var t = '<div class="table-wrap"><table><thead><tr>' + headers.map(th).join('') + '</tr></thead><tbody>';
+        for (var r = 0; r < body.length; r++) {
+          t += '<tr>';
+          for (var ci = 0; ci < headers.length; ci++) t += td(body[r][ci], ci);
+          t += '</tr>';
+        }
+        html += t + '</tbody></table></div>'; continue;
       }
       if (/^\s*$/.test(line)) { i++; continue; }
       if (/^\s*([-*_])\1\1+\s*$/.test(line)) { html += '<hr>'; i++; continue; }
@@ -120,7 +166,9 @@
       if (/^\s*>\s?/.test(line)) {
         var q = [];
         while (i < lines.length && /^\s*>\s?/.test(lines[i])) { q.push(lines[i].replace(/^\s*>\s?/, '')); i++; }
-        html += '<blockquote>' + render(q.join('\n')) + '</blockquote>'; continue;
+        // Cap recursion so a pathological `>>>>>…` can't blow the stack; past the
+        // cap, render the remaining quote content as plain escaped text.
+        html += '<blockquote>' + (depth >= 8 ? escapeHtml(q.join('\n')) : render(q.join('\n'), depth + 1)) + '</blockquote>'; continue;
       }
       if (/^\s*[-*+]\s+/.test(line)) { var ru = renderList(lines, i, false); html += ru.html; i = ru.next; continue; }
       if (/^\s*\d+[.)]\s+/.test(line)) { var ro = renderList(lines, i, true); html += ro.html; i = ro.next; continue; }
