@@ -2349,7 +2349,29 @@
     // Offer the fullscreen editor once the draft grows past ~5 lines.
     const expand = $('expandBtn');
     if (expand) expand.classList.toggle('hidden', (ta.value.match(/\n/g) || []).length < 5);
+    syncSlashHighlight();
     syncComposerInset();
+  }
+
+  // Highlight a leading /slash-command in place. We mirror the textarea text into a
+  // backdrop and colour just the command token; the backdrop is only shown (and the
+  // textarea text made transparent) while the draft actually starts with a command,
+  // so ordinary prose typing is completely untouched.
+  function escapeHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function syncSlashHighlight() {
+    const ta = $('input');
+    const hl = $('inputHl');
+    const wrap = ta && ta.closest('.composer-input-wrap');
+    if (!ta || !hl || !wrap) return;
+    const v = ta.value;
+    const m = v.match(/^\/[\w:-]+/); // command token at the very start of the draft
+    if (!m) { wrap.classList.remove('slash-active'); hl.textContent = ''; return; }
+    const rest = v.slice(m[0].length);
+    hl.innerHTML = '<span class="slash-tok">' + escapeHtml(m[0]) + '</span>' + escapeHtml(rest);
+    wrap.classList.add('slash-active');
+    hl.scrollTop = ta.scrollTop;
   }
 
   // The composer floats over the transcript; reserve room so the last message
@@ -2415,6 +2437,8 @@
       if (e.key === 'Escape') { hideSlashPalette(); hideMentionPalette(); }
     });
     $('input').addEventListener('input', () => { autoGrow(); updateSlashPalette(); updateMentionPalette(); });
+    // Keep the slash-command highlight backdrop aligned when the textarea scrolls.
+    $('input').addEventListener('scroll', () => { const hl = $('inputHl'); if (hl) hl.scrollTop = $('input').scrollTop; });
     // Paste an image straight into the composer (screenshots).
     $('input').addEventListener('paste', (e) => {
       for (const item of e.clipboardData?.items || []) {

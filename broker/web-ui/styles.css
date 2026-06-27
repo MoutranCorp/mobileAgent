@@ -682,8 +682,24 @@ svg { display: block; }
 .composer textarea {
   width: 100%; box-sizing: border-box; background: transparent; color: var(--label); border: none;
   padding: 7px 36px 4px 9px; font-family: inherit; font-size: 16px; resize: none;
-  max-height: 168px; line-height: 1.45; scrollbar-width: none;
+  max-height: 168px; line-height: 1.45; scrollbar-width: none; position: relative; z-index: 1;
 }
+/* Backdrop that mirrors the textarea text so a leading /slash-command can be
+   highlighted in place. Inactive (hidden) for ordinary prose; only when the draft
+   IS a slash command do we reveal it and make the textarea text transparent so the
+   coloured copy shows through (the caret stays visible). Box model must match the
+   textarea exactly or the mirrored text would drift. */
+.input-hl {
+  position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
+  box-sizing: border-box; padding: 7px 36px 4px 9px; max-height: 168px;
+  font-family: inherit; font-size: 16px; line-height: 1.45; color: var(--label);
+  white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word; visibility: hidden;
+}
+.composer-input-wrap.slash-active .input-hl { visibility: visible; }
+.composer-input-wrap.slash-active textarea { color: transparent; caret-color: var(--label); }
+.input-hl .slash-tok { color: var(--accent); font-weight: 600;
+  background: rgba(var(--accent-rgb), .14); border-radius: 5px; padding: 0 2px; margin: 0 -2px;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone; }
 .composer textarea::-webkit-scrollbar { display: none; }
 .composer textarea::placeholder { color: var(--label-3); }
 .composer textarea:focus { outline: none; }
