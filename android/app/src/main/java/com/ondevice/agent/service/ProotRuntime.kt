@@ -215,16 +215,20 @@ class ProotRuntime(private val ctx: Context) {
     fun provision(log: (String) -> Unit): Boolean {
         // Idempotent — ensures the apt-no-sandbox + resolv.conf config is present even
         // on a rootfs extracted by an older build (before that config was written).
-        writeGuestConfig()
+        writeGuestConfig(log)
         stageBrokerIntoGuest(log)
         val script = """
             set -e
             export DEBIAN_FRONTEND=noninteractive
-            apt-get update -y
-            apt-get install -y curl ca-certificates git xz-utils
+            # -o APT::Sandbox::User=root: apt's download method drops privileges to the
+            # `_apt` user via setresuid(2), which proot can't honor — passing it on the
+            # command line is belt-and-suspenders alongside /etc/apt/apt.conf.d/99proot.
+            APT="apt-get -o APT::Sandbox::User=root -o Acquire::Check-Valid-Until=false"
+            ${'$'}APT update -y
+            ${'$'}APT install -y curl ca-certificates git xz-utils
             # Node from NodeSource (Debian's is too old for the broker's engines).
             curl -fsSL https://deb.nodesource.com/setup_22.x | bash - || echo "warn: nodesource setup failed, falling back to distro node"
-            apt-get install -y nodejs || apt-get install -y nodejs npm
+            ${'$'}APT install -y nodejs || ${'$'}APT install -y nodejs npm
             mkdir -p /root/projects
             if [ -f /root/agent-broker.tar.gz ]; then
               rm -rf /root/agent-broker.new; mkdir -p /root/agent-broker.new
@@ -308,20 +312,28 @@ class ProotRuntime(private val ctx: Context) {
         env["PROOT_NO_SECCOMP"] = "1" // some devices' seccomp breaks proot; safe default
     }
 
-    private fun writeGuestConfig() {
-        runCatching {
-            File(rootfs, "etc").mkdirs()
-            File(rootfs, "etc/resolv.conf").writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
-            File(rootfs, "etc/hosts").writeText("127.0.0.1 localhost\n::1 localhost\n")
-            // apt's http/https methods drop privileges to the `_apt` user via
-            // setresuid(2), which proot can't honor (Operation not permitted) — the
-            // download method then dies. Tell apt not to sandbox (proot-distro does
-            // the same). Check-Valid-Until off tolerates a clock skewed in the guest.
-            File(rootfs, "etc/apt/apt.conf.d").mkdirs()
-            File(rootfs, "etc/apt/apt.conf.d/99proot").writeText(
-                "APT::Sandbox::User \"root\";\nAcquire::Check-Valid-Until \"false\";\n"
-            )
-        }
+    private fun writeGuestConfig(log: (String) -> Unit = {}) {
+        // Each write is INDEPENDENT: in the linuxcontainers image /etc/resolv.conf is
+        // a (often dangling) symlink, and File.writeText follows it — a single shared
+        // runCatching would let that throw abort the apt-config write that follows.
+        // Delete-then-write so a pre-existing symlink can't redirect or block us.
+        fun put(rel: String, body: String): Boolean = runCatching {
+            val f = File(rootfs, rel)
+            f.parentFile?.mkdirs()
+            f.delete()
+            f.writeText(body)
+            true
+        }.getOrElse { log("  warn: write $rel failed: ${it.message}"); false }
+
+        put("etc/resolv.conf", "nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
+        put("etc/hosts", "127.0.0.1 localhost\n::1 localhost\n")
+        // apt's http/https methods drop privileges to the `_apt` user via setresuid(2),
+        // which proot can't honor (Operation not permitted) — the download method then
+        // dies. Tell apt not to sandbox (proot-distro does the same). Check-Valid-Until
+        // off tolerates a clock skewed in the guest.
+        val apt = put("etc/apt/apt.conf.d/99proot",
+            "APT::Sandbox::User \"root\";\nAcquire::Check-Valid-Until \"false\";\n")
+        log(if (apt) "  apt no-sandbox config written" else "  WARN: apt no-sandbox config NOT written")
     }
 
     // ---- process helper ---------------------------------------------------
