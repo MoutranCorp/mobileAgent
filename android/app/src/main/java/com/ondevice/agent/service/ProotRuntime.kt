@@ -218,8 +218,16 @@ class ProotRuntime(private val ctx: Context) {
         writeGuestConfig(log)
         stageBrokerIntoGuest(log)
         val script = """
-            set -e
             export DEBIAN_FRONTEND=noninteractive
+            # One-shot proot diagnostic: confirms whether the fake /proc binds land and
+            # what the guest sees (libgcrypt FATALs if fips_enabled isn't readable).
+            echo "── proot diag ──"
+            echo "uid=[${'$'}(id -u 2>&1)] cwd=[${'$'}(pwd 2>&1)]"
+            echo "fips_enabled=[${'$'}(cat /proc/sys/crypto/fips_enabled 2>&1)]"
+            echo "cap_last_cap=[${'$'}(cat /proc/sys/kernel/cap_last_cap 2>&1)]"
+            echo "crypto-dir: ${'$'}(ls -la /proc/sys/crypto/ 2>&1 | head -3)"
+            echo "────────────────"
+            set -e
             # -o APT::Sandbox::User=root: apt's download method drops privileges to the
             # `_apt` user via setresuid(2), which proot can't honor — passing it on the
             # command line is belt-and-suspenders alongside /etc/apt/apt.conf.d/99proot.
@@ -262,9 +270,10 @@ class ProotRuntime(private val ctx: Context) {
 
     // ---- proot command construction --------------------------------------
 
-    /** proot base flags. Seccomp acceleration makes some traced syscalls return
-     *  ENOSYS on certain kernels; we disable it via the PROOT_NO_SECCOMP=1 env in
-     *  applyEnv() rather than a CLI flag — proot 5.1.107 has no `--no-seccomp`. */
+    /** proot base flags — mirrors proot-distro (which runs fine on this device).
+     *  We deliberately keep seccomp acceleration ON: disabling it (PROOT_NO_SECCOMP)
+     *  forces proot to ptrace-emulate every syscall, which returned ENOSYS for some
+     *  reads (e.g. /proc/sys/crypto/fips_enabled, breaking libgcrypt/apt). */
     private fun prootHostBase(): List<String> =
         listOf(prootBin.absolutePath, "--kill-on-exit", "--root-id", "--link2symlink")
 
@@ -338,7 +347,9 @@ class ProotRuntime(private val ctx: Context) {
         env["LD_LIBRARY_PATH"] = File(prootDir, "lib").absolutePath
         env["TMPDIR"] = tmpDir.absolutePath
         env["PATH"] = "/system/bin:/system/xbin:${env["PATH"] ?: ""}"
-        env["PROOT_NO_SECCOMP"] = "1" // some devices' seccomp breaks proot; safe default
+        // NOTE: PROOT_NO_SECCOMP deliberately NOT set — see prootHostBase(). Disabling
+        // seccomp made traced reads (e.g. /proc/sys/crypto/fips_enabled) return ENOSYS
+        // and crash libgcrypt/apt. proot-distro runs with seccomp on, on this device.
     }
 
     private fun writeGuestConfig(log: (String) -> Unit = {}) {
