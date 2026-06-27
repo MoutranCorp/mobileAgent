@@ -285,6 +285,14 @@ export class SessionManager {
 
   async switchEngine(profileId) { this._log(`switching engine -> ${profileId}`); return this.startEngine(profileId, {}); }
 
+  /** Forget the active key's resume id (used by /clear) so the next start is fresh. */
+  dropActiveResume() {
+    if (this._sessionByProject[this.activeKey]) {
+      delete this._sessionByProject[this.activeKey];
+      this._saveSessions();
+    }
+  }
+
   async switchModel(model) {
     this._log(`switching model -> ${model} (fresh session)`);
     delete this._sessionByProject[this.activeKey]; // a fresh session for THIS key only

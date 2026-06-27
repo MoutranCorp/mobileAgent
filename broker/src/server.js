@@ -131,7 +131,7 @@ export class BrokerServer {
       this.clients.delete(ws);
       this._log(`client disconnected (${this.clients.size} total)`);
     });
-    ws.on('error', () => this.clients.delete(ws));
+    ws.on('error', (err) => { this._log(`ws error: ${err?.message || err}`); this.clients.delete(ws); });
     // Greet with a full state snapshot.
     this._sendSnapshot(ws);
   }
@@ -322,7 +322,10 @@ export class BrokerServer {
     // never render in a session that didn't build them; freshly-built apks surface
     // via _maybeBroadcastApks and persist through the per-session transcript.
     this._seedApks();
-    this._send(ws, event(EventType.RESOURCES, sampleResources(this.session.liveSessions())));
+    // Don't let a resource-sampling throw abort the rest of the greeting (effort,
+    // models) — the snapshot must always finish. (_lifecycleTick is already guarded.)
+    try { this._send(ws, event(EventType.RESOURCES, sampleResources(this.session.liveSessions()))); }
+    catch (e) { this._log(`resource sample failed: ${e?.message || e}`); }
     // Current effort + whatever model labels we already know (no probe spawn here).
     this._send(ws, event(EventType.EFFORT, { level: this.session.effort }));
     this._send(ws, this._modelsEvent());
@@ -376,10 +379,10 @@ export class BrokerServer {
     }
     try {
       await this._dispatch(ws, cmd);
-      this._send(ws, event(EventType.ack, { ofType: cmd.type, ok: true }));
+      this._send(ws, event(EventType.ACK, { ofType: cmd.type, ok: true }));
     } catch (e) {
       this._log(`command '${cmd.type}' failed: ${e.message}`);
-      this._send(ws, event(EventType.ack, { ofType: cmd.type, ok: false, message: e.message }));
+      this._send(ws, event(EventType.ACK, { ofType: cmd.type, ok: false, message: e.message }));
       this._send(ws, event(EventType.ERROR, { message: e.message }));
     }
   }
@@ -391,7 +394,7 @@ export class BrokerServer {
         // (the client sends `hello` on open) just doubled every greeting event.
         return;
       case CommandType.PING:
-        return this._send(ws, event('pong', {}));
+        return this._send(ws, event(EventType.PONG, {}));
 
       // conversation
       case CommandType.USER_MESSAGE: {
@@ -415,12 +418,23 @@ export class BrokerServer {
         this._pendingTurn.set(this.session.activeKey, { turnId: `t${this._turnSeq}`, checkpointId, text: cmd.text || '' });
         return this.session.sendUserMessage(cmd.text || '', cmd.images);
       }
-      case CommandType.SLASH_COMMAND:
-        return this.session.sendUserMessage(`/${cmd.name}${cmd.args ? ' ' + cmd.args : ''}`);
+      case CommandType.SLASH_COMMAND: {
+        // Validate the command name — it's interpolated into the prompt sent to the
+        // CLI; an empty/whitespace/newline name would send a malformed `/` line.
+        const name = String(cmd.name || '').trim();
+        if (!/^[\w][\w-]*$/.test(name)) {
+          return this._send(ws, event(EventType.ERROR, { message: `Invalid slash command: ${JSON.stringify(cmd.name)}` }));
+        }
+        return this.session.sendUserMessage(`/${name}${cmd.args ? ' ' + cmd.args : ''}`);
+      }
       case CommandType.COMPACT:
         return this.session.sendUserMessage(`/compact${cmd.focus ? ' ' + cmd.focus : ''}`);
       case CommandType.CLEAR:
         this.transcript.clear();
+        // Drop the stored resume id so the NEXT engine start doesn't `--resume` the
+        // just-cleared session (which would silently restore the model context the
+        // user asked to wipe). /clear itself blanks the live CLI session.
+        this.session.dropActiveResume();
         return this.session.sendUserMessage('/clear');
       case CommandType.INTERRUPT:
         return this.session.interrupt();
@@ -445,12 +459,12 @@ export class BrokerServer {
         return;
       }
       case CommandType.SESSION_STOP:
-        if (!cmd.key || !this.session.meta.has(cmd.key)) return this._send(ws, event('ack', { ok: false, message: 'Unknown session key' }));
+        if (!cmd.key || !this.session.meta.has(cmd.key)) return this._send(ws, event(EventType.ACK, { ok: false, message: 'Unknown session key' }));
         await this.session.stopEngineKeepTranscript(cmd.key);
         delete this._turnCheckpoints[cmd.key]; // drop the stale per-turn baseline
         return this.broadcast(event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
       case CommandType.SESSION_PIN:
-        if (!cmd.key || !this.session.meta.has(cmd.key)) return this._send(ws, event('ack', { ok: false, message: 'Unknown session key' }));
+        if (!cmd.key || !this.session.meta.has(cmd.key)) return this._send(ws, event(EventType.ACK, { ok: false, message: 'Unknown session key' }));
         this.session.setPinned(cmd.key, cmd.pinned);
         return this.broadcast(event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
       case CommandType.RESUME: {

@@ -6,6 +6,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { Files } from '../src/controls/files.js';
 import { ClaudeConfig } from '../src/controls/claude-config.js';
+import { loadConfig } from '../src/config.js';
 
 async function tmpDir(p) { return fsp.mkdtemp(path.join(os.tmpdir(), p)); }
 
@@ -29,4 +30,12 @@ test('ClaudeConfig.deleteSession refuses path traversal', () => {
   assert.ok(cc.deleteSession('../../../../etc/passwd').error, 'traversal in id rejected');
   assert.ok(cc.deleteSession('ok-id', { projectDir: '../../../etc' }).error, 'traversal in projectDir rejected');
   assert.ok(cc.deleteSession('bad/../id').error, 'separator in id rejected');
+});
+
+test('loadConfig rejects an out-of-range port but accepts 0 (OS-assigned)', () => {
+  assert.throws(() => loadConfig(['--port', '70000']), /Invalid --port/);
+  assert.throws(() => loadConfig(['--port', 'foo']), /Invalid --port/);
+  assert.throws(() => loadConfig(['--port', '-1']), /Invalid --port/);
+  assert.equal(loadConfig(['--port', '0']).port, 0, 'port 0 is allowed (ephemeral)');
+  assert.equal(loadConfig(['--port', '8765']).port, 8765);
 });
