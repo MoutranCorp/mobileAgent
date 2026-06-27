@@ -62,6 +62,7 @@
     browse: null, // { path, parent, dirs } folder picker
     fsPath: null, // File Manager: current absolute dir (null = home on first open)
     fsList: null, // File Manager: last { path, parent, entries, truncated, error }
+    tabOrder: [], // MRU order of manager pane ids (persisted in userSettings.manage.tabOrder)
     appVersion: null, // { sha, subject, when, branch, dirty }
     appUpdate: null, // last update result
     updating: false,
@@ -102,9 +103,11 @@
 
     const layout = el('div', 'mgr-layout');
     const tabs = el('div', 'mgr-tabs');
-    for (const t of TABS) {
+    tabs.appendChild(buildSearchChip(tabs)); // always first
+    for (const t of orderedTabs()) {
       const b = el('button', 'mgr-tab' + (t.id === m.tab ? ' active' : ''), t.label);
-      b.onclick = () => { m.tab = t.id; m.editing = null; render(); requestTabData(); };
+      b.dataset.fmlabel = t.label.toLowerCase();
+      b.onclick = () => { promoteTab(t.id); m.tab = t.id; m.editing = null; render(); requestTabData(); };
       tabs.appendChild(b);
     }
     layout.appendChild(tabs);
@@ -117,6 +120,57 @@
     root.onclick = (e) => { if (e.target === root) close(); };
 
     renderPane();
+  }
+
+  // ---- chip row: search + most-recently-used ordering ---------------------
+
+  // TABS ordered by the persisted MRU list first (most-recent leftmost), then any
+  // panes the user hasn't picked yet in their natural order. The search chip is
+  // rendered separately and always sits before this list.
+  function orderedTabs() {
+    const byId = new Map(TABS.map((t) => [t.id, t]));
+    const seen = new Set();
+    const out = [];
+    for (const id of (m.tabOrder || [])) { const t = byId.get(id); if (t && !seen.has(id)) { out.push(t); seen.add(id); } }
+    for (const t of TABS) if (!seen.has(t.id)) out.push(t);
+    return out;
+  }
+  // Move a pane to the front of the MRU order and persist — so a user's most-used
+  // pages drift to the easy-to-reach left edge over time.
+  function promoteTab(id) {
+    const next = [id, ...(m.tabOrder || []).filter((x) => x !== id)];
+    m.tabOrder = next;
+    if (window.Agent && window.Agent.patchUserSettings) window.Agent.patchUserSettings({ manage: { tabOrder: next } });
+  }
+
+  // An icon button that expands into a live filter box. Typing hides chips whose
+  // label doesn't match — without re-rendering, so the keyboard/focus is kept.
+  function buildSearchChip(tabsEl) {
+    const wrap = el('div', 'mgr-search');
+    const btn = el('button', 'mgr-search-btn'); btn.type = 'button';
+    btn.setAttribute('aria-label', 'Search panes'); btn.innerHTML = '🔍';
+    const input = el('input', 'mgr-search-input');
+    input.type = 'text'; input.placeholder = 'Search…'; input.setAttribute('aria-label', 'Filter panes');
+    const applyFilter = () => {
+      const q = input.value.trim().toLowerCase();
+      tabsEl.querySelectorAll('.mgr-tab').forEach((c) => {
+        c.classList.toggle('fm-hidden', !!q && !(c.dataset.fmlabel || '').includes(q));
+      });
+    };
+    const open = () => { wrap.classList.add('open'); setTimeout(() => input.focus(), 60); };
+    const close = () => { input.value = ''; applyFilter(); wrap.classList.remove('open'); };
+    btn.onclick = () => { if (wrap.classList.contains('open')) close(); else open(); };
+    input.oninput = applyFilter;
+    input.onkeydown = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } };
+    input.onblur = () => { if (!input.value.trim()) wrap.classList.remove('open'); };
+    wrap.appendChild(btn); wrap.appendChild(input);
+    return wrap;
+  }
+
+  function onUserSettings(s) {
+    const order = s && s.manage && Array.isArray(s.manage.tabOrder) ? s.manage.tabOrder : [];
+    m.tabOrder = order.slice();
+    if (!root.classList.contains('hidden')) render();
   }
 
   function requestTabData() {
@@ -1394,6 +1448,6 @@
     open, openTab, close, onConfig, onCapabilities, onContext, onProjects, onProfiles, onResources,
     onCheckpoints, onFiles, onFile, onFileDiff, onFileGrep, onPrompts, onScripts,
     onAutoVerify, onUsageStats, onCheckpointDiff, onWorkspaceBrowse,
-    onAppVersion, onAppUpdate, onSessions, onFsList,
+    onAppVersion, onAppUpdate, onSessions, onFsList, onUserSettings,
   };
 })();

@@ -76,6 +76,7 @@ export const EventType = Object.freeze({
   FILE_WIDGET: 'file_widget', // { path, kind?, title? } render a generated project file inline (e.g. a Playwright screenshot) without a Write/Edit tool event
   LOG: 'log', // { level, message }  broker diagnostics
   TOAST: 'toast', // { message, level? }  transient user-facing notice
+  USER_SETTINGS: 'user_settings', // { settings }  persisted per-user UI/engine prefs (sent in the snapshot)
   APP_VERSION: 'app_version', // { sha, subject, when, branch, dirty }  current app build
   APP_UPDATE: 'app_update', // { state?: 'updating', ok, upToDate?, fromSha, toSha, needsReload, needsRestart, ... }
   REVERTED: 'reverted', // { ok, checkpointId, removed, restoredFiles, text, message? } result of a revert
@@ -145,6 +146,7 @@ export const CommandType = Object.freeze({
   FS_COPY: 'fs_copy', // { path, dest? }  clone (default: "<name> copy")
   FS_DELETE: 'fs_delete', // { path }  delete file/folder (recursive)
   FS_EXTRACT: 'fs_extract', // { path }  extract .zip/.tar/.tar.gz/.tgz into a sibling folder
+  USER_SETTINGS_PATCH: 'user_settings_patch', // { patch }  deep-merge + persist user settings
   TRANSCRIPT_SEARCH: 'transcript_search', // { query }  (search the conversation)
   // Prompt library
   PROMPTS_LIST: 'prompts_list', // {}

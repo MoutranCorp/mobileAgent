@@ -82,6 +82,18 @@ are cache-busted with `?v=__VER__` rewritten to a mtime-derived version at serve
   Manager** (whole device — see below), **Scripts, Git, Checkpoints, Prompts,
   Usage, Update**. UI-created skills/commands/agents/MCP hot-reload via engine
   re-spawn (resume) + toast.
+- **User settings** (`controls/user-settings.js`, schema `config/user-settings.default.json`):
+  a single persisted store for per-user UI/engine prefs — last-used **model /
+  effort / permission-mode** (re-applied broker-side on startup), **open tabs +
+  active tab**, and the **Manage tab order**. Defaults are committed; the live
+  `<stateDir>/user-settings.json` is device-local (gitignored). Sent in the
+  connect snapshot as `user_settings`; the client persists changes via
+  `user_settings_patch` (deep-merge). Tabs also keep a localStorage fast-cache and
+  hydrate from the durable store if that cache is empty.
+- **Manage chip row** (`managers.js`): an expandable **search chip** (always
+  first) filters the panes as you type, and picked panes promote to the front
+  (most-recently-used ordering, persisted in user settings) so frequent screens
+  stay at the left edge.
 - **File Manager** (`managers.js` `renderFileManager` + `controls/fsmanager.js`):
   a **whole-filesystem** browser (NOT project-scoped) over absolute paths (`~`
   expanded). Navigate (home/up/go-to-path), **new folder**, and per-entry

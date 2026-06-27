@@ -5,6 +5,8 @@
 # Broker state / secrets (never commit)
 broker/.agent-broker/
 **/secrets.json
+# Live per-user settings (committed copy is broker/config/user-settings.default.json)
+**/user-settings.json
 
 # Android
 android/.gradle/

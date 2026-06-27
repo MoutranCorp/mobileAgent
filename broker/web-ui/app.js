@@ -40,7 +40,7 @@
     activeSessionId: null, // claude sessionId of the session being viewed (from CONFIG/sessions)
   };
   // exposed for managers.js (toast attached after its definition below)
-  window.Agent = { send, state, esc, openFileTab };
+  window.Agent = { send, state, esc, openFileTab, patchUserSettings: (p) => patchUserSettings(p) };
 
   // Native bridge: inside the Android WebView, window.AndroidAgent is injected by
   // the Kotlin host. On desktop browsers it's absent and we use the web APIs.
@@ -287,6 +287,7 @@
       case 'log': break;
       case 'file_widget': onFileWidget(ev); break;
       case 'toast': if (ev.message) toast(ev.message, ev.level || 'info'); break;
+      case 'user_settings': onUserSettings(ev); break;
       case 'app_version': if (window.Managers) window.Managers.onAppVersion(ev); break;
       case 'app_update': onAppUpdate(ev); if (window.Managers) window.Managers.onAppUpdate(ev); break;
       case 'ack': if (!ev.ok && ev.message) toast(ev.message, 'error'); break;
@@ -382,13 +383,54 @@
   function dismissSession(key) { dismissedSet().add(key); saveDismissed(); }
   function undismissSession(key) { if (dismissedSet().delete(key)) saveDismissed(); }
   function loadTabs() { try { return JSON.parse(localStorage.getItem('agentTabs') || '[]'); } catch { return []; } }
+  function serializeTabs() {
+    return state.tabs.map((t) => t.kind === 'file'
+      ? { kind: 'file', id: t.id, filePath: t.filePath, fileKind: t.fileKind, abs: !!t.abs, title: t.userTitle || null, userColor: t.userColor || null }
+      : { kind: 'session', key: t.key, projectId: t.projectId, title: t.userTitle || null, userColor: t.userColor || null });
+  }
   function saveTabs() {
+    const tabs = serializeTabs();
+    // localStorage is the instant local cache; userSettings is the durable device
+    // store (survives a localStorage clear and loads with the app).
+    try { localStorage.setItem('agentTabs', JSON.stringify(tabs)); } catch { /* ignore */ }
+    patchUserSettings({ workspace: { tabs, activeTabId: state.activeTabId || null } });
+  }
+  // Deep-merge a partial into the persisted user settings (broker = source of truth).
+  function patchUserSettings(partial) {
+    if (!partial) return;
+    state.userSettings = deepMergeSettings(state.userSettings || {}, partial);
+    send({ type: 'user_settings_patch', patch: partial });
+  }
+  function deepMergeSettings(base, patch) {
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return patch;
+    const out = (base && typeof base === 'object' && !Array.isArray(base)) ? { ...base } : {};
+    for (const k of Object.keys(patch)) {
+      const pv = patch[k];
+      out[k] = (pv && typeof pv === 'object' && !Array.isArray(pv)) ? deepMergeSettings(out[k], pv) : pv;
+    }
+    return out;
+  }
+  // The broker's persisted user settings arrived (in the connect snapshot). Engine
+  // prefs (model/effort/permission) are already re-applied broker-side and flow
+  // through their own events; here we adopt the durable workspace/manage state.
+  function onUserSettings(ev) {
+    const s = (ev && ev.settings) || {};
+    state.userSettings = s;
+    // Hand the Manage screen its persisted MRU tab order.
+    if (window.Managers && window.Managers.onUserSettings) window.Managers.onUserSettings(s);
+    // Migration / recovery: if this client has no local tabs (fresh device or a
+    // cleared localStorage) but the durable store has some, hydrate from it.
     try {
-      localStorage.setItem('agentTabs', JSON.stringify(state.tabs.map((t) => t.kind === 'file'
-        ? { kind: 'file', id: t.id, filePath: t.filePath, fileKind: t.fileKind, title: t.userTitle || null, userColor: t.userColor || null }
-        : { kind: 'session', key: t.key, projectId: t.projectId, title: t.userTitle || null, userColor: t.userColor || null })));
+      const local = JSON.parse(localStorage.getItem('agentTabs') || '[]');
+      const durable = (s.workspace && Array.isArray(s.workspace.tabs)) ? s.workspace.tabs : [];
+      if ((!local || !local.length) && durable.length && !state._tabsHydrated) {
+        localStorage.setItem('agentTabs', JSON.stringify(durable));
+        state._tabsHydrated = true;
+        if (!state.tabs.length) restoreTabs();
+      }
     } catch { /* ignore */ }
   }
+
   function ensureTab({ key, projectId, title }) {
     let t = state.tabs.find((x) => x.kind !== 'file' && x.key === key);
     if (!t) {
@@ -493,7 +535,7 @@
   }
   function restoreTabs() {
     state.tabs = loadTabs().map((t) => t.kind === 'file'
-      ? { id: t.id || ('file:' + t.filePath), kind: 'file', filePath: t.filePath, fileKind: t.fileKind || fileKind(t.filePath),
+      ? { id: t.id || ((t.abs ? 'fsfile:' : 'file:') + t.filePath), kind: 'file', abs: !!t.abs, filePath: t.filePath, fileKind: t.fileKind || fileKind(t.filePath),
           userTitle: t.title || null, title: t.title || String(t.filePath).split(/[\\/]/).pop(), userColor: t.userColor || null, color: t.userColor || '#8a8a8a' }
       : { id: t.key, key: t.key, kind: 'session', projectId: t.projectId ?? null, userTitle: t.title || null,
           title: '', userColor: t.userColor || null, color: t.userColor || tabColorFor(t.projectId), done: false });

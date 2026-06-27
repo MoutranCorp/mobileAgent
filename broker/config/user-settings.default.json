@@ -1,0 +1,29 @@
+{
+  "$comment": "Default user settings schema. This file IS committed and documents every persisted preference + its default. The LIVE copy lives at <stateDir>/user-settings.json (outside the repo) and is never committed. The broker deep-merges the live file over these defaults on load, so adding a new key here makes it available to every existing install without a migration. Bump `version` only for a breaking re-shape.",
+  "version": 1,
+
+  "engine": {
+    "$comment": "Last-used engine preferences, re-applied on startup so a restart keeps your choices.",
+    "model": null,
+    "effort": "high",
+    "permissionMode": "bypassPermissions"
+  },
+
+  "workspace": {
+    "$comment": "Tabs + which one was focused, so the workspace is restored exactly as you left it. Tabs are session/file references; sessions themselves persist separately.",
+    "tabs": [],
+    "activeTabId": null,
+    "lastProjectId": null
+  },
+
+  "manage": {
+    "$comment": "Manage-screen UI state. tabOrder is a most-recently-used ordering of the manager pane ids (the search chip is always rendered first, before this list).",
+    "tabOrder": []
+  },
+
+  "ui": {
+    "$comment": "Cosmetic/behaviour toggles for the web UI.",
+    "reduceMotion": false,
+    "lastTab": null
+  }
+}

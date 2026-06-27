@@ -16,6 +16,7 @@ import { TranscriptStore } from './controls/transcript.js';
 import { Checkpoints } from './controls/checkpoints.js';
 import { Files } from './controls/files.js';
 import { FileSystemManager } from './controls/fsmanager.js';
+import { UserSettings } from './controls/user-settings.js';
 import { PromptLibrary } from './controls/prompts.js';
 import { AutoVerify } from './controls/autoverify.js';
 import { UsageLedger } from './controls/usage-ledger.js';
@@ -44,6 +45,7 @@ export class BrokerServer {
     // and detect native-dep changes before broadcasting.
     const emit = (ev) => this._emitEvent(ev);
 
+    this.userSettings = new UserSettings(config.stateDir);
     this.profiles = new ProfileStore(config.stateDir);
     this.secrets = new SecretStore(config.stateDir);
     this.transcript = new TranscriptStore(config.stateDir);
@@ -68,6 +70,14 @@ export class BrokerServer {
       getProject: (id) => this.projects.get(id), // resolve a session's own folder for cold-resume
       emit,
     });
+    // Re-apply the user's last-used engine prefs so a broker restart keeps them
+    // (the session otherwise falls back to config/env defaults).
+    const _us = this.userSettings.get();
+    if (_us.engine) {
+      if (_us.engine.effort) this.session.effort = _us.engine.effort;
+      if (_us.engine.permissionMode) this.session.permissionMode = _us.engine.permissionMode;
+      if (_us.engine.model) this.session.currentModel = _us.engine.model;
+    }
     this.transcript.setProject(this.session.activeKey); // same key convention as sessions (project.id | '__main__')
 
     this.usage = new UsageLedger(config.stateDir);
@@ -121,6 +131,7 @@ export class BrokerServer {
     // every background session's buffer, not just the active one — reaches disk.
     try { this.transcript.flushAll(); } catch { /* ignore */ }
     try { this.session.flushSessionsFile?.(); } catch { /* ignore */ }
+    try { this.userSettings.flush(); } catch { /* ignore */ }
   }
 
   // --- websocket --------------------------------------------------------------
@@ -337,6 +348,9 @@ export class BrokerServer {
     // Current effort + whatever model labels we already know (no probe spawn here).
     this._send(ws, event(EventType.EFFORT, { level: this.session.effort }));
     this._send(ws, this._modelsEvent());
+    // Persisted per-user UI/engine prefs (open tabs, manage tab order, …) so the
+    // client can restore the workspace exactly as it was left.
+    this._send(ws, event(EventType.USER_SETTINGS, { settings: this.userSettings.get() }));
   }
 
   /** Build a MODELS event from the active profile + cached alias->id (no spawn). */
@@ -454,6 +468,7 @@ export class BrokerServer {
         return this.session.respondPermission(cmd.id, 'deny', { reason: cmd.reason }, cmd.sessionKey);
       case CommandType.SET_PERMISSION_MODE:
         await this.session.setPermissionMode(cmd.mode);
+        this.userSettings.patch({ engine: { permissionMode: cmd.mode } }); // remember it across restarts
         return this.broadcast(event(EventType.PERMISSION_MODE, { mode: cmd.mode }));
 
       // session / engine
@@ -561,12 +576,18 @@ export class BrokerServer {
           activeProfileId: this.session.activeProfileId,
         }));
       case CommandType.SWITCH_MODEL:
+        this.userSettings.patch({ engine: { model: cmd.model } }); // remember the model across restarts
         return this.session.switchModel(cmd.model);
       case CommandType.MODELS_LIST:
         return this._sendModels(ws, !!cmd.refresh);
       case CommandType.SET_EFFORT:
         await this.session.setEffort(cmd.level);
+        this.userSettings.patch({ engine: { effort: cmd.level } }); // remember the effort across restarts
         return this.broadcast(event(EventType.EFFORT, { level: cmd.level }));
+      case CommandType.USER_SETTINGS_PATCH:
+        // Persist a client-supplied settings patch (tabs, manage tab order, …).
+        this.userSettings.patch(cmd.patch || {});
+        return;
       case CommandType.APP_VERSION:
         return this._send(ws, event(EventType.APP_VERSION, await this.updater.version()));
       case CommandType.APP_UPDATE: {
