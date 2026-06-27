@@ -13,3 +13,6 @@ captures/
 
 # Broker bundled into the APK by the stageBroker Gradle task (built from ../broker).
 /app/src/main/assets/broker.tar.gz
+
+# proot tracer + libs staged by provisioning/make-runtime.sh (option 1: proot+Debian).
+/app/src/main/assets/proot-*/
