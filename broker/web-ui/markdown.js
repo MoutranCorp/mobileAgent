@@ -26,7 +26,12 @@
   }
   function safeUrl(u) {
     // Allow http(s), mailto and relative/anchor links; block javascript: etc.
-    return /^(https?:\/\/|mailto:|\/|#)/i.test(u) ? u : '#';
+    if (!/^(https?:\/\/|mailto:|\/|#)/i.test(u)) return '#';
+    // The URL is inserted into href="…". Upstream escapeHtml already neutralized
+    // &<>, but NOT quotes — an unescaped " (or ') lets a crafted URL break out of
+    // the attribute and inject live event handlers (confirmed XSS). Escape the
+    // quote chars here; do NOT re-escape & (that would double-encode).
+    return u.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
   // Inline spans. Input is already HTML-escaped. Inline code is protected first

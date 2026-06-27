@@ -65,3 +65,19 @@ test('partial input mid-stream does not throw (unterminated fence)', () => {
   const h = MD.render('intro\n\n```js\nconst a =');
   assert.match(h, /<pre><code>/);
 });
+
+test('link/autolink URLs cannot break out of the href attribute (XSS)', () => {
+  // A double-quote in the URL must not start a new attribute (regression for the
+  // confirmed onmouseover-injection PoC).
+  const h = MD.render('[x](https://a"onmouseover="alert(1)) and https://b"onmouseover="alert(2) end');
+  // No event-handler attribute may appear in any opening <a> tag. (`[^>]*` is bounded
+  // by the first `>`, so this inspects only attributes, not the harmless link text.)
+  assert.doesNotMatch(h, /<a [^>]*\son\w+=/, 'no injected event-handler attribute in the tag');
+  // Every " inside a URL must be escaped to &quot; so it can't close the href.
+  assert.match(h, /href="https:\/\/a&quot;onmouseover=&quot;alert\(1"/, 'link quote escaped inside href');
+  assert.match(h, /href="https:\/\/b&quot;onmouseover=&quot;alert\(2"/, 'autolink quote escaped inside href');
+  // Disallowed schemes still neutralized.
+  assert.match(MD.render('[x](javascript:alert(1))'), /href="#"/);
+  // Ampersands in a normal URL are not double-escaped.
+  assert.match(MD.render('[x](https://e.com/?a=1&b=2)'), /href="https:\/\/e\.com\/\?a=1&amp;b=2"/);
+});
