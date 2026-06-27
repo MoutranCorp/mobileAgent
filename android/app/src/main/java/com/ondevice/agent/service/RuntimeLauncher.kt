@@ -139,6 +139,7 @@ class RuntimeLauncher(private val ctx: Context) {
         // app's data dir. (system-linker-exec wraps exec through the system linker
         // for the API-29+ W^X case; harmless on our targetSdk-28 exec path.)
         val preload = File(bm.usrDir, "lib/libtermux-exec-ld-preload.so")
+        RuntimeController.log("[runtime] termux-exec: ${preload.absolutePath} exists=${preload.exists()}")
         if (preload.exists()) {
             env["LD_PRELOAD"] = preload.absolutePath
             env["TERMUX__ROOTFS"] = rootfs
@@ -151,6 +152,9 @@ class RuntimeLauncher(private val ctx: Context) {
             env["TERMUX_EXEC__EXECVE_CALL__INTERCEPT"] = "enable"
             env["TERMUX_EXEC__SYSTEM_LINKER_EXEC__MODE"] = "enable"
             env["ANDROID__BUILD_VERSION_SDK"] = android.os.Build.VERSION.SDK_INT.toString()
+            // DEBUG level so the next run's logs prove whether termux-exec actually
+            // loaded + intercepts (look for its version banner / "Intercepting execve").
+            env["TERMUX_EXEC__LOG_LEVEL"] = "2"
         }
 
         // Inject provider keys from the Android Keystore so they never touch disk
