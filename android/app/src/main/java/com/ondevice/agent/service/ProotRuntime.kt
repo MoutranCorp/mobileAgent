@@ -293,6 +293,17 @@ class ProotRuntime(private val ctx: Context) {
         fi
     """.trimIndent()
 
+    /** Start an interactive command inside the guest in its OWN proot process,
+     *  returning the Process so the caller can read stdout and write stdin. Used by
+     *  the native Claude sign-in flow (drives `claude setup-token` in a PTY). The
+     *  rootfs is shared with the running broker, so credentials it writes to
+     *  /root/.claude are picked up by the broker's claude engine on the next turn. */
+    fun startGuestCommand(guestScript: String): Process {
+        val pb = ProcessBuilder(prootGuest(guestScript)).directory(rootDir).redirectErrorStream(true)
+        applyEnv(pb.environment())
+        return pb.start()
+    }
+
     /** Copy the bundled broker tarball straight into the guest's /root (host-side). */
     private fun stageBrokerIntoGuest(log: (String) -> Unit) {
         val name = runCatching { ctx.assets.list("")?.firstOrNull { it.startsWith("broker.tar") } }.getOrNull() ?: return

@@ -22,6 +22,9 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.content.Intent
+import android.net.Uri
+import com.ondevice.agent.service.ClaudeLogin
 import com.ondevice.agent.service.RuntimeController
 import com.ondevice.agent.service.RuntimeState
 
@@ -142,6 +145,8 @@ private fun RuntimeTab(state: RuntimeState, detail: String, actions: MainActions
             }
         }
 
+        ClaudeSignInSection()
+
         var exempt by remember { mutableStateOf(actions.isBatteryExempt()) }
         Section("Battery (keep alive while testing)") {
             Text(if (exempt) "Exempt from battery optimization ✓" else "NOT exempt — Doze may kill Metro",
@@ -230,6 +235,55 @@ private fun RuntimeTab(state: RuntimeState, detail: String, actions: MainActions
         }
 
             Spacer(Modifier.height(40.dp))
+    }
+}
+
+/** Native on-device Claude sign-in: drives `claude setup-token`, opens the OAuth
+ *  link in a real browser, and submits the pasted code straight to the process. */
+@Composable
+private fun ClaudeSignInSection() {
+    val ctx = LocalContext.current
+    val st by ClaudeLogin.state.collectAsState()
+    Section("Sign in to Claude") {
+        when (st.phase) {
+            ClaudeLogin.Phase.IDLE, ClaudeLogin.Phase.ERROR -> {
+                Text(
+                    if (st.phase == ClaudeLogin.Phase.ERROR) st.message
+                    else "Authorize Claude on this device — opens your browser, then paste the code back.",
+                    color = if (st.phase == ClaudeLogin.Phase.ERROR) Red else TextDim, fontSize = 13.sp,
+                )
+                Spacer(Modifier.height(8.dp))
+                FilledButton(if (st.phase == ClaudeLogin.Phase.ERROR) "Try again" else "Sign in") { ClaudeLogin.start(ctx) }
+            }
+            ClaudeLogin.Phase.STARTING -> Text(st.message.ifEmpty { "Starting…" }, color = TextDim, fontSize = 13.sp)
+            ClaudeLogin.Phase.AWAITING_CODE, ClaudeLogin.Phase.VERIFYING -> {
+                Text(st.message, color = TextMain, fontSize = 13.sp)
+                Spacer(Modifier.height(8.dp))
+                st.url?.let { url ->
+                    FilledButton("Open sign-in page") {
+                        runCatching {
+                            ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                }
+                var codeText by remember { mutableStateOf("") }
+                DarkField(codeText, { codeText = it }, "paste the code here")
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledButton("Submit code") { ClaudeLogin.submitCode(codeText); codeText = "" }
+                    OutlineButton("Cancel") { ClaudeLogin.cancel() }
+                }
+                if (st.phase == ClaudeLogin.Phase.VERIFYING) {
+                    Spacer(Modifier.height(6.dp)); Text("Submitting…", color = TextDim, fontSize = 12.sp)
+                }
+            }
+            ClaudeLogin.Phase.DONE -> {
+                Text(st.message, color = Green, fontSize = 13.sp)
+                Spacer(Modifier.height(8.dp))
+                OutlineButton("Sign in again") { ClaudeLogin.reset() }
+            }
+        }
     }
 }
 
