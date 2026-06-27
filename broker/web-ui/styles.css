@@ -896,6 +896,11 @@ mark.find-hit.current { background: var(--orange); color: #000; }
    double it with the global :focus-visible ring on the inner input. */
 .mgr-search-input:focus-visible { outline: none !important; }
 .mgr-pane { flex: 1; padding: 16px 18px 28px; overflow-y: auto; }
+/* Quick cross-fade when switching panes — replaces the old full-modal rebuild
+   that re-ran the springy sheet-up slide on every chip tap. */
+.mgr-pane.pane-swap { animation: mgr-pane-in .19s var(--ease); }
+@keyframes mgr-pane-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .mgr-pane.pane-swap { animation: none; } }
 .mgr-hint { font-size: 13px; color: var(--label-3); margin: 0 0 14px; line-height: 1.4; }
 .mgr-list { display: flex; flex-direction: column; gap: 1px; margin-bottom: 14px;
   background: var(--sys-bg-2); border-radius: var(--r-md); overflow: hidden; }

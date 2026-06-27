@@ -103,13 +103,7 @@
 
     const layout = el('div', 'mgr-layout');
     const tabs = el('div', 'mgr-tabs');
-    tabs.appendChild(buildSearchChip(tabs)); // always first
-    for (const t of orderedTabs()) {
-      const b = el('button', 'mgr-tab' + (t.id === m.tab ? ' active' : ''), t.label);
-      b.dataset.fmlabel = t.label.toLowerCase();
-      b.onclick = () => { promoteTab(t.id); m.tab = t.id; m.editing = null; render(); requestTabData(); };
-      tabs.appendChild(b);
-    }
+    renderChips(tabs);
     layout.appendChild(tabs);
 
     const pane = el('div', 'mgr-pane');
@@ -123,6 +117,43 @@
   }
 
   // ---- chip row: search + most-recently-used ordering ---------------------
+
+  // (Re)build only the chip strip in place — never recreates the modal card, so
+  // the sheet-up entry animation is NOT replayed on a tab switch.
+  function renderChips(tabsEl) {
+    tabsEl.innerHTML = '';
+    tabsEl.appendChild(buildSearchChip(tabsEl)); // always first
+    for (const t of orderedTabs()) {
+      const b = el('button', 'mgr-tab' + (t.id === m.tab ? ' active' : ''), t.label);
+      b.dataset.fmlabel = t.label.toLowerCase();
+      b.onclick = () => selectTab(t.id);
+      tabsEl.appendChild(b);
+    }
+  }
+
+  // A user picked a chip: promote it (MRU) + switch panes, all WITHOUT rebuilding
+  // the modal (which used to replay the springy sheet-up slide — the "pushes down
+  // then snaps up" jank).
+  function selectTab(id) {
+    if (id !== m.tab) m.editing = null;
+    m.tab = id;
+    promoteTab(id);
+    softSwitch(id);
+    requestTabData();
+  }
+
+  // Switch the active pane in place: rebuild the chip strip (active + MRU order)
+  // and swap the pane content with a quick cross-fade. Falls back to a full render
+  // if the modal isn't built yet.
+  function softSwitch(tab) {
+    m.tab = tab;
+    const tabsEl = document.querySelector('.mgr-tabs');
+    if (!tabsEl) { render(); return; }
+    renderChips(tabsEl);
+    renderPane();
+    const pane = document.getElementById('mgrPane');
+    if (pane) { pane.classList.remove('pane-swap'); void pane.offsetWidth; pane.classList.add('pane-swap'); }
+  }
 
   // TABS ordered by the persisted MRU list first (most-recent leftmost), then any
   // panes the user hasn't picked yet in their natural order. The search chip is
@@ -1411,13 +1442,13 @@
     m.diffView = null;
     m.grep = null;
     if (root.classList.contains('hidden')) return;
-    if (m.tab !== 'files') { m.tab = 'files'; render(); } else renderPane();
+    softSwitch('files');
   }
   function onFileDiff(ev) {
     m.diffView = ev;
     m.openFile = null;
     if (root.classList.contains('hidden')) return;
-    if (m.tab !== 'files') { m.tab = 'files'; render(); } else renderPane();
+    softSwitch('files');
   }
   function onFileGrep(ev) {
     m.grep = { query: ev.query, matches: ev.matches || [] };
@@ -1441,7 +1472,7 @@
   function onCheckpointDiff(ev) {
     m.checkpointDiff = { id: ev.id, label: ev.label, files: ev.files || [], stat: ev.stat || '' };
     if (root.classList.contains('hidden')) return;
-    if (m.tab !== 'checkpoints') { m.tab = 'checkpoints'; render(); } else renderPane();
+    softSwitch('checkpoints');
   }
 
   window.Managers = {
