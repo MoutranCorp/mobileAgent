@@ -94,16 +94,20 @@ object ClaudeLogin {
         _state.value = _state.value.copy(phase = Phase.VERIFYING, message = "Submitting code…")
         Thread {
             runCatching {
-                // In a PTY, Enter is CR (\r), not LF — claude's raw-mode (ink) prompt only
-                // submits on CR; an \n leaves the code unsubmitted and it hangs. (A PTY's
-                // ICRNL also maps CR→NL for canonical readers, so CR is safe either way.)
-                p.outputStream.write((code + "\r").toByteArray(Charsets.UTF_8))
-                p.outputStream.flush()
+                val os = p.outputStream
+                // Send the code as one write, THEN Enter as a SEPARATE, delayed keystroke.
+                // claude (ink) treats a fast burst as a bracketed PASTE and would absorb a
+                // trailing \r as literal text — the code echoes (masked) but never submits.
+                // A distinct, later CR registers as the Enter key. (\r, not \n: in a PTY
+                // Enter is carriage return; ICRNL also maps CR→NL for canonical readers.)
+                os.write(code.toByteArray(Charsets.UTF_8)); os.flush()
+                Thread.sleep(300)
+                os.write("\r".toByteArray(Charsets.UTF_8)); os.flush()
             }.onFailure { RuntimeController.log("[login] submit error: ${it.message}") }
         }.apply { isDaemon = true; start() }
         // Watchdog: never leave the UI stuck on "Submitting…".
         Thread {
-            Thread.sleep(40_000)
+            Thread.sleep(75_000)
             if (_state.value.phase == Phase.VERIFYING) {
                 RuntimeController.log("[login] no completion 40s after code")
                 _state.value = State(Phase.ERROR, null, "No response after the code — see the runtime log. The code may be wrong/expired; try again.")
