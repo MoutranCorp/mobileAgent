@@ -121,6 +121,18 @@ export class ClaudeCodeEngine extends EngineAdapter {
       ...this.env,
       WATCHMAN_DISABLE: process.env.WATCHMAN_DISABLE ?? '1',
     };
+    // Credentials file (written by `claude setup-token` / the native sign-in) is the
+    // source of truth on the default endpoint. A leftover/empty CLAUDE_CODE_OAUTH_TOKEN
+    // env var would OVERRIDE it and get sent as an invalid bearer token → 401
+    // "Invalid bearer token". So when creds exist and we're not on an alt endpoint,
+    // drop the env token and let the CLI read the file.
+    try {
+      const credsFile = path.join(env.HOME || os.homedir(), '.claude', '.credentials.json');
+      if (!env.ANTHROPIC_BASE_URL && !env.ANTHROPIC_AUTH_TOKEN && fs.existsSync(credsFile)) {
+        delete env.CLAUDE_CODE_OAUTH_TOKEN;
+        delete env.ANTHROPIC_API_KEY;
+      }
+    } catch { /* best-effort */ }
     // On Termux/proot the CLI runs as root, and `--permission-mode
     // bypassPermissions` refuses to start as root/sudo "for security reasons".
     // IS_SANDBOX=1 tells the CLI it's already in a sandbox, lifting that guard —

@@ -66,15 +66,16 @@ object ClaudeLogin {
                     }
                     // Detect success from output too (claude may not exit promptly under
                     // `script`): a printed token or an explicit success line.
-                    if (markSuccess(ctx, clean)) { runCatching { p.destroyForcibly() }; break }
+                    if (markSuccess(ctx, clean, credsFile(rt))) { runCatching { p.destroyForcibly() }; break }
                 }
                 val code = runCatching { p.waitFor() }.getOrDefault(-1)
                 proc = null
                 val text = stripAnsi(out.toString())
                 if (_state.value.phase != Phase.DONE) {
-                    val creds = File(rt.rootfs, "root/.claude/.credentials.json").exists()
-                    if (markSuccess(ctx, text) || creds || code == 0) {
-                        _state.value = State(Phase.DONE, null, "Signed in ✓  Open the Agent tab and send a message.")
+                    val creds = credsFile(rt).exists()
+                    if (creds || markSuccess(ctx, text, credsFile(rt)) || code == 0) {
+                        if (creds) runCatching { KeystoreSecrets(ctx).remove("CLAUDE_CODE_OAUTH_TOKEN") }
+                        _state.value = State(Phase.DONE, null, "Signed in ✓  Stop & Start the runtime (Status above), then send a message.")
                     } else {
                         _state.value = State(Phase.ERROR, null, "Sign-in didn't complete (exit $code). Check the runtime log, then try again.")
                     }
@@ -116,13 +117,20 @@ object ClaudeLogin {
         }.apply { isDaemon = true; start() }
     }
 
-    /** Persist any printed token and flip to DONE if the output shows success. */
-    private fun markSuccess(ctx: Context, text: String): Boolean {
+    private fun credsFile(rt: ProotRuntime) = File(rt.rootfs, "root/.claude/.credentials.json")
+
+    /** Flip to DONE if the output shows success. Credentials FILE is authoritative: if
+     *  it exists, clear any CLAUDE_CODE_OAUTH_TOKEN secret so a stale env token can't
+     *  override it and cause a 401. Only if there's no file do we keep a printed token
+     *  as a fallback. */
+    private fun markSuccess(ctx: Context, text: String, creds: File): Boolean {
         val tok = TOKEN_RE.find(text)?.value
-        val ok = tok != null || SUCCESS_RE.containsMatchIn(text)
+        val ok = creds.exists() || tok != null || SUCCESS_RE.containsMatchIn(text)
         if (ok) {
-            tok?.let { runCatching { KeystoreSecrets(ctx).put("CLAUDE_CODE_OAUTH_TOKEN", it) } }
-            _state.value = State(Phase.DONE, null, "Signed in ✓  Open the Agent tab and send a message.")
+            val ks = KeystoreSecrets(ctx)
+            if (creds.exists()) runCatching { ks.remove("CLAUDE_CODE_OAUTH_TOKEN") }
+            else tok?.let { runCatching { ks.put("CLAUDE_CODE_OAUTH_TOKEN", it) } }
+            _state.value = State(Phase.DONE, null, "Signed in ✓  Stop & Start the runtime (Status above), then send a message.")
         }
         return ok
     }
