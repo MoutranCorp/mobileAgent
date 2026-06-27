@@ -1255,23 +1255,31 @@
     for (const e of fl.entries) {
       const full = fmJoin(fl.path, e.name);
       const kind = e.dir ? 'dir' : (fmKind(e.name) || (isArchive(e.name) ? 'archive' : 'text'));
-      const row = el('div', 'mgr-row fm-row');
-      const info = el('div', 'mgr-row-info'); info.style.cursor = 'pointer';
+      const row = el('div', 'mgr-row fm-row'); row.style.cursor = 'pointer';
+      const info = el('div', 'mgr-row-info');
       info.appendChild(el('div', 'mgr-row-name', (FM_ICON[kind] || '📄') + ' ' + e.name + (e.symlink ? ' ↗' : '')));
       info.appendChild(el('div', 'mgr-row-desc', e.dir ? 'folder' : fmFmtSize(e.size)));
-      // Primary action: open a folder in place, or a file as a tab in the app.
-      info.onclick = () => {
+      row.appendChild(info);
+      // Primary action on the WHOLE row (a bigger, touch-friendly target than the
+      // left sub-area): open a folder in place, or a file as a tab in the app.
+      row.onclick = () => {
         if (e.dir) fmGo(full);
         else { close(); if (window.Agent && window.Agent.openFileTab) window.Agent.openFileTab(full, fmKind(e.name) || undefined, { abs: true }); }
       };
-      row.appendChild(info);
 
       const acts = el('div', 'fm-acts');
       const mkBtn = (label, title, fn) => { const b = el('button', 'icon-mini', label); b.title = title; b.onclick = (ev) => { ev.stopPropagation(); fn(); }; return b; };
       acts.appendChild(mkBtn('✎', 'Rename', () => {
         const nn = prompt('Rename to:', e.name); if (nn && nn.trim() && nn.trim() !== e.name) send({ type: 'fs_rename', path: full, name: nn.trim() });
       }));
-      acts.appendChild(mkBtn('⧉', 'Clone', () => send({ type: 'fs_copy', path: full })));
+      acts.appendChild(mkBtn('⧉', 'Clone', () => {
+        // Warn + let the user name the clone (default "<stem> copy<ext>").
+        const dot = e.dir ? -1 : e.name.lastIndexOf('.');
+        const ext = dot > 0 ? e.name.slice(dot) : '';
+        const stem = dot > 0 ? e.name.slice(0, dot) : e.name;
+        const nn = prompt(`Clone “${e.name}” — name for the copy:`, `${stem} copy${ext}`);
+        if (nn && nn.trim() && nn.trim() !== e.name) send({ type: 'fs_copy', path: full, dest: fmJoin(fl.path, nn.trim()) });
+      }));
       acts.appendChild(mkBtn('➟', 'Move to…', () => {
         const dest = prompt('Move into folder (absolute path):', fl.path); if (dest && dest.trim()) send({ type: 'fs_move', path: full, dest: dest.trim() });
       }));
