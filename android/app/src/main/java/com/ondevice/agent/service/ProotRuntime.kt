@@ -58,7 +58,11 @@ class ProotRuntime(private val ctx: Context) {
         runCatching { ctx.assets.list(assetRoot)?.contains("proot") == true }.getOrDefault(false)
 
     fun isProotStaged(): Boolean = prootBin.exists()
-    fun isRootfsReady(): Boolean = rootfsMarker.exists()
+    // Version-stamp the markers so a stale/incomplete extraction (e.g. one written
+    // by an older build whose tar dropped hardlinks) is discarded on install-over —
+    // app data survives a reinstall, so a bare exists() check would reuse a broken
+    // rootfs. Bump ROOTFS_VERSION whenever the extraction logic changes.
+    fun isRootfsReady(): Boolean = runCatching { rootfsMarker.readText().trim() == ROOTFS_VERSION }.getOrDefault(false)
     fun isProvisioned(): Boolean = provisionedMarker.exists()
 
     /** Recursively copy the proot-arch asset tree into runtime/proot, making binaries executable. */
@@ -113,7 +117,7 @@ class ProotRuntime(private val ctx: Context) {
         if (!extracted) { log("ERROR: rootfs extraction failed (no shell found)"); return false }
         xzFile.delete()
         writeGuestConfig()
-        rootfsMarker.writeText("ok")
+        rootfsMarker.writeText(ROOTFS_VERSION)
         return true
     }
 
@@ -320,4 +324,10 @@ class ProotRuntime(private val ctx: Context) {
         p.inputStream.bufferedReader().forEachLine(log)
         p.waitFor() == 0
     }.getOrElse { log("process error: ${it.message}"); false }
+
+    companion object {
+        // Bump when the rootfs extraction logic changes so a stale extraction from an
+        // older build is discarded (app data survives install-over).
+        private const val ROOTFS_VERSION = "2-symlink-extract"
+    }
 }
