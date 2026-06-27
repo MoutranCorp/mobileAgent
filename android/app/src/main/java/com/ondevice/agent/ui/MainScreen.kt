@@ -16,8 +16,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ondevice.agent.service.RuntimeController
@@ -194,6 +196,8 @@ private fun RuntimeTab(state: RuntimeState, detail: String, actions: MainActions
         Section("Runtime logs") {
             val logs by RuntimeController.logs.collectAsState()
             val listState = rememberLazyListState()
+            val clipboard = LocalClipboardManager.current
+            val context = LocalContext.current
             LaunchedEffect(logs.size) {
                 if (logs.isNotEmpty()) listState.animateScrollToItem(logs.size - 1)
             }
@@ -202,14 +206,20 @@ private fun RuntimeTab(state: RuntimeState, detail: String, actions: MainActions
                     state = listState,
                     modifier = Modifier.fillMaxWidth().height(220.dp).padding(8.dp),
                 ) {
+                    // Wrap (don't ellipsize) so long error lines are fully readable.
                     items(logs) { line ->
-                        Text(line, color = TextDim, fontFamily = FontFamily.Monospace,
-                            fontSize = 11.sp, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                        Text(line, color = TextDim, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
                     }
                 }
             }
             Spacer(Modifier.height(6.dp))
-            OutlineButton("Clear logs") { RuntimeController.clearLogs() }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledButton("Copy logs") {
+                    clipboard.setText(AnnotatedString(logs.joinToString("\n")))
+                    android.widget.Toast.makeText(context, "Logs copied (${logs.size} lines)", android.widget.Toast.LENGTH_SHORT).show()
+                }
+                OutlineButton("Clear logs") { RuntimeController.clearLogs() }
+            }
         }
 
             Spacer(Modifier.height(40.dp))

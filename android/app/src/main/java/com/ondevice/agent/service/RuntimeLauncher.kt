@@ -144,6 +144,11 @@ class RuntimeLauncher(private val ctx: Context) {
             env["TERMUX__ROOTFS"] = rootfs
             env["TERMUX__PREFIX"] = usr
             env["TERMUX_APP__DATA_DIR"] = ctx.applicationInfo.dataDir
+            // The actual path/shebang rewriting lives in execve interception, which
+            // defaults to DISABLED — without it, a script's `#!/data/data/com.termux/
+            // files/usr/bin/bash` shebang is left alone and (if Termux is installed)
+            // hits that other app's uid → EACCES "Permission denied". Turn it on.
+            env["TERMUX_EXEC__EXECVE_CALL__INTERCEPT"] = "enable"
             env["TERMUX_EXEC__SYSTEM_LINKER_EXEC__MODE"] = "enable"
             env["ANDROID__BUILD_VERSION_SDK"] = android.os.Build.VERSION.SDK_INT.toString()
         }
