@@ -993,3 +993,18 @@ mark.find-hit.current { background: var(--orange); color: #000; }
   .modal-card.mgr { height: 100dvh; }
   .modal-card::before { display: none; }
 }
+
+/* ===================== connection banner + jump-to-bottom ================== */
+.disconn-banner {
+  position: fixed; top: calc(env(safe-area-inset-top) + 8px); left: 50%; transform: translateX(-50%);
+  z-index: 90; display: flex; gap: 10px; align-items: center; max-width: 92vw;
+  background: var(--mat-thick); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+  border: .5px solid var(--separator); border-radius: var(--r-md); padding: 8px 12px;
+  font-size: 13px; color: var(--label); box-shadow: 0 8px 28px rgba(0,0,0,.45);
+}
+.jump-btn {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: 156px; z-index: 40;
+  background: var(--accent); color: #fff; border: none; border-radius: var(--r-pill);
+  padding: 8px 16px; font-size: 13px; font-weight: 600; box-shadow: 0 6px 20px rgba(0,0,0,.4); cursor: pointer;
+}
+.jump-btn:active { transform: translateX(-50%) scale(.96); }

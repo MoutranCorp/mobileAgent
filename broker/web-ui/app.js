@@ -170,6 +170,8 @@
       handleEvent(ev);
     };
     state.ws.onopen = () => {
+      state._reconnectAttempts = 0;
+      hideDisconnectBanner();
       setConnected(true);
       resetConversation(); // avoid desync: rebuild fresh, then re-request snapshot
       send({ type: 'hello' });
@@ -178,10 +180,27 @@
     state.ws.onerror = () => {};
   }
 
+  // Reconnect with exponential backoff + jitter (was a flat 1.5s retry that hammered
+  // the broker and the phone's wake-lock when it stayed down). After a few failures
+  // surface a persistent banner with a manual Reconnect button.
   function scheduleReconnect() {
     clearTimeout(state.reconnectTimer);
-    state.reconnectTimer = setTimeout(connect, 1500);
+    const n = (state._reconnectAttempts = (state._reconnectAttempts || 0) + 1);
+    const delay = Math.min(1500 * Math.pow(2, n - 1), 30000) + Math.floor(Math.random() * 500);
+    if (n >= 5) showDisconnectBanner();
+    state.reconnectTimer = setTimeout(connect, delay);
   }
+  function showDisconnectBanner() {
+    if (document.getElementById('disconnBanner')) return;
+    const el2 = el('div', 'disconn-banner');
+    el2.id = 'disconnBanner';
+    el2.innerHTML = '<span>⚠ Lost connection to the broker — retrying…</span>';
+    const btn = el('button', 'accent small', 'Reconnect now');
+    btn.onclick = () => { state._reconnectAttempts = 0; clearTimeout(state.reconnectTimer); connect(); };
+    el2.appendChild(btn);
+    document.body.appendChild(el2);
+  }
+  function hideDisconnectBanner() { const b = document.getElementById('disconnBanner'); if (b) b.remove(); }
 
   function setConnected(on) {
     state.connected = on;
@@ -399,6 +418,11 @@
   }
   function renderTabs() {
     const host = $('tabs'); if (!host) return;
+    // A background `sessions` heartbeat must not nuke-and-rebuild the strip while the
+    // user is mid drag/long-press — it would detach the element the gesture holds and
+    // leave the gesture (and pointer capture) stuck. Defer the re-render until the
+    // gesture ends.
+    if (_tabGesture && (_tabGesture.mode === 'drag' || _tabGesture.mode === 'pending')) { state._tabsDirty = true; return; }
     // Title session tabs by their folder, numbered sequentially PER FOLDER ("demo",
     // "demo 2", "demo 3") — independent of the internal key suffix, so closing/reopening
     // never shows a weird climbing counter. File tabs keep their own (file)name.
@@ -572,6 +596,8 @@
       try { tabEl.releasePointerCapture(g.pid); } catch { /* ignore */ }
       if (g.mode === 'drag') endDrag(g);
       if (g.mode !== 'menu') _tabGesture = null; // keep ref while the menu is open
+      // Apply any session update that arrived (and was deferred) during the gesture.
+      if (!_tabGesture && state._tabsDirty) { state._tabsDirty = false; renderTabs(); }
     };
     tabEl.addEventListener('pointerup', finish);
     tabEl.addEventListener('pointercancel', finish);
@@ -1759,12 +1785,17 @@
   // ---- terminal ------------------------------------------------------------
 
   function onControlOutput(ev) { appendTerminal(ev.data, ev.stream === 'stderr' ? 'stderr' : ''); }
+  const TERM_MAX_SPANS = 2000;
   function appendTerminal(text, cls) {
     const body = $('termBody');
     const span = document.createElement('span');
     if (cls) span.className = cls;
     span.textContent = text;
     body.appendChild(span);
+    // Cap scroll-back: a long build (npm install / gradle) emits thousands of lines
+    // and would grow the DOM unbounded. Drop the oldest spans past the cap.
+    let over = body.childElementCount - TERM_MAX_SPANS;
+    while (over-- > 0 && body.firstChild) body.removeChild(body.firstChild);
     body.scrollTop = body.scrollHeight;
   }
   function appendTerminalMeta(text) { appendTerminal(text + '\n', 'meta'); }
@@ -1987,7 +2018,34 @@
     d.appendChild(list);
     return d;
   }
-  function scrollDown() { const t = $('transcript'); t.scrollTop = t.scrollHeight; }
+  // Only auto-scroll when the user is already pinned to the bottom, so reading
+  // earlier content while the agent streams doesn't keep yanking them down. A user
+  // action (sending a message) re-pins via scrollDown(true).
+  function scrollDown(force) {
+    const t = $('transcript');
+    if (force) state._pinBottom = true;
+    if (state._pinBottom !== false) {
+      // Jump INSTANTLY (the transcript has CSS scroll-behavior:smooth) so the
+      // auto-scroll doesn't animate through intermediate positions — those frames
+      // re-fire the scroll handler and made the jump button flicker / lag.
+      const prev = t.style.scrollBehavior; t.style.scrollBehavior = 'auto';
+      t.scrollTop = t.scrollHeight;
+      t.style.scrollBehavior = prev;
+    } else maybeShowJumpButton();
+  }
+  function nearBottom() { const t = $('transcript'); return t.scrollHeight - t.scrollTop - t.clientHeight < 120; }
+  function onTranscriptScroll() {
+    state._pinBottom = nearBottom();
+    if (state._pinBottom) { const j = document.getElementById('jumpBtn'); if (j) j.remove(); }
+    else maybeShowJumpButton(); // show "jump to latest" whenever the user is scrolled up
+  }
+  function maybeShowJumpButton() {
+    if (document.getElementById('jumpBtn')) return;
+    const j = el('button', 'jump-btn', '↓ New messages');
+    j.id = 'jumpBtn';
+    j.onclick = () => { j.remove(); scrollDown(true); };
+    document.body.appendChild(j);
+  }
   function toast(msg, kind, action) {
     const t = el('div', 'toast ' + (kind || 'info'));
     t.appendChild(el('span', '', msg));
@@ -2021,6 +2079,8 @@
 
   function doSend() {
     if (state.activity !== 'idle') return; // a turn is in flight or awaiting approval
+    state._pinBottom = true; // sending re-pins to the bottom so you see your message + reply
+    const j = document.getElementById('jumpBtn'); if (j) j.remove();
     const input = $('input');
     const text = input.value.trim();
     const images = state.attachments.map((a) => ({ mime: a.mime, dataBase64: a.dataBase64 }));
@@ -2198,6 +2258,8 @@
 
   function init() {
     $('brokerUrl') && ($('brokerUrl').value = state.url);
+    state._pinBottom = true;
+    $('transcript').addEventListener('scroll', onTranscriptScroll, { passive: true });
 
     // While the agent is working the send button becomes a Stop button.
     const sendOrStop = () => {
