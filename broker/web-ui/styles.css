@@ -67,6 +67,8 @@
 
   --safe-top: env(safe-area-inset-top);
   --safe-bot: env(safe-area-inset-bottom);
+  --safe-left: env(safe-area-inset-left);
+  --safe-right: env(safe-area-inset-right);
 }
 
 /* ---------- light mode ---------- */
@@ -133,6 +135,7 @@ svg { display: block; }
   position: relative; z-index: 20;
   display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
   gap: 8px; padding: 8px 12px; padding-top: max(8px, var(--safe-top));
+  padding-left: max(12px, var(--safe-left)); padding-right: max(12px, var(--safe-right));
   background: var(--mat-bar); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
   border-bottom: .5px solid var(--separator);
 }
@@ -623,7 +626,7 @@ svg { display: block; }
   /* Side gutter scales with the viewport so the card is slightly inset on any
      screen, clamped so it's never cramped on tiny phones nor huge on desktop.
      ~4vw per side => card holds ~92% of the viewport width. */
-  --composer-gutter: clamp(12px, 4vw, 80px);
+  --composer-gutter: max(clamp(12px, 4vw, 80px), var(--safe-left), var(--safe-right));
   padding: 0 var(--composer-gutter); padding-bottom: max(8px, var(--safe-bot));
   pointer-events: none; /* let the side gutters click through to the transcript */
 }
@@ -1008,3 +1011,21 @@ mark.find-hit.current { background: var(--orange); color: #000; }
   padding: 8px 16px; font-size: 13px; font-weight: 600; box-shadow: 0 6px 20px rgba(0,0,0,.4); cursor: pointer;
 }
 .jump-btn:active { transform: translateX(-50%) scale(.96); }
+
+/* =============================== a11y ================================= */
+/* A visible focus ring for keyboard / switch-access users everywhere. Many
+   controls set `outline:none` on :focus; :focus-visible (keyboard focus only)
+   overrides that without showing a ring on mouse/touch. !important beats the
+   element-specific :focus rules. */
+:focus-visible { outline: 2px solid var(--accent) !important; outline-offset: 2px; border-radius: var(--r-xs); }
+/* Bigger tap targets for the small ✕ controls (were 16/20px — easy to mis-tap). */
+.tab-close { width: 24px; height: 24px; display: grid; place-items: center; }
+.attach-x { width: 26px; height: 26px; display: grid; place-items: center; }
+/* Wide markdown tables scroll horizontally instead of overflowing the viewport. */
+.bubble.md table { display: block; width: max-content; max-width: 100%; overflow-x: auto; }
+/* Reduced motion: stop the "Thinking…" shimmer explicitly (a near-zero animation
+   duration can still stutter). */
+@media (prefers-reduced-motion: reduce) {
+  .thinking.live .think-title { animation: none; background: var(--label-3);
+    -webkit-text-fill-color: currentColor; color: var(--label-3); }
+}

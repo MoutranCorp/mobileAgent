@@ -205,7 +205,9 @@
   function setConnected(on) {
     state.connected = on;
     $('connDot').classList.toggle('online', on);
-    $('connDot').title = on ? 'Connected to broker' : 'Disconnected — reconnecting…';
+    const label = on ? 'Connected to broker' : 'Disconnected — reconnecting…';
+    $('connDot').title = label;
+    $('connDot').setAttribute('aria-label', label); // announced via aria-live
     // Transport state lives on the dot ONLY; the status pill reflects engine status.
   }
 

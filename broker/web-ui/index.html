@@ -30,7 +30,7 @@
           <div class="nav-title">Agent</div>
           <div class="nav-sub">
             <span id="statusPill" class="status-pill idle">idle</span>
-            <span id="connDot" class="conn-dot" title="Broker connection"></span>
+            <span id="connDot" class="conn-dot" role="status" aria-live="polite" aria-label="Broker connection" title="Broker connection"></span>
           </div>
         </div>
         <div class="nav-right">
@@ -87,7 +87,7 @@
       <div id="todoPanel" class="todo-panel hidden"></div>
 
       <!-- Conversation -->
-      <main id="transcript" class="transcript">
+      <main id="transcript" class="transcript" aria-label="Conversation transcript" tabindex="0">
         <div class="empty-state">
           <div class="hero-glyph">
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">

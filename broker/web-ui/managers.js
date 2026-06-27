@@ -82,6 +82,10 @@
     open();
   }
   function close() { root.classList.add('hidden'); }
+  // Escape closes the modal (desktop expectation; harmless on touch).
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !root.classList.contains('hidden')) { e.stopPropagation(); close(); }
+  });
 
   function render() {
     root.innerHTML = '';
@@ -415,6 +419,7 @@
       const inp = el('input', 'mgr-input'); inp.placeholder = `add ${bucket} rule…`;
       const addBtn = el('button', 'ghost small', 'Add');
       addBtn.onclick = () => { if (inp.value.trim()) { lists[bucket].push(inp.value.trim()); inp.value = ''; redraw(); } };
+      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addBtn.onclick(); } });
       addRow.appendChild(inp); addRow.appendChild(addBtn);
       sec.appendChild(addRow);
       pane.appendChild(sec);
@@ -445,7 +450,7 @@
       info.appendChild(el('div', 'mgr-row-desc', h.command));
       row.appendChild(info);
       const del = el('button', 'ghost small', 'Delete');
-      del.onclick = () => send({ type: 'config_delete', kind: 'hooks', name: h.name, scope: m.scope });
+      del.onclick = () => { if (confirm(`Delete hook for "${h.event}"?\n${h.command || ''}`)) send({ type: 'config_delete', kind: 'hooks', name: h.name, scope: m.scope }); };
       row.appendChild(del);
       list.appendChild(row);
     });
@@ -799,18 +804,21 @@
     }
     // --- file view / inline edit ---
     if (m.openFile) {
+      let ta = null; // the edit textarea, set in the editing branch below
+      const dirty = () => m.editingFile && ta && ta.value !== m.openFile.content;
+      const confirmDiscard = () => !dirty() || confirm(`Discard unsaved changes to ${m.openFile.path}?`);
       const back = el('button', 'ghost small', '← back');
-      back.onclick = () => { m.openFile = null; m.editingFile = false; renderPane(); };
+      back.onclick = () => { if (!confirmDiscard()) return; m.openFile = null; m.editingFile = false; renderPane(); };
       pane.appendChild(back);
       pane.appendChild(el('div', 'mgr-row-name', m.openFile.path));
       if (m.editingFile) {
-        const ta = el('textarea', 'mgr-textarea file-edit');
+        ta = el('textarea', 'mgr-textarea file-edit');
         ta.value = m.openFile.content;
         pane.appendChild(ta);
         const save = el('button', 'primary small', 'Save');
         save.onclick = () => { send({ type: 'files_write', path: m.openFile.path, content: ta.value }); m.openFile.content = ta.value; m.editingFile = false; renderPane(); };
         const cancel = el('button', 'ghost small', 'Cancel');
-        cancel.onclick = () => { m.editingFile = false; renderPane(); };
+        cancel.onclick = () => { if (!confirmDiscard()) return; m.editingFile = false; renderPane(); };
         pane.appendChild(save); pane.appendChild(cancel);
       } else {
         const pre = el('pre', 'file-view');
@@ -924,7 +932,7 @@
       info.onclick = () => { const inp = document.getElementById('input'); inp.value = p.text; close(); inp.focus(); };
       row.appendChild(info);
       const del = el('button', 'ghost small', 'Delete');
-      del.onclick = () => send({ type: 'prompts_delete', name: p.name });
+      del.onclick = () => { if (confirm(`Delete saved prompt "${p.name}"?`)) send({ type: 'prompts_delete', name: p.name }); };
       row.appendChild(del);
       list.appendChild(row);
     });
