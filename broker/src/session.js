@@ -166,7 +166,8 @@ export class SessionManager {
     this.meta.set(key, {
       busy: false, lastStatus: StatusState.IDLE, profileId, model: chosen,
       sessionId: resolvedResume || null, projectId, cwd,
-      lastActivityTs: Date.now(), pinned: prevMeta?.pinned || false, title: prevMeta?.title || null,
+      lastActivityTs: Date.now(), lastTurnTs: prevMeta?.lastTurnTs || Date.now(),
+      pinned: prevMeta?.pinned || false, title: prevMeta?.title || null,
     });
 
     engine.on('event', (ev) => this._onEngineEvent(ev, projectId, key));
@@ -246,6 +247,7 @@ export class SessionManager {
         pid: e.proc?.pid ?? null,
         status: m.busy ? 'working' : 'idle',
         idleMs: m.busy ? 0 : (m.lastActivityTs ? Math.max(0, now - m.lastActivityTs) : 0),
+        lastTurnTs: m.lastTurnTs || m.lastActivityTs || null,
         pinned: !!m.pinned,
         title: m.title || null,
       });
@@ -274,6 +276,7 @@ export class SessionManager {
         sessionId: m.sessionId, busy: false, lastStatus: 'idle',
         active: key === this.activeKey, pid: null, status: 'sleeping',
         idleMs: m.lastActivityTs ? Math.max(0, now - m.lastActivityTs) : 0,
+        lastTurnTs: m.lastTurnTs || m.lastActivityTs || null,
         pinned: !!m.pinned, title: m.title || (key === MAIN_KEY ? 'Main' : null), sleeping: true,
       });
     }
@@ -283,6 +286,8 @@ export class SessionManager {
   async sendUserMessage(text, images) {
     const engine = await this.ensureEngine();
     if (!engine) return;
+    const m = this.meta.get(this.activeKey);
+    if (m) { m.lastTurnTs = Date.now(); m.lastActivityTs = Date.now(); } // sending a prompt is real activity
     await engine.send({ type: 'user_message', text, images });
   }
 
@@ -400,7 +405,7 @@ export class SessionManager {
     if (ev.type === EventType.STATUS && ev.state) {
       const busy = ev.state !== StatusState.IDLE && ev.state !== StatusState.ERROR;
       const changed = !m || m.busy !== busy || m.lastStatus !== ev.state;
-      if (m) { m.lastStatus = ev.state; m.busy = busy; m.lastActivityTs = Date.now(); } // any status change = activity (resets idle timer)
+      if (m) { m.lastStatus = ev.state; m.busy = busy; m.lastActivityTs = Date.now(); m.lastTurnTs = Date.now(); } // engine status change = real conversation activity (unlike focus)
       if (key === this.activeKey) this._lastStatus = ev.state;
       // Keep the sessions screen + nav badge live for EVERY session (active too),
       // so a working session always shows its indicator.
@@ -412,7 +417,7 @@ export class SessionManager {
     }
     if (ev.type === EventType.PERMISSION_MODE && ev.mode && key === this.activeKey) this.permissionMode = ev.mode;
     if (ev.type === EventType.SESSION_META && ev.sessionId) this._emitSessions(); // sessionId now known
-    if (ev.type === EventType.RESULT && m) { if (m.busy) m.busy = false; m.lastActivityTs = Date.now(); this._emitSessions(); }
+    if (ev.type === EventType.RESULT && m) { if (m.busy) m.busy = false; m.lastActivityTs = Date.now(); m.lastTurnTs = Date.now(); this._emitSessions(); }
     this.emit(ev);
   }
 

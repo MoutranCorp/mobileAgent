@@ -6,6 +6,7 @@ import path from 'node:path';
 import { WebSocket } from 'ws';
 import { loadConfig } from '../src/config.js';
 import { BrokerServer } from '../src/server.js';
+import { EventType } from '../src/protocol.js';
 
 async function tmpDir(p) { return fs.mkdtemp(path.join(os.tmpdir(), p)); }
 
@@ -60,6 +61,28 @@ test('multiple live sessions per folder: new_session keeps the first alive, dist
   } finally { ws.close(); await server.stop(); }
 });
 
+// Regression: the "ago" label showed time-since-tab-open instead of time-since-last
+// activity. lastTurnTs must advance on a real turn (prompt/response) but NOT on a tab
+// focus (which still resets lastActivityTs, used only for idle eviction).
+test('lastTurnTs tracks prompt/response, not tab focus', async () => {
+  const { server, ws, open } = await boot(['projA', 'projB']);
+  try {
+    await open('projA');
+    await open('projB'); // active = projB; projA backgrounded but live
+    const past = Date.now() - 5 * 60 * 1000;
+    server.session.meta.get('projA').lastTurnTs = past;
+    // Focusing projA (a tab switch) must NOT count as conversation activity.
+    await server.session.setActiveKey('projA');
+    assert.equal(server.session.meta.get('projA').lastTurnTs, past, 'focus does not advance lastTurnTs');
+    assert.ok(server.session.meta.get('projA').lastActivityTs > past, 'but focus does reset the idle timer');
+    // A model result (a turn boundary) DOES advance it.
+    server.session._onEngineEvent({ type: EventType.RESULT }, 'projA', 'projA');
+    assert.ok(server.session.meta.get('projA').lastTurnTs > past, 'a result advances lastTurnTs');
+    const live = server.session.liveSessions().find((s) => s.key === 'projA');
+    assert.ok(live && typeof live.lastTurnTs === 'number', 'lastTurnTs surfaces in liveSessions');
+  } finally { ws.close(); await server.stop(); }
+});
+
 test('_projectForKey resolves a suffixed session key to its folder via meta', async () => {
   const { server, ws, send, waitFor, open } = await boot(['projA']);
   try {
@@ -77,7 +100,7 @@ test('liveSessions() carries the resource/lifecycle fields the sampler needs', a
   try {
     await open('projA');
     const s = server.session.liveSessions()[0];
-    for (const k of ['key', 'projectId', 'sessionId', 'busy', 'active', 'pid', 'status', 'idleMs', 'pinned', 'title']) {
+    for (const k of ['key', 'projectId', 'sessionId', 'busy', 'active', 'pid', 'status', 'idleMs', 'lastTurnTs', 'pinned', 'title']) {
       assert.ok(k in s, `liveSessions item has ${k}`);
     }
     assert.ok(['working', 'idle'].includes(s.status));

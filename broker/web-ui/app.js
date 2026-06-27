@@ -775,11 +775,18 @@
     const sessionRow = (s, projectId) => {
       const liveKey = keyBySid.get(s.id);
       const live = liveKey ? state.sessions.find((x) => x.key === liveKey) : null;
+      const openAsTab = !!liveKey; // this session has a tab in the strip (live or sleeping)
       const row = el('div', 'fs-session' + (s.id === state.activeSessionId ? ' active' : ''));
-      row.appendChild(el('span', 'fs-session-dot' + (live && live.busy ? ' busy' : '')));
+      const dot = el('span', 'fs-session-dot' + (live && live.busy ? ' busy' : ''));
+      // A session open as a tab gets its folder's color (busy keeps its orange pulse).
+      if (openAsTab && projectId && !(live && live.busy)) dot.style.background = tabColorFor(projectId);
+      row.appendChild(dot);
       const info = el('div', 'fs-session-info');
       info.appendChild(el('span', 'fs-session-name', s.summary || s.id.slice(0, 8)));
-      info.appendChild(el('span', 'fs-session-meta', relTime(s.mtime) + (live ? ' · live' : '')));
+      // Prefer the live "last turn" time (last prompt/response) over the file mtime,
+      // which can sit at spawn time while a fresh session waits to respond.
+      const ts = (live && live.lastTurnTs) ? live.lastTurnTs : s.mtime;
+      info.appendChild(el('span', 'fs-session-meta', relTime(ts) + (live ? ' · live' : '')));
       row.appendChild(info);
       row.onclick = () => {
         if (liveKey) { ensureTab({ key: liveKey, projectId }); switchTab(liveKey); }
@@ -788,11 +795,28 @@
       };
       return row;
     };
-    for (const p of state.projects.filter((x) => x.id)) {
+    // Folders ordered most-recently-touched first, by the latest activity across their
+    // sessions (live "last turn" time, else newest transcript mtime).
+    const folderRecency = (pid) => {
+      let best = 0;
+      const recents = state.recentSessionsByProject[pid] || [];
+      if (recents[0] && recents[0].mtime) best = recents[0].mtime;
+      for (const s of state.sessions) if (s.projectId === pid && s.lastTurnTs) best = Math.max(best, s.lastTurnTs);
+      return best;
+    };
+    const sortedProjects = state.projects.filter((x) => x.id).slice()
+      .sort((a, b) => folderRecency(b.id) - folderRecency(a.id));
+    for (const p of sortedProjects) {
       const folder = el('div', 'fs-folder');
       const head = el('div', 'fs-folder-head' + (p.id === state.activeProjectId ? ' current' : ''));
       const dot = el('span', 'fs-dot'); dot.style.background = tabColorFor(p.id);
-      head.appendChild(dot); head.appendChild(el('span', 'fs-folder-name', p.name + (p.isExpo ? ' ⚛' : '')));
+      head.appendChild(dot);
+      head.appendChild(el('span', 'fs-folder-name', p.name + (p.isExpo ? ' ⚛' : '')));
+      // "+ New" lives on the folder header itself (saves a whole row per folder).
+      const nw = el('button', 'fs-new-inline', '+ New');
+      nw.title = 'New chat in this folder';
+      nw.onclick = (e) => { e.stopPropagation(); send({ type: 'open_project', projectId: p.id }); setTimeout(() => send({ type: 'new_session' }), 80); closeFolderSheet(); };
+      head.appendChild(nw);
       head.onclick = () => { send({ type: 'open_project', projectId: p.id }); closeFolderSheet(); };
       folder.appendChild(head);
       // The 3 most-recent sessions of this folder (from disk), live ones flagged.
@@ -802,9 +826,6 @@
       const all = el('div', 'fs-session fs-viewall', '↗ View all sessions');
       all.onclick = () => { closeFolderSheet(); if (window.Managers) window.Managers.openTab('sessions'); };
       folder.appendChild(all);
-      const nw = el('div', 'fs-session fs-new', '+ New chat here');
-      nw.onclick = () => { send({ type: 'open_project', projectId: p.id }); setTimeout(() => send({ type: 'new_session' }), 80); closeFolderSheet(); };
-      folder.appendChild(nw);
       body.appendChild(folder);
     }
     // Sessions whose folder couldn't be resolved (ambiguous on-disk encoding) — still reachable.

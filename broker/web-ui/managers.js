@@ -625,7 +625,8 @@
     const live = m.liveSessions || [];
     const busyById = new Map(); // sessionId -> busy
     const keyById = new Map();  // sessionId -> project key (to switch to a live bg session)
-    for (const s of live) if (s.sessionId) { busyById.set(s.sessionId, s.busy); keyById.set(s.sessionId, s.key); }
+    const turnById = new Map(); // sessionId -> last prompt/response time (authoritative for live sessions)
+    for (const s of live) if (s.sessionId) { busyById.set(s.sessionId, s.busy); keyById.set(s.sessionId, s.key); if (s.lastTurnTs) turnById.set(s.sessionId, s.lastTurnTs); }
     const activeId = (live.find((s) => s.active) || {}).sessionId || m.activeSessionId || null;
 
     const items = m.items.sessions || [];
@@ -662,7 +663,8 @@
         // The folder is already shown in the group header above; only flag the case
         // where resuming can't reopen the original folder (it's not a tracked project,
         // so --resume falls back to the active folder).
-        info.appendChild(el('div', 'mgr-row-desc', relTime(s.mtime) + ' · ' + s.id.slice(0, 8) + tag + (!s.projectId && !isLive ? ' · opens in active folder' : '')));
+        const ts = turnById.get(s.id) || s.mtime; // live sessions: time since last prompt/response, not file mtime
+        info.appendChild(el('div', 'mgr-row-desc', relTime(ts) + ' · ' + s.id.slice(0, 8) + tag + (!s.projectId && !isLive ? ' · opens in active folder' : '')));
         row.appendChild(info);
 
         const actions = el('div', 'mgr-row-actions');
