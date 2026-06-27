@@ -15,6 +15,7 @@
   const TABS = [
     { id: 'update', label: '↻ Update' },
     { id: 'files', label: 'Files' },
+    { id: 'fileman', label: '🗂 File Manager' },
     { id: 'scripts', label: 'Scripts' },
     { id: 'git', label: 'Git' },
     { id: 'checkpoints', label: 'Checkpoints' },
@@ -59,6 +60,8 @@
     autoverify: { enabled: false, command: 'npm test', maxIterations: 3 },
     usageStats: null,
     browse: null, // { path, parent, dirs } folder picker
+    fsPath: null, // File Manager: current absolute dir (null = home on first open)
+    fsList: null, // File Manager: last { path, parent, entries, truncated, error }
     appVersion: null, // { sha, subject, when, branch, dirty }
     appUpdate: null, // last update result
     updating: false,
@@ -126,6 +129,8 @@
       send({ type: 'list_live_sessions' });
     } else if (m.tab === 'projects') {
       send({ type: 'list_projects' });
+    } else if (m.tab === 'fileman') {
+      send({ type: 'fs_browse', path: m.fsPath || '~' });
     } else if (m.tab === 'files') {
       send({ type: 'files_list', path: m.filePath });
     } else if (m.tab === 'checkpoints') {
@@ -163,6 +168,7 @@
     switch (m.tab) {
       case 'update': return renderUpdate(pane);
       case 'files': return renderFiles(pane);
+      case 'fileman': return renderFileManager(pane);
       case 'scripts': return renderScripts(pane);
       case 'git': return renderGit(pane);
       case 'checkpoints': return renderCheckpoints(pane);
@@ -1200,6 +1206,103 @@
     return wrap;
   }
 
+  // ---- File Manager (whole device) ----------------------------------------
+
+  const FM_ICON = { dir: '📁', html: '📱', svg: '🎨', image: '🖼️', markdown: '📄', archive: '🗜', code: '📜', text: '📄' };
+  function fmKind(name) {
+    const ext = (name.split('.').pop() || '').toLowerCase();
+    if (/^html?$/.test(ext)) return 'html';
+    if (ext === 'svg') return 'svg';
+    if (/^(png|jpe?g|gif|webp|avif|bmp|ico)$/.test(ext)) return 'image';
+    if (/^(md|markdown)$/.test(ext)) return 'markdown';
+    return null;
+  }
+  function isArchive(name) { return /\.(zip|tar|tar\.gz|tgz)$/i.test(name); }
+  function fmFmtSize(n) {
+    if (n == null) return '';
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB';
+    return (n / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+  function fmJoin(dir, name) { return (dir.endsWith('/') ? dir : dir + '/') + name; }
+  function fmGo(path) { m.fsPath = path; m.loaded.delete('fileman'); send({ type: 'fs_browse', path }); renderPane(); }
+
+  function renderFileManager(pane) {
+    const fl = m.fsList;
+    // Path bar + Up + New folder.
+    const bar = el('div', 'fm-bar');
+    const cur = el('div', 'fm-path'); cur.textContent = fl ? fl.path : 'Loading…'; bar.appendChild(cur);
+    pane.appendChild(bar);
+    const nav = el('div', 'mgr-newproj');
+    const home = el('button', 'ghost small', '🏠'); home.title = 'Home'; home.onclick = () => fmGo('~');
+    nav.appendChild(home);
+    const up = el('button', 'ghost small', '⬆ Up');
+    up.disabled = !(fl && fl.parent);
+    up.onclick = () => { if (fl && fl.parent) fmGo(fl.parent); };
+    nav.appendChild(up);
+    const mkdir = el('button', 'ghost small', '+ Folder');
+    mkdir.onclick = () => {
+      const name = prompt('New folder name:'); if (name && name.trim()) send({ type: 'fs_mkdir', path: fl.path, name: name.trim() });
+    };
+    nav.appendChild(mkdir);
+    pane.appendChild(nav);
+
+    if (fl && fl.error) { pane.appendChild(el('div', 'mgr-empty', '⚠ ' + fl.error)); return; }
+    if (!fl) { pane.appendChild(mgrEmpty('Loading…', 'fileman')); return; }
+
+    const list = el('div', 'mgr-list');
+    if (!fl.entries.length) list.appendChild(el('div', 'mgr-empty', 'Empty folder.'));
+    for (const e of fl.entries) {
+      const full = fmJoin(fl.path, e.name);
+      const kind = e.dir ? 'dir' : (fmKind(e.name) || (isArchive(e.name) ? 'archive' : 'text'));
+      const row = el('div', 'mgr-row fm-row');
+      const info = el('div', 'mgr-row-info'); info.style.cursor = 'pointer';
+      info.appendChild(el('div', 'mgr-row-name', (FM_ICON[kind] || '📄') + ' ' + e.name + (e.symlink ? ' ↗' : '')));
+      info.appendChild(el('div', 'mgr-row-desc', e.dir ? 'folder' : fmFmtSize(e.size)));
+      // Primary action: open a folder in place, or a file as a tab in the app.
+      info.onclick = () => {
+        if (e.dir) fmGo(full);
+        else { close(); if (window.Agent && window.Agent.openFileTab) window.Agent.openFileTab(full, fmKind(e.name) || undefined, { abs: true }); }
+      };
+      row.appendChild(info);
+
+      const acts = el('div', 'fm-acts');
+      const mkBtn = (label, title, fn) => { const b = el('button', 'icon-mini', label); b.title = title; b.onclick = (ev) => { ev.stopPropagation(); fn(); }; return b; };
+      acts.appendChild(mkBtn('✎', 'Rename', () => {
+        const nn = prompt('Rename to:', e.name); if (nn && nn.trim() && nn.trim() !== e.name) send({ type: 'fs_rename', path: full, name: nn.trim() });
+      }));
+      acts.appendChild(mkBtn('⧉', 'Clone', () => send({ type: 'fs_copy', path: full })));
+      acts.appendChild(mkBtn('➟', 'Move to…', () => {
+        const dest = prompt('Move into folder (absolute path):', fl.path); if (dest && dest.trim()) send({ type: 'fs_move', path: full, dest: dest.trim() });
+      }));
+      if (isArchive(e.name)) acts.appendChild(mkBtn('📦', 'Extract', () => send({ type: 'fs_extract', path: full })));
+      acts.appendChild(mkBtn('🗑', 'Delete', () => {
+        if (confirm(`Delete “${e.name}”?\n\n${e.dir ? 'The folder and everything in it' : 'This file'} will be permanently removed from storage. This can’t be undone.`)) {
+          send({ type: 'fs_delete', path: full });
+        }
+      }));
+      row.appendChild(acts);
+      list.appendChild(row);
+    }
+    pane.appendChild(list);
+    if (fl.truncated) pane.appendChild(el('div', 'mgr-hint', 'Showing the first 1000 items in this folder.'));
+    // Quick manual path entry.
+    const jump = el('div', 'mgr-newproj');
+    const pin = el('input', 'mgr-input'); pin.placeholder = 'go to path, e.g. /sdcard or ~/projects';
+    const goBtn = el('button', 'ghost small', 'Go');
+    goBtn.onclick = () => { if (pin.value.trim()) fmGo(pin.value.trim()); };
+    pin.onkeydown = (ev) => { if (ev.key === 'Enter') goBtn.onclick(); };
+    jump.appendChild(pin); jump.appendChild(goBtn);
+    pane.appendChild(jump);
+  }
+
+  function onFsList(ev) {
+    m.loaded.add('fileman');
+    m.fsList = ev;
+    if (ev && ev.path) m.fsPath = ev.path;
+    if (!root.classList.contains('hidden') && m.tab === 'fileman') renderPane();
+  }
+
   // ---- event intake from app.js -------------------------------------------
 
   function onConfig(ev) {
@@ -1283,6 +1386,6 @@
     open, openTab, close, onConfig, onCapabilities, onContext, onProjects, onProfiles, onResources,
     onCheckpoints, onFiles, onFile, onFileDiff, onFileGrep, onPrompts, onScripts,
     onAutoVerify, onUsageStats, onCheckpointDiff, onWorkspaceBrowse,
-    onAppVersion, onAppUpdate, onSessions,
+    onAppVersion, onAppUpdate, onSessions, onFsList,
   };
 })();

@@ -15,6 +15,7 @@ import { Updater } from './controls/updater.js';
 import { TranscriptStore } from './controls/transcript.js';
 import { Checkpoints } from './controls/checkpoints.js';
 import { Files } from './controls/files.js';
+import { FileSystemManager } from './controls/fsmanager.js';
 import { PromptLibrary } from './controls/prompts.js';
 import { AutoVerify } from './controls/autoverify.js';
 import { UsageLedger } from './controls/usage-ledger.js';
@@ -54,6 +55,7 @@ export class BrokerServer {
     // is active) so file browsing + session lookup match where Claude ran.
     const getProjectDir = () => this.projects.getActive()?.dir || config.projectsDir;
     this.files = new Files({ getProjectDir });
+    this.fsman = new FileSystemManager(); // whole-filesystem File Manager (unsandboxed, loopback-only)
     this.devtools = new DevTools({ config, runner: this.runner, projects: this.projects, emit });
     this.claudeConfig = new ClaudeConfig({ getProjectDir, getProjects: () => this.projects.list(), stateDir: config.stateDir });
     this.modelResolver = new ModelResolver({ stateDir: config.stateDir, claudeBin: config.claudeBin });
@@ -702,6 +704,38 @@ export class BrokerServer {
         return;
       }
 
+      // whole-filesystem File Manager (absolute paths). A mutation reports a toast
+      // (or error) and re-lists the directory it acted in so the UI refreshes.
+      case CommandType.FS_BROWSE:
+        return this._send(ws, event(EventType.FS_LIST, this.fsman.browse(cmd.path)));
+      case CommandType.FS_READ:
+        return this._send(ws, event(EventType.FS_FILE, this.fsman.read(cmd.path)));
+      case CommandType.FS_WRITE: {
+        const res = this.fsman.write(cmd.path, cmd.content);
+        if (res.error) this.broadcast(event(EventType.ERROR, { message: `Save failed: ${res.error}` }));
+        else this.broadcast(event(EventType.TOAST, { message: 'Saved.' }));
+        return;
+      }
+      case CommandType.FS_MKDIR:
+      case CommandType.FS_RENAME:
+      case CommandType.FS_MOVE:
+      case CommandType.FS_COPY:
+      case CommandType.FS_DELETE:
+      case CommandType.FS_EXTRACT: {
+        let res, listDir, ok;
+        if (cmd.type === CommandType.FS_MKDIR) { res = this.fsman.mkdir(cmd.path, cmd.name); listDir = cmd.path; ok = 'Folder created.'; }
+        else if (cmd.type === CommandType.FS_RENAME) { res = this.fsman.rename(cmd.path, cmd.name); listDir = this.fsman.resolve(cmd.path) + '/..'; ok = 'Renamed.'; }
+        else if (cmd.type === CommandType.FS_MOVE) { res = this.fsman.move(cmd.path, cmd.dest); listDir = this.fsman.resolve(cmd.path) + '/..'; ok = 'Moved.'; }
+        else if (cmd.type === CommandType.FS_COPY) { res = this.fsman.copy(cmd.path, cmd.dest); listDir = this.fsman.resolve(cmd.path) + '/..'; ok = 'Cloned.'; }
+        else if (cmd.type === CommandType.FS_DELETE) { res = this.fsman.remove(cmd.path); listDir = this.fsman.resolve(cmd.path) + '/..'; ok = 'Deleted.'; }
+        else { res = this.fsman.extract(cmd.path); listDir = this.fsman.resolve(cmd.path) + '/..'; ok = 'Extracted.'; }
+        if (res.error) this.broadcast(event(EventType.ERROR, { message: res.error }));
+        else this.broadcast(event(EventType.TOAST, { message: ok }));
+        // Refresh whichever directory the action targeted (the UI re-renders on FS_LIST).
+        this._send(ws, event(EventType.FS_LIST, this.fsman.browse(listDir)));
+        return;
+      }
+
       // prompt library
       case CommandType.PROMPTS_LIST:
         return this._send(ws, event(EventType.PROMPTS, { items: this.prompts.list() }));
@@ -847,6 +881,12 @@ export class BrokerServer {
     if (urlPath.startsWith('/download/')) {
       return this._serveDownload(urlPath, res);
     }
+    // /fsraw?path=<abs> streams ANY file on the device by absolute path — the
+    // whole-filesystem analog of /preview, used to render/edit a File Manager file
+    // opened as a tab. Loopback-only + single-user, so arbitrary local read is OK.
+    if (urlPath === '/fsraw') {
+      return this._serveFsRaw(req, res);
+    }
     let rel = urlPath === '/' ? 'index.html' : urlPath.replace(/^\/+/, '');
     // Prevent path traversal (require a separator so a sibling dir sharing the
     // prefix can't match).
@@ -926,6 +966,23 @@ export class BrokerServer {
       }
       res.writeHead(200, { 'content-type': contentType(filePath), 'cache-control': 'no-store' });
       res.end(data);
+    });
+  }
+
+  /** Stream any file on the device by absolute path (File Manager "open as tab"). */
+  _serveFsRaw(req, res) {
+    let abs;
+    try { abs = new URL(req.url, 'http://127.0.0.1').searchParams.get('path'); }
+    catch { res.writeHead(400, { 'content-type': 'text/plain' }); return res.end('bad url'); }
+    if (!abs) { res.writeHead(400, { 'content-type': 'text/plain' }); return res.end('missing path'); }
+    const filePath = this.fsman.resolve(abs);
+    fs.stat(filePath, (err, st) => {
+      if (err || st.isDirectory()) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('not found'); }
+      fs.readFile(filePath, (e, data) => {
+        if (e) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('not found'); }
+        res.writeHead(200, { 'content-type': contentType(filePath), 'cache-control': 'no-store' });
+        res.end(data);
+      });
     });
   }
 

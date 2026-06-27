@@ -270,6 +270,7 @@
       case 'native_change': onNativeChange(ev); break;
       case 'files': if (window.Managers) window.Managers.onFiles(ev); break;
       case 'file': if (window.Managers) window.Managers.onFile(ev); break;
+      case 'fs_list': if (window.Managers) window.Managers.onFsList(ev); break;
       case 'file_search': onFileSearch(ev); break;
       case 'file_diff': if (window.Managers) window.Managers.onFileDiff(ev); break;
       case 'file_grep': if (window.Managers) window.Managers.onFileGrep(ev); break;
@@ -501,13 +502,14 @@
   }
 
   // ---- file tabs (Phase 3): open a project file as a tab, view + edit + save -
-  function openFileTab(filePath, kind) {
+  function openFileTab(filePath, kind, opts) {
     hideEmpty();
-    const id = 'file:' + projectRelPath(filePath);
+    const abs = !!(opts && opts.abs); // File Manager: address by absolute path via /fsraw
+    const id = (abs ? 'fsfile:' : 'file:') + (abs ? filePath : projectRelPath(filePath));
     const fname = String(filePath).split(/[\\/]/).pop();
     let t = state.tabs.find((x) => x.id === id);
     if (!t) {
-      t = { id, kind: 'file', filePath, fileKind: kind || fileKind(filePath), userTitle: null, title: fname, color: '#8a8a8a' };
+      t = { id, kind: 'file', abs, filePath, fileKind: kind || fileKind(filePath), userTitle: null, title: fname, color: '#8a8a8a' };
       state.tabs.push(t); saveTabs();
     }
     t._content = null; t._dirty = false; // reload fresh each open
@@ -540,7 +542,7 @@
     $('fvSave').classList.toggle('hidden', t._mode !== 'source');
     $('fvSave').classList.toggle('dirty', !!t._dirty);
     const body = $('fvBody'); body.className = 'fv-body'; body.innerHTML = '';
-    const url = htmlAppUrl(t.filePath);
+    const url = t.abs ? fsRawUrl(t.filePath) : htmlAppUrl(t.filePath);
     if (t._mode === 'rendered') {
       if (fk === 'html') {
         const f = document.createElement('iframe'); f.className = 'fv-iframe';
@@ -569,7 +571,8 @@
   }
   function saveFileTab(t) {
     if (!t || t.kind !== 'file' || t._content == null) return;
-    send({ type: 'files_write', path: projectRelPath(t.filePath), content: t._content });
+    if (t.abs) send({ type: 'fs_write', path: t.filePath, content: t._content });
+    else send({ type: 'files_write', path: projectRelPath(t.filePath), content: t._content });
     t._dirty = false; $('fvSave').classList.remove('dirty');
     toast('Saved ' + t.title, 'info');
   }
@@ -1201,6 +1204,8 @@
     return prefix + (abs ? '/' : '') + rel.split('/').filter(Boolean).map(encodeURIComponent).join('/');
   }
   function htmlAppUrl(filePath) { return _previewish('/preview/', filePath); }
+  // Absolute-path file URL (File Manager tabs): served by /fsraw, not /preview.
+  function fsRawUrl(absPath) { return '/fsraw?path=' + encodeURIComponent(absPath); }
   function downloadFile(filePath, name) {
     const url = _previewish('/download/', filePath);
     const fname = name || String(filePath).split(/[\\/]/).pop();

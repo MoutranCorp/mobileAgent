@@ -61,6 +61,9 @@ export const EventType = Object.freeze({
   FILE_DIFF: 'file_diff', // { path, before, after, status }
   FILE_GREP: 'file_grep', // { query, matches: [{path, line, text}], truncated }
   FILE_REPLACE: 'file_replace', // { query, replacement, filesChanged, replacements }
+  // Whole-filesystem File Manager (absolute paths, not project-scoped).
+  FS_LIST: 'fs_list', // { path, parent, entries: [{name,dir,size,mtime,symlink}], truncated?, error? }
+  FS_FILE: 'fs_file', // { path, content, truncated?, binary?, error? }  a file read for opening as a tab
   TRANSCRIPT_SEARCH_RESULT: 'transcript_search', // { query, matches: [{type, text}] }
   PROMPTS: 'prompts', // { items: [{name, text}] }
   SCRIPTS: 'scripts', // { items: [{name, cmd}], running: [names] }
@@ -132,6 +135,16 @@ export const CommandType = Object.freeze({
   FILES_REPLACE: 'files_replace', // { query, replacement }  (find & replace across files)
   FILES_DIFF: 'files_diff', // { path }  (working tree vs HEAD)
   FILES_WRITE: 'files_write', // { path, content }  (inline edit / .env)
+  // Whole-filesystem File Manager commands (absolute paths; '~' allowed).
+  FS_BROWSE: 'fs_browse', // { path }
+  FS_READ: 'fs_read', // { path }  read a file to open as a tab
+  FS_WRITE: 'fs_write', // { path, content }  save an absolute-path file tab
+  FS_MKDIR: 'fs_mkdir', // { path, name }  new folder under path
+  FS_RENAME: 'fs_rename', // { path, name }  rename in place
+  FS_MOVE: 'fs_move', // { path, dest }  move into dest folder
+  FS_COPY: 'fs_copy', // { path, dest? }  clone (default: "<name> copy")
+  FS_DELETE: 'fs_delete', // { path }  delete file/folder (recursive)
+  FS_EXTRACT: 'fs_extract', // { path }  extract .zip/.tar/.tar.gz/.tgz into a sibling folder
   TRANSCRIPT_SEARCH: 'transcript_search', // { query }  (search the conversation)
   // Prompt library
   PROMPTS_LIST: 'prompts_list', // {}

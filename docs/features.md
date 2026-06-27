@@ -78,9 +78,20 @@ are cache-busted with `?v=__VER__` rewritten to a mtime-derived version at serve
   Memory, Permissions** (modes + allow/deny/ask rules), **Hooks, Sessions** browser,
   **Projects, Context** inspector (live window meter + `/compact` + `/clear`),
   **MCP / Plugins** (editable `.mcp.json` add/edit/remove + `/plugin` install),
-  **Engine, System** (see Tabbed workspace), **Files, Scripts, Git, Checkpoints,
-  Prompts, Usage, Update**. UI-created skills/commands/agents/MCP hot-reload via
-  engine re-spawn (resume) + toast.
+  **Engine, System** (see Tabbed workspace), **Files** (project-scoped), **File
+  Manager** (whole device — see below), **Scripts, Git, Checkpoints, Prompts,
+  Usage, Update**. UI-created skills/commands/agents/MCP hot-reload via engine
+  re-spawn (resume) + toast.
+- **File Manager** (`managers.js` `renderFileManager` + `controls/fsmanager.js`):
+  a **whole-filesystem** browser (NOT project-scoped) over absolute paths (`~`
+  expanded). Navigate (home/up/go-to-path), **new folder**, and per-entry
+  **rename / clone / move / delete / extract** (.zip/.tar/.tar.gz/.tgz). Any file
+  opens as an **editable tab** in the app, served by the `/fsraw?path=` route
+  (the absolute-path analog of `/preview`) and saved via `fs_write`. Commands:
+  `fs_browse/read/write/mkdir/rename/move/copy/delete/extract` → `fs_list`/`fs_file`.
+  Deliberately **unsandboxed** (loopback-only broker, single on-device user); the
+  UI gates destructive actions behind confirms and the control refuses to delete
+  `$HOME` or `/`.
 - **Transcript:** persistence + replay; Markdown rendering (`web-ui/markdown.js`,
   dependency-free, XSS-safe, tolerant of partial mid-stream input; supports GFM
   pipe tables with column alignment, rendered in a horizontal scroller so wide
