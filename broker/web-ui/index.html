@@ -259,6 +259,42 @@
       <div id="toasts" class="toasts"></div>
     </div>
 
+    <!-- Boot error overlay: installed BEFORE the app scripts so an early exception
+         (e.g. a JS/CSS feature missing in an older Android System WebView) surfaces
+         as visible red text instead of a blank white screen. Also mirrors to the
+         console so it lands in the native [webui] runtime log. -->
+    <script>
+      (function () {
+        function showBootError(label, detail) {
+          try {
+            var box = document.getElementById('bootError');
+            if (!box) {
+              box = document.createElement('div');
+              box.id = 'bootError';
+              box.style.cssText =
+                'position:fixed;inset:0;z-index:2147483647;overflow:auto;margin:0;padding:16px;' +
+                'background:#1a0c0c;color:#ffd7d7;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;' +
+                'white-space:pre-wrap;word-break:break-word';
+              (document.body || document.documentElement).appendChild(box);
+              box.textContent = 'UI failed to start — please send this to the developer:\n\n';
+            }
+            box.textContent += label + ': ' + detail + '\n';
+          } catch (e) { /* last resort: nothing */ }
+          try { console.error('[booterror] ' + label + ': ' + detail); } catch (e) {}
+        }
+        window.addEventListener('error', function (e) {
+          var d = e && e.error && e.error.stack ? e.error.stack
+            : (e && e.message ? e.message : String(e)) +
+              (e && e.filename ? ' @ ' + e.filename + ':' + e.lineno + ':' + e.colno : '');
+          showBootError('error', d);
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+          var r = e && e.reason;
+          showBootError('promise', (r && r.stack) ? r.stack : String(r));
+        });
+        window.__showBootError = showBootError;
+      })();
+    </script>
     <script src="diff.js?v=__VER__"></script>
     <script src="markdown.js?v=__VER__"></script>
     <script src="app.js?v=__VER__"></script>
