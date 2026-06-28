@@ -199,7 +199,7 @@ On the device, you'll need:
 Expect a one-time **"built for an older version of Android"** prompt on install. This
 is **expected and intentional**: the app sets `targetSdk 28` on purpose, because API
 29+ forbids `execve()` on files in the app's writable data dir (W^X), which would
-block the bundled Termux bootstrap + proot from launching. Tap through it.
+block the bundled **proot** (and its Debian guest) from launching. Tap through it.
 
 <a name="fallback-external-broker-mode"></a>
 ### Fallback: external-broker mode

@@ -188,25 +188,31 @@ echo "sdk.dir=/path/to/Android/sdk" > local.properties      # gitignored
 Key build facts (from [`android/app/build.gradle.kts`](../android/app/build.gradle.kts)):
 
 - **`targetSdk = 28`** (intentional). API 29+ forbids `execve()` on files in the
-  app's writable data dir (W^X), which would break the bundled Termux bootstrap +
-  proot. `compileSdk = 34` (Compose needs it; AGP allows target < compile),
+  app's writable data dir (W^X), which would break the **bundled proot + Debian
+  guest**. `compileSdk = 34` (Compose needs it; AGP allows target < compile),
   `minSdk = 26`.
+- **Build the self-contained APK:** stage proot once (`ARCH=aarch64 bash
+  provisioning/make-runtime.sh` → `assets/proot-<arch>/`), then `cd android &&
+  ./gradlew :app:assembleDebug` → `app/build/outputs/apk/debug/app-debug.apk` (the
+  `stageBroker` task bundles `broker.tar.gz` automatically). The Debian rootfs, Node,
+  CLI and broker are provisioned on the device at first launch — see
+  [on-device-runtime.md](on-device-runtime.md).
 - **Lint disables `ExpiredTargetSdkVersion` and `BatteryLife`** on purpose
   (`disable += setOf("ExpiredTargetSdkVersion", "BatteryLife")`) — both are
   documented, deliberate decisions for a sideloaded app, not oversights.
 
-### First run without a bootstrap
+### External-broker mode (fast UI dev, no on-device runtime)
 
-The app installs and runs in **external-broker mode** with no bootstrap present,
-which is the fast way to exercise the full UI:
+The app installs and runs against a broker on your computer — the fast way to
+exercise the full UI without provisioning the on-device runtime:
 
 1. Run the broker on your computer: `cd ../broker && npm run dev`
 2. `adb reverse tcp:8765 tcp:8765`
 3. In the app's **Agent** tab, tap **Load agent UI anyway**.
 
-For the real on-device runtime, provision proot + the broker (see
-[`android/../provisioning`](../provisioning)) and drop the bootstrap tarball into
-`android/app/src/main/assets/`.
+For the real on-device runtime, no manual asset drop is needed — the self-contained
+APK auto-provisions on first launch (proot is bundled by the build; the rootfs is
+downloaded). See [on-device-runtime.md](on-device-runtime.md).
 
 ---
 

@@ -187,10 +187,16 @@ do not all work in a WebView — always check WebView limits.**
 
 ## Provisioning (`provisioning/`)
 
-Phase 0 (gate) + Phase 2 (provision) scripts: Termux → proot Debian → toolchain →
-broker (`phase0-*.sh`, `provision-debian.sh`, `run-broker.sh`, `lib.sh`). User
-placeholders remain: bootstrap tarball, `claude /login`, optional provider keys,
-Gradle wrapper jar.
+The **default** path is the self-contained APK: it auto-provisions on first launch
+(proot staged from assets → download Debian rootfs → install toolchain → deliver the
+broker as a git clone) and signs in to Claude natively from the Runtime tab. See
+[on-device-deploy.md](on-device-deploy.md) for the flow and
+[on-device-runtime.md](on-device-runtime.md) for the internals. `make-runtime.sh`
+stages the proot binaries into `android/.../assets/proot-<arch>/`.
+
+The `phase0-*.sh` / `provision-debian.sh` / `run-broker.sh` / `lib.sh` scripts are the
+**degraded manual fallback** (run the broker in a real Termux + proot-distro Debian);
+not the default.
 
 ---
 
@@ -315,13 +321,14 @@ in the active folder), `LIST_LIVE_SESSIONS`, `LIST_SESSIONS { scope:'all' }`,
   approval shows busy, but the permission card only appears when you switch to it.
 - **Per-session cost display** — DEFERRED. The usage ledger is aggregate/by-day; cost
   is not yet broken out per concurrent session.
-- **On-device deploy path is genuinely incomplete.** The end-to-end install on a real
-  Pixel still has user placeholders (bootstrap tarball, `claude /login`, provider keys)
-  and was largely built/tested on a dev box with no on-device runtime (no emulator/
-  connected device, no `/proc`). See [`docs/on-device-deploy.md`](on-device-deploy.md)
-  for the path **and an honest list of the code-level gaps** (e.g. `setup-guest.sh`
-  never delivers the broker; the bootstrap tarball is gitignored with no committed
-  recipe). Keep that doc honest as the path is actually walked on-device.
+- **On-device deploy path is now WORKING end-to-end** on a real Pixel (verified
+  through many device rounds): self-contained APK auto-provisions (proot + downloaded
+  Debian + toolchain + git-clone broker), renders the UI in the WebView, the in-app
+  Update (`git pull`) works, and native Claude sign-in authenticates. The abandoned
+  bundled-Termux-bootstrap approach and its gaps (`setup-guest.sh`, `make-bootstrap.sh`)
+  were removed. Remaining nicety: a smoother sign-out/credential-clear UX. See
+  [`docs/on-device-deploy.md`](on-device-deploy.md) (flow) and
+  [`docs/on-device-runtime.md`](on-device-runtime.md) (internals/gotchas).
 - The autonomous feature loop was **stopped after iteration 4**: the harness-control
   surface (skills/agents/commands/output-styles/memory/permissions/mcp/hooks) is
   complete, and remaining ideas (light theme polish, Metro error cards, token-budget

@@ -154,7 +154,7 @@ sibling session.
 | `jsonl.js` | `JsonLineBuffer` — reassembles stream-json across chunked stdout reads. |
 | `config.js` | CLI-arg + env config loader (port, host, projectsDir, stateDir, claudeBin, …). |
 | `profiles.js` | `ProfileStore` + `DEFAULT_PROFILES` — engine/model profiles (claude-max, glm-zai, opencode, mock) and their billing/auth. |
-| `secrets.js` | `SecretStore` — auth tokens / env for a profile (`<stateDir>/secrets.json`, Keystore-injected on phone). |
+| `secrets.js` | `SecretStore` — auth tokens / env for a profile (`<stateDir>/secrets.json`, Keystore-injected on phone). `claudeEnv()`/`hasClaudeAuth()` back the in-app Claude sign-in (`SET_SECRET` command stores `CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_API_KEY`, `CLAUDE_AUTH` event reports status), injected into default-endpoint claude-code engines. |
 
 ### `broker/src/engines/` (adapters — the pluggable brain)
 
@@ -162,7 +162,7 @@ sibling session.
 |---|---|
 | `base.js` | `EngineAdapter` (EventEmitter). The seam: subclasses do native↔canonical translation only. Implement `_spawn`/`send`/`respondPermission`/`interrupt`/`_teardown`; emit via `emitEvent`. |
 | `index.js` | `createEngine(profile, opts)` — `REGISTRY` maps a harness name to its class. Adding a harness = one entry + one file; the UI never changes. |
-| `claude-code.js` | Default adapter. Drives `claude --print --input-format stream-json --output-format stream-json --verbose --include-partial-messages --replay-user-messages …`. All stream-json parsing lives here. Stands up the permission bridge in gated modes. |
+| `claude-code.js` | Default adapter. Drives `claude --print --input-format stream-json --output-format stream-json --verbose --include-partial-messages --replay-user-messages …`. All stream-json parsing lives here. Stands up the permission bridge in gated modes. **Auth precedence:** when `~/.claude/.credentials.json` exists and on the default endpoint, drops `CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_API_KEY` from the spawn env so a stale token can't override the file (the 401 cause). |
 | `opencode.js` | `OpencodeEngine` — conformance adapter for a second harness. |
 | `mock.js` | `MockEngine` — fully self-contained fake harness; emits identical canonical events and really touches the filesystem. The zero-credential demo path. |
 
@@ -186,6 +186,9 @@ Notable modules (one line each):
 | `files.js` | Read-only project browser: tree, size-capped read, fuzzy path search (@-mentions), changed-files list. Confined to the project dir. |
 | `prompts.js` | `PromptLibrary` — saved reusable prompts (`<stateDir>/prompts.json`). |
 | `frontmatter.js` | Minimal YAML-frontmatter parse/serialize for SKILL.md / agent / command files. |
+| `cron.js` | `CronManager` — scheduled recurring agent prompts (5-field cron + presets), persisted to `<stateDir>/cron-jobs.json`. The server ticks it; due jobs run via `SessionManager.startDetached()` (a background engine that doesn't disturb the active view), `fresh` vs `persistent` session. Commands `CRON_*`, event `CRON_JOBS`. |
+| `fsmanager.js` | `FileSystemManager` — whole-filesystem browser (absolute paths, `~` expansion), NOT project-scoped: browse/read/write/mkdir/rename/move/copy/delete/extract. Loopback-only, single-user by design. Commands `FS_*`, events `FS_LIST`/`FS_FILE`; `/fsraw` serves absolute-path files. |
+| `user-settings.js` | `UserSettings` — persists UI/engine prefs (`<stateDir>/user-settings.json`), restored on restart. Event `USER_SETTINGS`, command `USER_SETTINGS_PATCH`. |
 
 ### `broker/src/mcp/` (the approval bridge)
 

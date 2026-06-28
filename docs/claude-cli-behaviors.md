@@ -125,6 +125,23 @@ The `_handleStreamMessage` `case 'control_request'` (verbatim logging) remains a
 a diagnostic for any *other* inbound control message, but the question flow no
 longer depends on it.
 
+## Auth: `claude setup-token`, the credentials file, and env-token precedence
+
+On-device sign-in uses `claude setup-token` (driven natively — see
+[on-device-runtime.md](on-device-runtime.md) for the PTY mechanics). Behaviors the
+broker depends on:
+
+- **`setup-token` is an interactive `ink` TUI**, not pipe-friendly: over a plain pipe
+  it block-buffers stdout (the OAuth URL never prints) and won't accept input. It
+  needs a real PTY, and Enter is **carriage return (`\r`)**, not `\n`.
+- **It writes credentials to `~/.claude/.credentials.json`** — the source of truth for
+  the default (Max/OAuth) endpoint.
+- **A `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` env var OVERRIDES the file** and
+  is sent as a bearer token; a stale/empty one → `API Error: 401 Invalid bearer
+  token`. So `engines/claude-code.js` **drops those env vars at spawn when the
+  credentials file exists** (and not on an alt endpoint). When *deliberately* using a
+  token instead (in-app paste, no `setup-token`), there's no creds file, so it's kept.
+
 ## Verifying these against the repo
 
 - Engine / init handling: `broker/src/engines/claude-code.js` (`_handleSystem`,
