@@ -105,9 +105,9 @@ export class DevTools {
     return { port, url, starting: true };
   }
 
-  /** Poll Metro's /status endpoint until it answers `packager-status:running`, then
-   *  emit running=true. Version-robust (independent of expo's log wording). Gives up
-   *  quietly if the process exits (the exit handler reports that) or after a timeout. */
+  /** Poll the dev-server port until it answers an HTTP request (see _probeMetro),
+   *  then emit running=true. Version-robust (independent of expo's log wording).
+   *  Gives up quietly if the process exits (exit handler reports it) or on timeout. */
   async _awaitReady(projectId, port, url, timeoutMs = 150000) {
     const channel = this.metroChannel(projectId);
     const deadline = Date.now() + timeoutMs;
