@@ -10,12 +10,20 @@ import { EventType, event } from '../protocol.js';
  * agent loop.
  */
 export class DevTools {
-  constructor({ config, runner, projects, emit }) {
+  constructor({ config, runner, projects, emit, userSettings }) {
     this.config = config;
     this.runner = runner;
     this.projects = projects;
     this.emit = emit;
-    this._metro = new Map(); // projectId -> { port, url }
+    this.userSettings = userSettings; // for the Expo target (Go vs dev-client)
+    this._metro = new Map(); // projectId -> { port, url, ready }
+  }
+
+  /** Expo client target. Default 'go' (Expo Go — installed from the store, no build);
+   *  'dev-client' targets a custom development build. User-settable (expo.mode). */
+  _expoFlag() {
+    const mode = this.userSettings?.get?.()?.expo?.mode;
+    return mode === 'dev-client' ? '--dev-client' : '--go';
   }
 
   _resolveProject(projectId) {
@@ -54,8 +62,8 @@ export class DevTools {
       return this._err('No Expo project found.');
     }
 
-    // --localhost binds 127.0.0.1; --dev-client targets the custom dev client.
-    const cmd = `npx --yes expo start --localhost --dev-client --port ${port}`;
+    // --localhost binds 127.0.0.1; the client flag picks Expo Go vs a dev build.
+    const cmd = `npx --yes expo start --localhost ${this._expoFlag()} --port ${port}`;
     const env = {
       // Metro file-watching is flaky under proot; fall back to Node's watcher.
       WATCHMAN_DISABLE: '1',
@@ -172,12 +180,15 @@ export class DevTools {
   metroInfo(projectId) {
     const project = this._resolveProject(projectId);
     if (!project) return null;
-    const running = this.runner.isRunning(this.metroChannel(project.id));
+    const alive = this.runner.isRunning(this.metroChannel(project.id));
     const info = this._metro.get(project.id) || {
       port: project.metroPort,
       url: `exp://127.0.0.1:${project.metroPort}`,
     };
-    return { running, projectId: project.id, ...info };
+    // running only once it has answered (ready); alive-but-not-ready = starting. This
+    // keeps a tab switch from reporting a still-booting Metro as openable.
+    const ready = info.ready === true;
+    return { running: alive && ready, starting: alive && !ready, projectId: project.id, port: info.port, url: info.url };
   }
 
   _emitMetro(projectId, running, port, url, error = null, starting = false) {

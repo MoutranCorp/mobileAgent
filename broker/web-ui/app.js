@@ -29,7 +29,8 @@
     activeProfileId: null,
     projects: [],
     activeProjectId: null,
-    metro: null,
+    metroByProject: {}, // projectId -> latest metro_status (per-tab: tabs can be different apps)
+    _awaitingMetro: null, // projectId we're waiting to open once Metro is ready
     capabilities: null,
     permissionMode: 'default',
     resolvedModel: null, // resolved id of the active model (e.g. claude-opus-4-8)
@@ -2284,57 +2285,65 @@
 
   // ---- metro / test --------------------------------------------------------
 
+  // Metro is per PROJECT (each folder gets its own port), and tabs can be different
+  // projects → different Expo apps. So track status per projectId and render the
+  // ACTIVE tab's project; the broker re-emits the active project's status on switch.
+  function activeMetro() { return state.metroByProject[state.activeProjectId] || null; }
+
   function onMetro(ev) {
-    state.metro = ev;
-    const badge = $('metroBadge');
-    // A failure (no Expo project, crashed start, missing deps, …): stop waiting,
-    // tell the user, and surface the Terminal where the real reason is.
-    if (ev.error) {
+    const pid = ev.projectId || state.activeProjectId;
+    if (pid) state.metroByProject[pid] = ev;
+    // A failure (no Expo project, crashed start, missing deps, …): if it's the
+    // project we were starting, stop waiting and surface the reason.
+    if (ev.error && state._awaitingMetro === pid) {
+      state._awaitingMetro = null;
       clearTimeout(state._metroWait);
-      state._awaitingMetro = false;
-      badge.classList.add('hidden');
-      $('testBtn').textContent = '▶ Test';
       toast('Metro: ' + ev.error, 'error');
       if ($('terminal').classList.contains('hidden')) toggleTerminal();
-      return;
     }
-    if (ev.running) {
+    // Open the Expo client only for the project we're actively waiting on, and only
+    // once Metro truly answers (running) — never on a blind timer.
+    if (ev.running && state._awaitingMetro === pid) {
+      state._awaitingMetro = null;
       clearTimeout(state._metroWait);
-      badge.classList.remove('hidden');
-      badge.textContent = `Metro :${ev.port}`;
-      $('testBtn').textContent = '▶ Open';
-      // Only NOW (Metro actually answering) do we open the dev client.
-      if (state._awaitingMetro) { state._awaitingMetro = false; openDevClient(); }
-    } else if (ev.starting) {
-      badge.classList.remove('hidden');
-      badge.textContent = 'Metro starting…';
-      $('testBtn').textContent = '⏳ Starting';
-    } else {
-      badge.classList.add('hidden');
-      $('testBtn').textContent = '▶ Test';
+      openDevClient(pid);
     }
+    renderMetro();
+  }
+
+  // Paint the badge + Test button from the ACTIVE project's Metro status.
+  function renderMetro() {
+    const m = activeMetro();
+    const badge = $('metroBadge');
+    const btn = $('testBtn');
+    if (!badge || !btn) return;
+    if (m && m.running) { badge.classList.remove('hidden'); badge.textContent = `Metro :${m.port}`; btn.textContent = '▶ Open'; }
+    else if (m && m.starting) { badge.classList.remove('hidden'); badge.textContent = 'Metro starting…'; btn.textContent = '⏳ Starting'; }
+    else { badge.classList.add('hidden'); btn.textContent = '▶ Test'; }
   }
 
   function onTest() {
-    if (state.metro && state.metro.running) return openDevClient();
-    state._awaitingMetro = true;
-    send({ type: 'start_metro' });
+    const pid = state.activeProjectId;
+    const m = activeMetro();
+    if (m && m.running) return openDevClient(pid);
+    state._awaitingMetro = pid; // wait for THIS tab's project, not whatever ran last
+    send({ type: 'start_metro', projectId: pid || undefined });
     toast('Starting Metro… first run can take a minute (it bundles the app).', 'info');
-    // Fallback ONLY for a totally silent broker. We no longer blind-open the dev
-    // client on a timer — that opened it before Metro was up. The broker now reports
-    // real readiness (running) or a failure (error); this just unsticks the UI.
+    // Fallback ONLY for a totally silent broker. We no longer blind-open on a timer —
+    // that opened before Metro was up. The broker reports real readiness/failure.
     clearTimeout(state._metroWait);
     state._metroWait = setTimeout(() => {
-      if (state._awaitingMetro) {
-        state._awaitingMetro = false;
+      if (state._awaitingMetro === pid) {
+        state._awaitingMetro = null;
         toast('Metro hasn’t reported ready — watch the Terminal, then press Open.', 'error');
         if ($('terminal').classList.contains('hidden')) toggleTerminal();
       }
     }, 180000);
   }
-  function openDevClient() {
-    const url = (state.metro && state.metro.url) || 'exp://127.0.0.1:8081';
-    appendTerminalMeta('Opening dev client: ' + url);
+  function openDevClient(projectId) {
+    const m = (projectId && state.metroByProject[projectId]) || activeMetro();
+    const url = (m && m.url) || 'exp://127.0.0.1:8081';
+    appendTerminalMeta('Opening Expo: ' + url);
     openExternal(url);
     toast('Opening ' + url, 'info');
   }
@@ -2386,6 +2395,7 @@
     // folder sheet, which read state.projects); just refresh the surfaces that show it.
     renderTabs(); // project names just arrived -> refresh tab titles
     updateFolderPill();
+    renderMetro(); // active project may have changed -> reflect its Metro status
     if (folderSheetOpen()) renderFolderSheet();
     if (window.Managers) window.Managers.onProjects(ev);
   }

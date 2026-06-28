@@ -63,7 +63,7 @@ export class BrokerServer {
     this.cron = new CronManager(config.stateDir); // scheduled agent jobs (in-broker scheduler)
     this._cronKeys = new Map(); // live cron sessionKey -> jobId (capture sessionId + completion)
     this._cronInflight = new Set(); // jobIds with a run currently in flight (avoid overlap)
-    this.devtools = new DevTools({ config, runner: this.runner, projects: this.projects, emit });
+    this.devtools = new DevTools({ config, runner: this.runner, projects: this.projects, emit, userSettings: this.userSettings });
     this.claudeConfig = new ClaudeConfig({ getProjectDir, getProjects: () => this.projects.list(), stateDir: config.stateDir });
     this.modelResolver = new ModelResolver({ stateDir: config.stateDir, claudeBin: config.claudeBin });
     this.updater = new Updater();
@@ -691,6 +691,7 @@ export class BrokerServer {
           this.broadcast(event(EventType.PROJECTS, this.projects.snapshot()));
         }
         await this._switchView(cmd.key);
+        this._emitActiveMetro();
         return;
       }
       case CommandType.SWITCH_ENGINE:
@@ -941,6 +942,7 @@ export class BrokerServer {
         this._nativeFingerprint = null;
         this.broadcast(event(EventType.PROJECTS, this.projects.snapshot()));
         await this._switchView(cmd.projectId);
+        this._emitActiveMetro();
         return;
       }
       case CommandType.CREATE_PROJECT: {
@@ -957,6 +959,7 @@ export class BrokerServer {
         this._nativeFingerprint = null;
         this.broadcast(event(EventType.PROJECTS, this.projects.snapshot()));
         await this._switchView(this.projects.activeId);
+        this._emitActiveMetro();
         return;
       }
       case CommandType.PROJECT_DELETE: {
@@ -1223,6 +1226,13 @@ export class BrokerServer {
     // Route through _emitEvent so it records to the producing session's transcript
     // (persists across reload) and only reaches the UI when that session is active.
     this._emitEvent(event(EventType.APKS, { items: changed, sessionKey: sessionKey ?? this.session.activeKey }));
+  }
+
+  /** Push the now-active project's Metro state so the Test button reflects THIS tab
+   *  (different tabs can be different projects → different Expo apps / ports). */
+  _emitActiveMetro() {
+    const m = this.devtools.metroInfo(this.projects.getActive()?.id);
+    if (m) this.broadcast(event(EventType.METRO_STATUS, m));
   }
 
   _log(message) {

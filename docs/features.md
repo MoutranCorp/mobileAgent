@@ -178,7 +178,14 @@ are cache-busted with `?v=__VER__` rewritten to a mtime-derived version at serve
   review-changes-since-checkpoint; npm scripts runner; GitHub commit/push/PR + set
   remote; web preview (`/preview` static serve, needs an ACTIVE project); native-dep →
   rebuild prompt; one-tap **Test** (Metro + `exp://` deep-link); live todos
-  (`renderTodos`, markers drawn by CSS).
+  (`renderTodos`, markers drawn by CSS). **Test** resolves the Expo app dir (the
+  folder or an immediate subfolder, e.g. `create-expo-app demo`→`demo/`), starts
+  Metro, polls `/status` and only opens the client once it's actually ready
+  (reporting `starting`/`error` on the way). Metro is **per project** (each folder
+  gets its own `metroPort`), so different tabs can run different apps at once; the
+  broker re-emits the active project's Metro on tab switch and the UI tracks status
+  per project (`state.metroByProject`). Targets **Expo Go** by default (`--go`,
+  no build); set `expo.mode='dev-client'` (user settings) for a custom dev build.
 - **Inline viewer widgets:** any GENERATED viewable file from a Write/Edit tool gets
   an inline preview card served from `/preview/<rel>` — html runs live in a sandboxed
   iframe, svg/image render on a checker bg, markdown via `MD.render`. Every kind shares

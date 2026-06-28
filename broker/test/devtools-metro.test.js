@@ -27,11 +27,12 @@ function stubRunner() {
   };
 }
 
-function mkDevTools(project) {
+function mkDevTools(project, settings = null) {
   const events = [];
   const projects = { get: () => project, getActive: () => project };
   const runner = stubRunner();
-  const dt = new DevTools({ config: {}, runner, projects, emit: (e) => events.push(e) });
+  const userSettings = settings ? { get: () => settings } : undefined;
+  const dt = new DevTools({ config: {}, runner, projects, emit: (e) => events.push(e), userSettings });
   return { dt, events, runner, metro: () => events.filter((e) => e.type === 'metro_status') };
 }
 
@@ -74,9 +75,35 @@ test('startMetro spawns in the Expo app dir and reports "starting" (not running)
   assert.equal(runner.calls.length, 1, 'spawned expo');
   assert.equal(runner.calls[0].opts.cwd, app, 'runs in the subfolder that holds the Expo app');
   assert.match(runner.calls[0].cmd, /expo start/);
+  assert.match(runner.calls[0].cmd, /--go/, 'defaults to Expo Go (the no-build, store-installed client)');
+  assert.doesNotMatch(runner.calls[0].cmd, /--dev-client/);
   const first = metro()[0];
   assert.equal(first.running, false);
-  assert.equal(first.starting, true, 'reports starting, not running — the dev client must not open yet');
+  assert.equal(first.starting, true, 'reports starting, not running — the client must not open yet');
+});
+
+test('expo.mode = dev-client switches the start flag to --dev-client', async () => {
+  const root = await tmpDir('expo-mode-');
+  await fsp.writeFile(path.join(root, 'app.json'), '{}');
+  const { dt, runner } = mkDevTools({ id: 'p', dir: root, metroPort: 8097 }, { expo: { mode: 'dev-client' } });
+  dt.startMetro('p');
+  assert.match(runner.calls[0].cmd, /--dev-client/);
+  assert.doesNotMatch(runner.calls[0].cmd, /--go/);
+});
+
+test('metroInfo reports starting while booting and running once ready', async () => {
+  const root = await tmpDir('expo-info-');
+  await fsp.writeFile(path.join(root, 'app.json'), '{}');
+  const { dt } = mkDevTools({ id: 'p', dir: root, metroPort: 8096 });
+  dt.startMetro('p'); // stub runner stays "alive" but never ready (no real metro)
+  let info = dt.metroInfo('p');
+  assert.equal(info.starting, true);
+  assert.equal(info.running, false, 'alive-but-not-ready is "starting", not "running"');
+  // Simulate readiness, as _awaitReady would once /status answers.
+  dt._metro.get('p').ready = true;
+  info = dt.metroInfo('p');
+  assert.equal(info.running, true);
+  assert.equal(info.starting, false);
 });
 
 test('_probeMetro is true only when Metro answers /status with packager-status:running', async () => {
