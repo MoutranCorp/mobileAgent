@@ -31,8 +31,15 @@ Each line is one JSON object. Top-level `type`:
 
 **Double-emit hazard:** with `--include-partial-messages` the CLI streams deltas
 **and** then sends a terminal `assistant` message with the FULL content. Stream
-the deltas; treat the terminal `assistant` as commit-only (dedupe text/thinking;
-emit each `tool_use` once by id).
+the deltas; treat the terminal `assistant` as commit-only (dedupe text/thinking).
+For `tool_use`, the adapter surfaces the call at `content_block_start` (ephemeral
+`tool_call` with `streaming:true`), streams `input_json_delta.partial_json` as
+ephemeral `tool_delta`s, then the terminal `assistant` re-emits the SAME id as the
+recorded finalize (full input). UI: block-start creates the card, deltas grow the
+preview, finalize swaps in the rendered diff. Tool-result `content` may include
+`image` blocks (base64/url) — emit them as `tool_result.images`, not flattened text.
+`message_delta.stop_reason` other than end_turn/tool_use/stop_sequence is surfaced
+as a `log` note (truncation/refusal/pause).
 
 **Subagents:** the `Task` tool was renamed **`Agent`** (v2.1.63+; `Task` still an
 alias — accept both). Nested subagent turns carry `parent_tool_use_id` linking

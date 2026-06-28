@@ -89,6 +89,10 @@ export class TranscriptStore {
   /** Record one canonical event into ITS session's buffer (coalescing text). */
   record(ev) {
     if (!ev || !ev.type) return;
+    // Live-only previews (streaming tool-call start, input_json deltas) carry
+    // ephemeral:true — surface them over the socket but never persist/replay them;
+    // the authoritative finalize event is recorded separately.
+    if (ev.ephemeral) return;
     const key = ev.sessionKey != null ? ev.sessionKey : this.activeKey;
     const b = this._bufFor(key);
     if (!b) return;

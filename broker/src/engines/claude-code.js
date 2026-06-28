@@ -49,6 +49,7 @@ export class ClaudeCodeEngine extends EngineAdapter {
     this._pendingQuestions = new Map(); // bridge-req-id -> { resolve }
     this._ctrlSeq = 0;
     this._toolNames = new Map(); // tool_use_id -> tool name (for result mapping)
+    this._startedTools = new Set(); // tool_use_ids already surfaced live (block-start) this turn
     this._mcpConfigFile = null;
     // Per-message streaming state.
     this._blocks = new Map(); // content-block index -> { type, ... }
@@ -278,6 +279,9 @@ export class ClaudeCodeEngine extends EngineAdapter {
         message: `API retry ${msg.attempt}/${msg.max_retries}: ${msg.error || ''}`,
       });
     } else {
+      // Surface any other system note (e.g. a future subtype) so the user sees it
+      // rather than it vanishing into the broker log.
+      if (msg.subtype) this.emitEvent(EventType.LOG, { level: 'info', message: `system: ${msg.subtype}` });
       this.log(`unhandled system subtype: ${msg.subtype}`);
     }
   }
@@ -317,15 +321,18 @@ export class ClaudeCodeEngine extends EngineAdapter {
         case 'mcp_tool_use':
           this._emitToolCall(block, parentToolUseId);
           break;
-        case 'web_search_tool_result':
+        case 'web_search_tool_result': {
+          const parsed = splitToolContent(block.content);
           this.emitEvent(EventType.TOOL_RESULT, {
             id: block.tool_use_id,
             name: 'WebSearch',
             status: block.is_error ? 'error' : 'ok',
-            output: normalizeToolOutput(block.content),
+            output: parsed.text,
+            images: parsed.images.length ? parsed.images : undefined,
             parentToolUseId,
           });
           break;
+        }
         default:
           this.log(`unhandled assistant block: ${block.type}`);
       }
@@ -333,7 +340,42 @@ export class ClaudeCodeEngine extends EngineAdapter {
     this._resetMessageDeltaState();
   }
 
+  /** Surface a tool call the moment its content block opens (with
+   *  --include-partial-messages) so the card appears immediately and its input can
+   *  stream. Ephemeral: the recorded copy is the finalize emitted from the terminal
+   *  assistant message (_emitToolCall). */
+  _emitToolCallStart(cb, index, parentToolUseId) {
+    if (!cb || !cb.id || this._startedTools.has(cb.id)) return;
+    this._startedTools.add(cb.id);
+    this._toolNames.set(cb.id, cb.name);
+    const b = this._blocks.get(index) || { type: cb.type };
+    b.toolId = cb.id; b.jsonBuf = '';
+    this._blocks.set(index, b);
+    this.emitEvent(EventType.TOOL_CALL, {
+      id: cb.id,
+      name: cb.name,
+      input: cb.input || {},
+      kind: classifyTool(cb.name, cb.type),
+      parentToolUseId,
+      streaming: true,
+      ephemeral: true,
+    });
+    this.emitStatus(StatusState.RUNNING, cb.name);
+  }
+
   _emitToolCall(block, parentToolUseId) {
+    // Already surfaced live at block-start — emit the authoritative (recorded)
+    // finalize so the card swaps its streamed preview for the real input/diff.
+    if (this._startedTools.has(block.id)) {
+      this.emitEvent(EventType.TOOL_CALL, {
+        id: block.id,
+        name: block.name,
+        input: block.input || {},
+        kind: classifyTool(block.name, block.type),
+        parentToolUseId,
+      });
+      return;
+    }
     if (this._toolNames.has(block.id)) return; // dedupe
     this._toolNames.set(block.id, block.name);
     this.emitEvent(EventType.TOOL_CALL, {
@@ -351,11 +393,13 @@ export class ClaudeCodeEngine extends EngineAdapter {
     const blocks = Array.isArray(message.content) ? message.content : [];
     for (const block of blocks) {
       if (block.type === 'tool_result') {
+        const parsed = splitToolContent(block.content);
         this.emitEvent(EventType.TOOL_RESULT, {
           id: block.tool_use_id,
           name: this._toolNames.get(block.tool_use_id),
           status: block.is_error ? 'error' : 'ok',
-          output: normalizeToolOutput(block.content),
+          output: parsed.text,
+          images: parsed.images.length ? parsed.images : undefined,
           parentToolUseId,
         });
       } else if (block.type === 'text' && !parentToolUseId) {
@@ -380,9 +424,14 @@ export class ClaudeCodeEngine extends EngineAdapter {
         this._blocks.clear();
         this._inputTokens = ev.message?.usage?.input_tokens ?? this._inputTokens;
         break;
-      case 'content_block_start':
-        this._blocks.set(ev.index, { type: ev.content_block?.type });
+      case 'content_block_start': {
+        const cb = ev.content_block || {};
+        this._blocks.set(ev.index, { type: cb.type });
+        if (cb.type === 'tool_use' || cb.type === 'server_tool_use' || cb.type === 'mcp_tool_use') {
+          this._emitToolCallStart(cb, ev.index, this._lastParent);
+        }
         break;
+      }
       case 'content_block_delta': {
         const d = ev.delta || {};
         if (d.type === 'text_delta') {
@@ -391,9 +440,22 @@ export class ClaudeCodeEngine extends EngineAdapter {
         } else if (d.type === 'thinking_delta') {
           this._sawThinkingDeltas = true;
           this.emitEvent(EventType.ASSISTANT_THINKING, { delta: d.thinking, parentToolUseId: this._lastParent });
+        } else if (d.type === 'input_json_delta') {
+          // Live tool-input streaming: accumulate the partial JSON on the block and
+          // push it so the tool card fills in as the model writes its arguments.
+          const b = this._blocks.get(ev.index);
+          if (b && b.toolId) {
+            b.jsonBuf = (b.jsonBuf || '') + (d.partial_json || '');
+            this.emitEvent(EventType.TOOL_DELTA, {
+              id: b.toolId,
+              jsonText: b.jsonBuf,
+              parentToolUseId: this._lastParent,
+              ephemeral: true,
+            });
+          }
         }
-        // input_json_delta / signature_delta / citations_delta accumulate on the
-        // block; the authoritative copy arrives in the terminal assistant message.
+        // signature_delta / citations_delta accumulate on the block; the
+        // authoritative copy arrives in the terminal assistant message.
         break;
       }
       case 'message_delta': {
@@ -404,6 +466,11 @@ export class ClaudeCodeEngine extends EngineAdapter {
             windowTokens: this._windowTokens,
             model: this.model,
           });
+        }
+        // Surface a non-ordinary stop so a truncated/refused/paused turn isn't silent.
+        const sr = ev.delta?.stop_reason;
+        if (sr && !['end_turn', 'tool_use', 'stop_sequence'].includes(sr)) {
+          this.emitEvent(EventType.LOG, { level: 'warn', message: stopReasonNote(sr) });
         }
         break;
       }
@@ -424,6 +491,7 @@ export class ClaudeCodeEngine extends EngineAdapter {
     // (it otherwise grows unbounded across a long session). Done at result, not
     // message_start, so a within-turn tool_result still resolves its name.
     this._toolNames.clear();
+    this._startedTools.clear();
     this.emitEvent(EventType.RESULT, {
       subtype: msg.subtype,
       durationMs: msg.duration_ms,
@@ -639,16 +707,45 @@ function windowForModel(model) {
   return 200000;
 }
 
-function normalizeToolOutput(content) {
-  if (content == null) return '';
-  if (typeof content === 'string') return content;
+/** Split a tool_result's content into display text + any image data URLs, so an
+ *  image-bearing result (screenshots, image reads, MCP image outputs) renders as
+ *  a picture instead of a wall of base64 JSON. */
+function splitToolContent(content) {
+  const images = [];
+  const imgUrl = (c) => {
+    const src = c && c.source;
+    if (!src) return null;
+    if (src.type === 'base64' && src.data) return `data:${src.media_type || 'image/png'};base64,${src.data}`;
+    if (src.type === 'url' && src.url) return src.url;
+    return null;
+  };
+  if (content == null) return { text: '', images };
+  if (typeof content === 'string') return { text: content, images };
   if (Array.isArray(content)) {
-    return content
-      .map((c) => (typeof c === 'string' ? c : c.text ?? JSON.stringify(c)))
-      .join('\n');
+    const parts = [];
+    for (const c of content) {
+      if (typeof c === 'string') { parts.push(c); continue; }
+      if (c && c.type === 'image') { const u = imgUrl(c); if (u) { images.push(u); continue; } }
+      if (c && typeof c.text === 'string') { parts.push(c.text); continue; }
+      parts.push(JSON.stringify(c));
+    }
+    return { text: parts.join('\n'), images };
   }
-  if (typeof content === 'object') return content.text ?? JSON.stringify(content);
-  return String(content);
+  if (typeof content === 'object') {
+    if (content.type === 'image') { const u = imgUrl(content); if (u) return { text: '', images: [u] }; }
+    return { text: content.text ?? JSON.stringify(content), images };
+  }
+  return { text: String(content), images };
+}
+
+function stopReasonNote(sr) {
+  switch (sr) {
+    case 'max_tokens': return 'Response truncated — hit the max output length.';
+    case 'refusal': return 'The model declined to continue (refusal).';
+    case 'pause_turn': return 'Turn paused — the model will continue.';
+    case 'model_context_window_exceeded': return 'Context window exceeded.';
+    default: return `Turn stopped: ${sr}.`;
+  }
 }
 
 function classifyTool(name, blockType) {

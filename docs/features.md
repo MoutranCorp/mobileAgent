@@ -139,6 +139,18 @@ are cache-busted with `?v=__VER__` rewritten to a mtime-derived version at serve
 - **Live feedback:** single `state.activity` (idle/working/waiting) drives an
   iMessage typing-dots bubble labelled with the live action; thinking traces in a
   collapsible pulsing card; send button morphs to **Stop** (interrupt) while working.
+  After a send the indicator is **latched** (`beginAwaiting`/`awaitingActive`) until
+  the engine produces a real event, so waking a cold/idle-evicted session shows
+  **"Waking up…"** instantly and never flickers back to idle on the engine's init
+  status (addresses the "send to a sleeping session feels dead" lag).
+- **Full trace transparency:** the claude-code adapter surfaces the whole stream —
+  tool calls appear at their block-start and their **input streams live**
+  (`input_json_delta` → `tool_delta`, an ephemeral preview that finalizes to the
+  rendered diff/command); **image tool results** (screenshots, image reads, MCP
+  image output) render as pictures, not base64 JSON (`splitToolContent`); `api_retry`,
+  unusual `stop_reason`s (truncation/refusal/pause), and other system notes show as
+  dim inline `.sys-note` lines. Streaming previews are marked `ephemeral` so they
+  cross the socket but are never recorded/replayed.
 - **Project tooling:** file explorer + content grep + per-file diff + inline edit +
   `.env` editor; git diff review (discard/commit); checkpoints/rewind +
   review-changes-since-checkpoint; npm scripts runner; GitHub commit/push/PR + set

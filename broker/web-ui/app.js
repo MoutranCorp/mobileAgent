@@ -271,6 +271,7 @@
       case 'user_echo': onUserEcho(ev); break;
       case 'reverted': onReverted(ev); break;
       case 'tool_call': onToolCall(ev); break;
+      case 'tool_delta': onToolDelta(ev); break;
       case 'tool_result': onToolResult(ev); break;
       case 'permission_request': onPermissionRequest(ev); break;
       case 'permission_resolved': onPermissionResolved(ev); break;
@@ -324,7 +325,7 @@
       case 'transcript_search': break; // handled where requested
       case 'turn_changes': onTurnChanges(ev); break;
       case 'workspace_browse': if (window.Managers) window.Managers.onWorkspaceBrowse(ev); break;
-      case 'log': break;
+      case 'log': onLog(ev); break;
       case 'file_widget': onFileWidget(ev); break;
       case 'toast': if (ev.message) toast(ev.message, ev.level || 'info'); break;
       case 'user_settings': onUserSettings(ev); break;
@@ -383,7 +384,7 @@
     // session's stream (incl. its RESULT) is suppressed, so switching tabs must
     // reconcile here or the indicator gets stuck "thinking".
     if (act) {
-      const idleOk = Date.now() > (state._optimisticUntil || 0);
+      const idleOk = Date.now() > (state._optimisticUntil || 0) && !awaitingActive();
       // Nav status pill = the ACTIVE session's engine status. Background statuses are
       // suppressed, so without this it stays stuck (e.g. "thinking") after a switch.
       const ps = act.busy ? (act.lastStatus || 'thinking') : (idleOk ? 'idle' : null);
@@ -491,6 +492,7 @@
     state.activeTabId = t.id;
     if (t.kind === 'file') { applyViewMode(); renderFileView(t); renderTabs(); return; } // client-only, no broker switch
     state._optimisticUntil = 0; // show the destination tab's real state immediately
+    clearAwaiting(); // a pending "waking" latch belongs to the tab we just left
     applyViewMode();
     if (t.key !== state.activeKey) {
       // Mark the switch in-flight: until the broker's SESSIONS reports this key as
@@ -954,6 +956,7 @@
 
   function appendAssistant(delta, parentId) {
     if (!delta) return;
+    clearAwaiting();
     hideEmpty();
     const host = nestedContainerFor(parentId);
     if (host) { // subagent narration → muted line in parent card
@@ -1005,6 +1008,7 @@
 
   function appendThinking(delta, parentId) {
     if (!delta) return;
+    clearAwaiting();
     hideEmpty();
     if (parentId) return appendAssistant('💭 ' + delta, parentId);
     if (!state.activeThinking) {
@@ -1066,6 +1070,16 @@
     applyActivity();
     // A queued reply (e.g. an answered question form) sends once the turn settles.
     if (kind === 'idle' && state.queuedReply) flushQueuedReply();
+  }
+  // After sending, we optimistically show "working" and LATCH it until the engine
+  // actually produces a real event — so waking a cold/idle-evicted session (proot +
+  // claude init takes a few seconds) doesn't flicker idle before "thinking" appears.
+  function awaitingActive() { return !!state._awaitingFirstEvent && Date.now() < (state._awaitingUntil || 0); }
+  function clearAwaiting() { state._awaitingFirstEvent = false; }
+  function beginAwaiting(wakeMs) {
+    state._awaitingFirstEvent = true;
+    state._awaitingUntil = Date.now() + 60000; // safety cap if the engine never responds
+    state._optimisticUntil = Date.now() + (wakeMs || 2000);
   }
   function applyActivity() {
     const working = state.activity === 'working';
@@ -1193,6 +1207,7 @@
   }
 
   function onToolCall(ev) {
+    clearAwaiting(); // a tool starting means the engine is live
     // TodoWrite drives the pinned live checklist instead of a tool card.
     if (ev.name === 'TodoWrite' && ev.input && Array.isArray(ev.input.todos)) {
       return renderTodos(ev.input.todos);
@@ -1211,6 +1226,12 @@
     }
     hideEmpty();
     if (!ev.parentToolUseId) finalizeAssistant();
+
+    // A tool that was surfaced live at its block-start is now finalizing: the card
+    // already exists — swap its streamed preview for the authoritative input.
+    const existing = state.toolCards.get(ev.id);
+    if (existing) { finalizeToolCard(existing, ev); return; }
+
     setActivity('working', toolActivityLabel(ev)); // show what the agent is doing
     const card = el('div', 'tool-card' + (ev.kind === 'subagent' ? ' subagent' : ''));
     const isDiff = /^(Write|Edit|MultiEdit)$/.test(ev.name);
@@ -1229,17 +1250,13 @@
     card.appendChild(head);
 
     const body = el('div', 'tool-body');
-    if (isDiff) {
-      body.innerHTML = window.DiffRender.renderDiff(ev.input || {});
-    } else if (ev.name === 'Bash') {
-      body.appendChild(elHtml('div', 'tool-input', '$ ' + esc((ev.input && ev.input.command) || '')));
-      const pre = el('pre', '', '…');
-      body.appendChild(pre);
-      card.__pre = pre;
+    if (ev.streaming) {
+      // Live block-start: show the input as it streams in; finalizeToolCard swaps
+      // this for the rendered diff / command once the full input arrives.
+      const pre = el('pre', 'tool-stream', '…');
+      body.appendChild(pre); card.__stream = pre;
     } else {
-      const pre = el('pre', '', shortInput(ev.input));
-      body.appendChild(pre);
-      card.__pre = pre;
+      fillToolBody(card, body, ev.name, ev.input, isDiff);
     }
     if (ev.kind === 'subagent') body.classList.remove('collapsed');
     card.appendChild(body);
@@ -1256,6 +1273,45 @@
       // Any generated viewable file (html/svg/image/markdown) gets an inline viewer.
       filePath, fileKind: isDiff ? fileKind(filePath) : null,
     });
+    scrollDown();
+  }
+
+  // Build a tool card's body for a known (complete) input.
+  function fillToolBody(card, body, name, input, isDiff) {
+    body.innerHTML = '';
+    if (isDiff) {
+      body.innerHTML = window.DiffRender.renderDiff(input || {});
+    } else if (name === 'Bash') {
+      body.appendChild(elHtml('div', 'tool-input', '$ ' + esc((input && input.command) || '')));
+      const pre = el('pre', '', '…');
+      body.appendChild(pre);
+      card.__pre = pre;
+    } else {
+      const pre = el('pre', '', shortInput(input));
+      body.appendChild(pre);
+      card.__pre = pre;
+    }
+  }
+
+  // Live partial tool input (input_json_delta): grow the streamed preview in place.
+  function onToolDelta(ev) {
+    const rec = state.toolCards.get(ev.id);
+    if (!rec || !rec.el.__stream) return;
+    rec.el.__stream.textContent = ev.jsonText || '…';
+    if (state._pinBottom) scrollDown();
+  }
+
+  // Swap a streamed card's raw preview for the authoritative input once it lands.
+  function finalizeToolCard(rec, ev) {
+    rec.name = ev.name;
+    rec.isDiff = /^(Write|Edit|MultiEdit)$/.test(ev.name);
+    const filePath = (ev.input && ev.input.file_path) || '';
+    rec.filePath = filePath;
+    rec.fileKind = rec.isDiff ? fileKind(filePath) : null;
+    rec.el.__stream = null;
+    fillToolBody(rec.el, rec.body, ev.name, ev.input, rec.isDiff);
+    const tgt = rec.head.querySelector('.tool-target');
+    if (tgt) tgt.textContent = targetOf(ev.input);
     scrollDown();
   }
 
@@ -1368,6 +1424,7 @@
     state.pendingSent.push({ id: pendingId, text });
     addUserMessage(text, null, pendingId);
     setActivity('working', 'Thinking…');
+    beginAwaiting(2000);
     send({ type: 'user_message', text });
   }
 
@@ -1389,9 +1446,22 @@
         card.el.__pre.textContent = String(ev.output) || '(no output)';
       }
     }
+    // Image results (screenshots, image reads, MCP image output) render as pictures.
+    const hasImages = Array.isArray(ev.images) && ev.images.length;
+    if (hasImages) {
+      let wrap = card.body.querySelector('.tool-images');
+      if (!wrap) { wrap = el('div', 'tool-images'); card.body.appendChild(wrap); }
+      wrap.innerHTML = '';
+      for (const src of ev.images) {
+        const img = document.createElement('img');
+        img.className = 'tool-img'; img.loading = 'lazy'; img.src = src;
+        wrap.appendChild(img);
+      }
+    }
     // Once a tool call finishes cleanly, collapse it (diffs included) so completed
-    // actions don't take up conversation space. Subagents keep their nested view open.
-    if (ev.status !== 'error' && card.name !== 'Agent') {
+    // actions don't take up conversation space. Subagents keep their nested view
+    // open, and an image result stays expanded so the picture is visible.
+    if (ev.status !== 'error' && card.name !== 'Agent' && !hasImages) {
       card.body.classList.add('collapsed');
       card.head.setAttribute('aria-expanded', 'false');
     }
@@ -1699,10 +1769,13 @@
     pill.textContent = stateName || 'idle';
     pill.title = detail || '';
     // Drive the live activity indicator off the engine's own status.
-    if (stateName === 'thinking') setActivity('working', 'Thinking…');
-    else if (stateName === 'running') setActivity('working', detail || 'Working…');
-    else if (stateName === 'waiting') setActivity('waiting');
-    else if (stateName === 'idle' || stateName === 'error') setActivity('idle');
+    if (stateName === 'thinking') { clearAwaiting(); setActivity('working', 'Thinking…'); }
+    else if (stateName === 'running') { clearAwaiting(); setActivity('working', detail || 'Working…'); }
+    else if (stateName === 'waiting') { clearAwaiting(); setActivity('waiting'); }
+    else if (stateName === 'error') { clearAwaiting(); setActivity('idle'); }
+    // A just-woken engine emits an init 'idle' before it starts the queued turn —
+    // ignore it while we're still awaiting, so the "Waking up…" cue doesn't blink off.
+    else if (stateName === 'idle') { if (awaitingActive()) return; setActivity('idle'); }
   }
 
   function onUsage(ev) {
@@ -1732,8 +1805,19 @@
     scrollDown();
   }
 
+  // Broker / engine diagnostics (api_retry, unusual stop reasons, system notes) —
+  // a dim inline note so the user sees what's happening instead of a silent stall.
+  function onLog(ev) {
+    if (!ev || !ev.message) return;
+    finalizeAssistant();
+    const div = el('div', 'sys-note ' + (ev.level || 'info'), ev.message);
+    $('transcript').appendChild(div);
+    scrollDown();
+  }
+
   function onResult(ev) {
     setActivity('idle');
+    clearAwaiting();
     finalizeAssistant();
     if (ev.isError) toast('Turn ended with an error', 'error');
     notifyIfHidden(ev.isError ? 'Agent hit an error' : 'Agent finished', 'Tap to return to the conversation');
@@ -1765,6 +1849,7 @@
   }
 
   function onError(ev) {
+    clearAwaiting();
     if (ev.fatal || ev.code === 'auth') {
       showBanner(ev.message || 'Error', ev.code === 'auth');
     } else {
@@ -2486,8 +2571,12 @@
     autoGrow();
     hideSlashPalette();
     hideMentionPalette();
-    setActivity('working', 'Thinking…');
-    state._optimisticUntil = Date.now() + 2000; // don't let a SESSIONS reconcile undo this instant feedback
+    // A session with no live engine (idle-evicted / sleeping) must be woken first —
+    // tell the user that's happening instead of leaving the composer looking inert.
+    const liveAct = state.sessions.find((s) => s.key === state.activeKey);
+    const waking = !liveAct || liveAct.sleeping;
+    setActivity('working', waking ? 'Waking up…' : 'Thinking…');
+    beginAwaiting(waking ? 8000 : 2000); // latch the indicator until the engine responds
     const payload = { type: 'user_message', text, images: images.length ? images : undefined };
     requestAnimationFrame(() => send(payload)); // send after the UI has painted
   }

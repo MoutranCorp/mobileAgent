@@ -20,8 +20,9 @@ export const EventType = Object.freeze({
   ASSISTANT_THINKING: 'assistant_thinking', // { delta, signature?, parentToolUseId? }
   USER_ECHO: 'user_echo', // { text }  (replayed user turns)
   // Tools  (parentToolUseId links subagent/Task nested tools to their parent)
-  TOOL_CALL: 'tool_call', // { id, name, input, kind?, parentToolUseId? }
-  TOOL_RESULT: 'tool_result', // { id, status: 'ok'|'error', output, parentToolUseId? }
+  TOOL_CALL: 'tool_call', // { id, name, input, kind?, parentToolUseId?, streaming?, ephemeral? } streaming+ephemeral = a live block-start preview; the recorded finalize re-emits with the full input
+  TOOL_DELTA: 'tool_delta', // { id, jsonText, parentToolUseId?, ephemeral } live partial tool-input (input_json_delta), never recorded
+  TOOL_RESULT: 'tool_result', // { id, status: 'ok'|'error', output, images?: [dataUrl|url], parentToolUseId? }
   // Permissions
   PERMISSION_REQUEST: 'permission_request', // { id, action, detail, toolName?, input? }
   PERMISSION_RESOLVED: 'permission_resolved', // { id, decision }

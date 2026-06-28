@@ -630,6 +630,12 @@ svg { display: block; }
 }
 .tool-input { padding: 9px 13px; font-family: var(--mono); font-size: 12.5px; color: var(--label-3);
   border-bottom: .5px solid var(--separator); }
+/* Raw tool input as it streams in (input_json_delta), before the finalized diff. */
+.tool-stream { color: var(--label-3); white-space: pre-wrap !important; word-break: break-word; }
+/* Image-bearing tool results (screenshots, image reads, MCP image output). */
+.tool-images { display: flex; flex-wrap: wrap; gap: 8px; padding: 11px 13px; background: var(--grouped); }
+.tool-img { max-width: 100%; max-height: calc(50 * var(--vh)); object-fit: contain; border-radius: 6px;
+  border: .5px solid var(--separator); }
 
 .tool-card.subagent { border-color: rgba(var(--indigo-rgb), .55); border-color: color-mix(in srgb, var(--indigo) 55%, var(--separator)); }
 .tool-card.subagent .tool-icon { background: rgba(var(--indigo-rgb), .22); color: var(--indigo); }
@@ -677,6 +683,11 @@ svg { display: block; }
   background: rgba(var(--red-rgb), .12); border-radius: var(--r-pill); padding: 6px 14px; }
 .compact-divider { align-self: center; font-size: 12px; color: var(--label-3);
   padding-top: 10px; width: 72%; text-align: center; border-top: .5px dashed var(--separator); }
+/* Dim inline system note (api_retry, unusual stop reasons, system events). */
+.sys-note { align-self: center; max-width: 86%; text-align: center; font-size: 12px;
+  color: var(--label-3); padding: 4px 12px; margin: 2px 0; font-family: var(--mono); }
+.sys-note.warn  { color: var(--orange); }
+.sys-note.error { color: var(--red); }
 
 /* =============================== buttons =============================== */
 .primary, .accent, .ghost, .danger {
