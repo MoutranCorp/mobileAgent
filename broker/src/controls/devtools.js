@@ -42,7 +42,11 @@ export class DevTools {
     if (!project) return this._err('No active project to start Metro for.');
     const channel = this.metroChannel(project.id);
     const port = project.metroPort;
-    const url = `exp://127.0.0.1:${port}`;
+    // Use `localhost`, not `127.0.0.1`: `expo start --localhost` binds whatever
+    // `localhost` resolves to (often IPv6 `::1` in the Debian guest), so an IPv4
+    // exp:// URL is refused. `localhost` resolves the same way on the device, so
+    // Expo Go reaches the same socket Metro bound.
+    const url = `exp://localhost:${port}`;
 
     if (this.runner.isRunning(channel)) {
       const info = this._metro.get(project.id) || { port, url };
@@ -113,11 +117,12 @@ export class DevTools {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       if (!this.runner.isRunning(channel)) return; // exited → exit handler emits the error
-      if (await this._probeMetro(port)) {
+      const host = await this._probeMetro(port);
+      if (host) {
         const info = this._metro.get(projectId);
         if (info) info.ready = true;
         this._emitMetro(projectId, true, port, url);
-        this._diagnoseExpoManifest(this.metroChannel(projectId), port); // log what Expo Go would receive
+        this._diagnoseExpoManifest(this.metroChannel(projectId), port, host); // log what Expo Go would receive
         return;
       }
       await new Promise((r) => setTimeout(r, 1500));
@@ -127,23 +132,22 @@ export class DevTools {
       'Metro is taking longer than expected — watch the Terminal, then press Open when it’s ready.');
   }
 
-  /** True once the dev server is serving. We hit the MANIFEST endpoint Expo Go uses
-   *  (GET / with the expo-platform header), not /status: Expo's dev server leaves
-   *  /status hanging (no response), so the old /status probe timed out forever and
-   *  the Test button hung on "Starting". The manifest path is the one a browser and
-   *  Expo Go both get a response from, so any HTTP response here = up. */
+  /** Returns the host (`127.0.0.1` or `::1`) the dev server answers on, or null if
+   *  not up yet. We try BOTH families because `expo start --localhost` binds whatever
+   *  `localhost` resolves to — often IPv6 `::1` in the guest — so an IPv4-only probe
+   *  hung forever ("Starting" with no diag). We hit the MANIFEST endpoint Expo Go uses
+   *  (GET / + expo-platform), not /status (Expo leaves that hanging). Any HTTP
+   *  response = up. */
   _probeMetro(port) {
-    return new Promise((resolve) => {
+    const tryHost = (host) => new Promise((resolve) => {
       const req = http.get({
-        host: '127.0.0.1', port, path: '/', timeout: 5000,
+        host, port, path: '/', timeout: 5000,
         headers: { 'expo-platform': 'android', Accept: 'application/expo+json,application/json' },
-      }, (res) => {
-        res.resume(); // drain so the socket frees
-        resolve(true); // got an HTTP response → the server is up
-      });
-      req.on('error', () => resolve(false)); // ECONNREFUSED while still booting
-      req.on('timeout', () => { req.destroy(); resolve(false); });
+      }, (res) => { res.resume(); resolve(host); });
+      req.on('error', () => resolve(null)); // ECONNREFUSED on this family
+      req.on('timeout', () => { req.destroy(); resolve(null); });
     });
+    return Promise.all(['127.0.0.1', '::1'].map(tryHost)).then((hosts) => hosts.find(Boolean) || null);
   }
 
   /** Fetch the manifest exactly as Expo Go (Android) would and log the verdict to the
@@ -151,10 +155,10 @@ export class DevTools {
    *  HTML back = the server only has a web/dev-build target (Expo Go can't run it);
    *  a JSON manifest = good, and we surface its bundle URL + SDK/runtime. Diagnostic
    *  only; never affects the running state. */
-  _diagnoseExpoManifest(channel, port) {
+  _diagnoseExpoManifest(channel, port, host = '127.0.0.1') {
     const log = (data) => this.emit(event(EventType.CONTROL_OUTPUT, { channel, stream: 'stdout', data }));
     const req = http.get({
-      host: '127.0.0.1', port, path: '/', timeout: 6000,
+      host, port, path: '/', timeout: 6000,
       headers: { 'expo-platform': 'android', Accept: 'application/expo+json,application/json' },
     }, (res) => {
       let body = '';
@@ -235,7 +239,7 @@ export class DevTools {
     const alive = this.runner.isRunning(this.metroChannel(project.id));
     const info = this._metro.get(project.id) || {
       port: project.metroPort,
-      url: `exp://127.0.0.1:${project.metroPort}`,
+      url: `exp://localhost:${project.metroPort}`,
     };
     // running only once it has answered (ready); alive-but-not-ready = starting. This
     // keeps a tab switch from reporting a still-booting Metro as openable.

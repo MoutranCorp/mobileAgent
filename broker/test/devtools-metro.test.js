@@ -106,7 +106,7 @@ test('metroInfo reports starting while booting and running once ready', async ()
   assert.equal(info.starting, false);
 });
 
-test('_probeMetro is true for ANY HTTP response (Expo 404s /status but is ready), false when nothing listens', async () => {
+test('_probeMetro returns the responding host for ANY HTTP response, null when nothing listens', async () => {
   const { dt } = mkDevTools({ id: 'p', dir: '/x', metroPort: 1 });
   // Expo's dev server 404s /status yet is fully up — must still count as ready.
   const server = http.createServer((req, res) => { res.statusCode = 404; res.end('Cannot GET /status'); });
@@ -118,8 +118,8 @@ test('_probeMetro is true for ANY HTTP response (Expo 404s /status but is ready)
   const closedPort = tmp.address().port;
   await new Promise((r) => tmp.close(r));
   try {
-    assert.equal(await dt._probeMetro(port), true);
-    assert.equal(await dt._probeMetro(closedPort), false, 'closed port → false');
+    assert.equal(await dt._probeMetro(port), '127.0.0.1', 'returns the IPv4 host it answered on');
+    assert.equal(await dt._probeMetro(closedPort), null, 'nothing listening → null');
   } finally { server.close(); }
 });
 
@@ -138,6 +138,6 @@ test('startMetro flips to running once Metro actually answers on the port', asyn
     const ready = await waitFor(() => metro().find((e) => e.running === true));
     assert.equal(ready.running, true);
     assert.equal(ready.port, port);
-    assert.match(ready.url, /^exp:\/\/127\.0\.0\.1:/);
+    assert.match(ready.url, /^exp:\/\/(localhost|127\.0\.0\.1):/);
   } finally { server.close(); }
 });
