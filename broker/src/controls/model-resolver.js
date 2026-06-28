@@ -5,10 +5,11 @@ import { JsonLineBuffer } from '../jsonl.js';
 
 /**
  * Resolves Claude model aliases (opus/sonnet/haiku) to their versioned ids
- * (claude-opus-4-8, ...) by reading the `system/init` event the CLI emits BEFORE
- * any tokens are spent — so it's free. From the id we derive a friendly label
- * ("Opus 4.8") dynamically, never hardcoding version numbers. Results are cached
- * to <stateDir>/models.json so this runs at most once per machine.
+ * (claude-opus-4-8, ...) by reading the `system/init` event. We send a trivial
+ * message to trigger init (newer CLIs defer it until the first input) and SIGKILL
+ * at init — which precedes the API request, so it's free, no tokens spent. From
+ * the id we derive a friendly label ("Opus 4.8") dynamically, never hardcoding
+ * version numbers. Results cache to <stateDir>/models.json (once per machine).
  */
 export class ModelResolver {
   constructor({ stateDir, claudeBin = 'claude' }) {
@@ -88,6 +89,10 @@ export class ModelResolver {
           if (msg.type === 'system' && msg.subtype === 'init') { clearTimeout(t); finish(msg.model || null); }
         }
       });
+      // The CLI now defers `system/init` until it reads the FIRST user message
+      // (older versions emitted it on spawn). Send a trivial one to trigger init;
+      // we SIGKILL at init — before the API request — so it stays free (no tokens).
+      try { proc.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: 'hi' } }) + '\n'); } catch { /* ignore */ }
     });
   }
 }

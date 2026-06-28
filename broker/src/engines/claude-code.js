@@ -51,6 +51,14 @@ export class ClaudeCodeEngine extends EngineAdapter {
     this._toolNames = new Map(); // tool_use_id -> tool name (for result mapping)
     this._startedTools = new Set(); // tool_use_ids already surfaced live (block-start) this turn
     this._mcpConfigFile = null;
+    // Capability warmup: the CLI now defers `system/init` (which carries
+    // slash_commands/agents/tools) until it receives the FIRST user message, so a
+    // freshly-spawned idle session has no slash-command palette. When enabled we
+    // run a throwaway init probe to surface those before the user types. Disabled
+    // for detached/background sessions (cron) — they send a prompt immediately.
+    this.warmCaps = opts.warmCapabilities !== false;
+    this._sawInit = false; // real init arrived → suppress a late probe result
+    this._probeProc = null;
     // Per-message streaming state.
     this._blocks = new Map(); // content-block index -> { type, ... }
     this._sawTextDeltas = false;
@@ -141,12 +149,16 @@ export class ClaudeCodeEngine extends EngineAdapter {
     if (this.permissionMode === 'bypassPermissions') env.IS_SANDBOX = '1';
 
     this.log(`spawning: ${this.bin} ${args.join(' ')}`);
+    this._spawnEnv = env; // reused by the capability-warmup probe
     this.proc = spawn(this.bin, args, {
       cwd: this.cwd || os.homedir(),
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.emitEvent(EventType.PERMISSION_MODE, { mode: this.permissionMode });
+    // Fire-and-forget: surface slash-commands/agents before the first message
+    // (the CLI no longer emits init until then). No-op if already inited.
+    if (this.warmCaps) this._warmCapabilities();
 
     this.proc.on('error', (err) => {
       this.emitError(
@@ -189,6 +201,67 @@ export class ClaudeCodeEngine extends EngineAdapter {
       p.resolve({ decision: 'deny', message: reason });
     }
     this._pendingPermissions.clear();
+  }
+
+  /**
+   * Capability-warmup probe. The CLI defers `system/init` (which carries
+   * slash_commands / agents / tools / output_style / plugins) until it reads the
+   * FIRST user message, so an idle freshly-spawned session would have an empty
+   * slash-command palette — the "typing / shows nothing" regression. Spawn a
+   * short-lived claude, send a trivial message to trigger init, emit the
+   * capability surface, then kill it the instant init arrives — which is BEFORE
+   * the API request (verified: init precedes `status:requesting`), so it costs no
+   * turn and no tokens. Self-cancels if the real engine inits first.
+   */
+  async _warmCapabilities() {
+    if (this._sawInit) return;
+    let probe;
+    try {
+      const args = ['--print', '--input-format', 'stream-json', '--output-format',
+        'stream-json', '--verbose', '--permission-mode', this.permissionMode];
+      if (this.model) args.push('--model', this.model);
+      probe = spawn(this.bin, args, {
+        cwd: this.cwd || os.homedir(),
+        env: this._spawnEnv || process.env,
+        stdio: ['pipe', 'pipe', 'ignore'],
+      });
+    } catch { return; }
+    this._probeProc = probe;
+    const buf = new JsonLineBuffer();
+    const finish = () => {
+      clearTimeout(timer);
+      try { probe.kill('SIGKILL'); } catch { /* ignore */ }
+      if (this._probeProc === probe) this._probeProc = null;
+    };
+    const timer = setTimeout(finish, 15000);
+    probe.on('error', finish);
+    probe.on('exit', () => { if (this._probeProc === probe) this._probeProc = null; });
+    probe.stdout.on('data', (chunk) => {
+      let msgs; try { msgs = buf.push(chunk, () => {}); } catch { return; }
+      for (const msg of msgs) {
+        if (msg?.type === 'system' && msg.subtype === 'init') {
+          if (!this._sawInit) {
+            this.emitEvent(EventType.CAPABILITIES, {
+              slashCommands: msg.slash_commands || [],
+              agents: msg.agents || [],
+              mcpServers: msg.mcp_servers || [],
+              tools: msg.tools || [],
+              outputStyle: msg.output_style || null,
+              permissionMode: this.permissionMode,
+              apiKeySource: msg.apiKeySource || null,
+              plugins: msg.plugins || [],
+              cwd: msg.cwd || this.cwd,
+              model: this.model || msg.model,
+              warm: true, // provisional; the real init refines it after the first turn
+            });
+          }
+          finish();
+          return;
+        }
+      }
+    });
+    // Trigger init with a trivial message — killed at init, before it's processed.
+    try { probe.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: 'hi' } }) + '\n'); } catch { /* ignore */ }
   }
 
   _onStdout(chunk) {
@@ -243,6 +316,7 @@ export class ClaudeCodeEngine extends EngineAdapter {
 
   _handleSystem(msg) {
     if (msg.subtype === 'init') {
+      this._sawInit = true; // authoritative caps are here; a pending probe must defer
       if (msg.model) {
         this.model = msg.model;
         this._windowTokens = windowForModel(msg.model);
@@ -671,6 +745,7 @@ export class ClaudeCodeEngine extends EngineAdapter {
   async _teardown() {
     this._failPendingPermissions('Engine stopped');
     this._failPendingQuestions('Engine stopped');
+    if (this._probeProc) { try { this._probeProc.kill('SIGKILL'); } catch { /* ignore */ } this._probeProc = null; }
     if (this.proc) {
       try {
         this.proc.stdin.end();

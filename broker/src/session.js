@@ -185,6 +185,10 @@ export class SessionManager {
       permissionMode: this.permissionMode,
       effort: isUltra ? 'xhigh' : effortPref,
       ultracode: isUltra,
+      // A detached/background session (cron) sends its prompt immediately, so its
+      // real init arrives at once — skip the capability-warmup probe there. The
+      // foreground session may sit idle, so it needs the probe for slash commands.
+      warmCapabilities: !opts.detached,
       log: (m) => this._log(m),
     });
     this.engines.set(key, engine);
@@ -393,7 +397,7 @@ export class SessionManager {
       binding: pid != null ? this._activeKeyByProject.get(pid) : undefined,
     };
     // Per-job engine overrides (cron): fall back to the foreground profile/model/effort.
-    const engine = await this.startEngine(profileId || this.activeProfileId, { key, project, cwd: cwd || project?.dir, resumeId, fresh, model: model || undefined, effort: effort || undefined });
+    const engine = await this.startEngine(profileId || this.activeProfileId, { key, project, cwd: cwd || project?.dir, resumeId, fresh, model: model || undefined, effort: effort || undefined, detached: true });
     const newKey = this.activeKey; // startEngine focused the (possibly minted) key; capture before restoring
     // Restore the foreground view — the detached session runs in the background.
     // Crucially also restore the project→activeKey binding, which startEngine

@@ -42,15 +42,31 @@ token (`glm-5.2`, `mock-1`) resolve verbatim. Friendly labels ("Opus 4.8") are
 derived from the id at runtime, never hardcoded; results cache to
 `<stateDir>/models.json`.
 
-## 2. `system/init` is emitted at startup, before any stdin
+## 2. `system/init` is DEFERRED until the first user message — but still free to read
 
-In stream-json input mode the CLI emits `system/init` immediately on spawn,
-**before** reading any user message. So you can spawn, read `init.model`, and
-kill the process to resolve a model id **for free** — no tokens spent.
+⚠️ **CLI-version-sensitive.** Older CLIs emitted `system/init` immediately on
+spawn, before any stdin. As of **CLI 2.1.195** the CLI does **not** emit `init`
+until it reads the FIRST user message on stdin (verified: with stdin closed or
+idle, no `init` ever comes). So a spawn-and-wait that never sends a message now
+**hangs** until its timeout.
 
-WHERE: `ModelResolver._resolveOne` spawns `claude ... --model <alias>`, reads the
-first `{type:"system", subtype:"init"}` line, then `SIGKILL`s the process. Live
-engines also feed resolutions back for free via `server.js` calling
+The fix everywhere we read init off a throwaway process: **send one trivial
+`{type:"user",...}` message to trigger init, then `SIGKILL` the moment init
+arrives.** init precedes the API request (`init` → `status:requesting` →
+`message_start`), so killing at init still costs **no tokens** — it's free.
+
+WHO RELIES ON THIS (all send the trigger message + kill-at-init):
+- `ModelResolver._resolveOne` — spawns `claude … --model <alias>`, reads
+  `init.model`, kills. Without the trigger it timed out → model picker stuck on
+  bare aliases ("Opus" instead of "Opus 4.8").
+- `ClaudeCodeEngine._warmCapabilities` — a **capability-warmup probe** so a fresh,
+  idle foreground session has its slash-command/agent palette BEFORE the user
+  sends anything (the "typing `/` shows nothing" regression). Skipped for
+  detached/cron sessions (they send a prompt immediately, so the real init lands
+  at once). The probe's `capabilities` event is flagged `warm:true`; the real
+  engine's init later refines it (and `_sawInit` suppresses a late probe result).
+
+Live engines also feed model resolutions back for free via `server.js` calling
 `modelResolver.observe(currentModel, ev.model)` on the init capabilities event.
 
 Exception: if `CLAUDE_CODE_SYNC_PLUGIN_INSTALL` is set, the CLI may block on
