@@ -718,7 +718,10 @@ svg { display: block; }
 .composer-input-wrap { position: relative; }
 .composer textarea {
   width: 100%; box-sizing: border-box; background: transparent; color: var(--label); border: none;
-  padding: 7px 36px 4px 9px; font-family: inherit; font-size: 16px; resize: none;
+  /* No left padding + a first-line text-indent: wrapped lines run to the far-left
+     edge while line 1 clears the attach button. padding-right reserves the mic/send
+     column so line-1 text never slides under them. */
+  padding: 9px 88px 9px 0; text-indent: 44px; font-family: inherit; font-size: 16px; resize: none;
   max-height: 168px; line-height: 1.45; scrollbar-width: none; position: relative; z-index: 1;
 }
 /* Backdrop that mirrors the textarea text so a leading /slash-command can be
@@ -728,7 +731,7 @@ svg { display: block; }
    textarea exactly or the mirrored text would drift. */
 .input-hl {
   position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
-  box-sizing: border-box; padding: 7px 36px 4px 9px; max-height: 168px;
+  box-sizing: border-box; padding: 9px 88px 9px 0; text-indent: 44px; max-height: 168px;
   font-family: inherit; font-size: 16px; line-height: 1.45; color: var(--label);
   white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word; visibility: hidden;
 }
@@ -739,8 +742,10 @@ svg { display: block; }
   -webkit-box-decoration-break: clone; box-decoration-break: clone; }
 .composer textarea::-webkit-scrollbar { display: none; }
 .composer textarea::placeholder { color: var(--label-3); }
-.composer textarea:focus { outline: none; }
-.expand-btn { position: absolute; top: 3px; right: 3px; width: 28px; height: 28px; flex: 0 0 auto; z-index: 2;
+/* The caret already signals focus on this big field; the accent focus-visible ring
+   (a global a11y default) looks like a stray box around the composer, so drop it. */
+.composer textarea:focus, .composer textarea:focus-visible { outline: none !important; }
+.expand-btn { position: absolute; bottom: 4px; right: 4px; width: 28px; height: 28px; flex: 0 0 auto; z-index: 3;
   border: none; border-radius: 50%; background: var(--fill-3); color: var(--label-2);
   display: grid; place-items: center; cursor: pointer; transition: background .15s, transform .12s; }
 .expand-btn:hover { background: var(--fill-2); color: var(--label); }
@@ -748,10 +753,14 @@ svg { display: block; }
 .expand-btn svg { width: 16px; height: 16px; }
 .expand-btn.hidden { display: none; }
 
-/* Primary input row: attach · textarea · voice · send all inline, with the
-   send button as a rounded square at the trailing edge (iMessage-on-phone). */
-.composer-input-row { display: flex; gap: 4px; align-items: flex-end; }
-.composer-input-row .composer-input-wrap { flex: 1 1 auto; min-width: 0; }
+/* Primary input row: the textarea spans the full card width; attach (top-left) and
+   mic/send (top-right) float over its first-line zone. Wrapped lines flow under the
+   buttons full-width, so only line 1 looks indented (see textarea text-indent). */
+.composer-input-row { position: relative; }
+.composer-input-row .composer-input-wrap { width: 100%; }
+#attachBtn { position: absolute; left: 0; top: 1px; z-index: 2; }
+.composer-input-row #voiceBtn { position: absolute; right: 46px; top: 1px; z-index: 2; }
+.composer-input-row #sendBtn { position: absolute; right: 0; top: 0; z-index: 2; }
 /* Borderless, muted glyphs that flank the field — no circular fill, so the
    field reads as the single focal element of the row. */
 .cmp-icon { width: 38px; height: 38px; flex: 0 0 auto; border-radius: 50%;
