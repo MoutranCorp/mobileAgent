@@ -8,9 +8,6 @@ local.properties
 captures/
 .externalNativeBuild/
 .cxx/
-# Bundled bootstrap payload is large & built separately — not committed.
-/app/src/main/assets/bootstrap-*.tar.*
-
 # Broker bundled into the APK by the stageBroker Gradle task (built from ../broker).
 /app/src/main/assets/broker.tar.gz
 

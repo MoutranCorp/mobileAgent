@@ -196,11 +196,8 @@ private const val FIX_AND_PROBE = """
     window.addEventListener('resize', fit);
     var n = 0, t = setInterval(function(){ if (fit() > 0 || ++n > 20) clearInterval(t); }, 150);
   }
-  var h = fit();
-  var bd = document.body, ap = document.getElementById('app');
-  return 'innerH=' + h + ' appH=' + (ap ? ap.offsetHeight : -1) +
-    ' bodyLen=' + (bd ? bd.innerHTML.length : -1) + ' appChildren=' + (ap ? ap.children.length : -1) +
-    ' proto=' + location.protocol + ' err=' + (window.__lasterr || 'none');
+  var h = fit(), ap = document.getElementById('app');
+  return 'innerH=' + h + ' appH=' + (ap ? ap.offsetHeight : -1);
 })()
 """
 

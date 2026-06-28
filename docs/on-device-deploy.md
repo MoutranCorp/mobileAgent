@@ -214,43 +214,17 @@ degraded fallback — useful for trying the UI before provisioning:
 <a name="self-contained-auto-provision"></a>
 ## Self-contained install (auto-provision — no separate Termux)
 
-The committed `dist/app-debug.apk` now **bundles a Termux bootstrap + the broker**,
-so the app provisions itself with **no separate Termux app**:
+This is the current default — the build + auto-provision + update flow is documented
+in [Self-contained APK: provisioning & updating](#self-contained-apk-provisioning--updating-the-current-default)
+at the top. In short:
 
-1. Build the bootstrap once (any machine with `curl`/`unzip`): `ARCH=aarch64 bash
-   provisioning/make-bootstrap.sh` → writes `android/app/src/main/assets/bootstrap-aarch64.tar.gz`.
-   The broker is staged automatically by the Gradle `stageBroker` task.
+1. Stage proot once (any Linux box): `ARCH=aarch64 bash provisioning/make-runtime.sh`
+   → `android/app/src/main/assets/proot-<arch>/`. The broker is staged automatically
+   by the Gradle `stageBroker` task.
 2. `cd android && ./gradlew :app:assembleDebug` → `app/build/outputs/apk/debug/app-debug.apk`.
-3. Install + open. On **first launch** the foreground service (`RuntimeLauncher`):
-   extracts the bootstrap → `setup-guest.sh` installs proot-distro + Debian + Node +
-   the Claude CLI and **drops the bundled broker into `~/agent-broker`** → launches it
-   → the WebView loads `http://127.0.0.1:8765/` (a browser works too). First run needs
-   network and takes minutes (one-time); later launches just start the broker.
-4. One manual step remains for the real engine: `proot-distro login debian -- claude`
-   then `/login`.
-
-The Termux binaries hardcode `/data/data/com.termux/files/usr`; the launcher runs
-them under **termux-exec** (`LD_PRELOAD` + `TERMUX__PREFIX`/`TERMUX__ROOTFS`) so they
-resolve to this app's data dir instead.
-
-## Known gaps
-
-1. ~~`setup-guest.sh` never delivers the broker.~~ **Done.** The broker is bundled
-   into the APK (`stageBroker` Gradle task → `assets/broker.tar.gz`), staged by
-   `BootstrapManager.stageBrokerTarball()`, and `setup-guest.sh` extracts it into the
-   guest's `~/agent-broker` (+ `npm install --omit=dev`). No clone needed.
-
-2. ~~The bootstrap tarball is missing and unreproducible.~~ **Done.**
-   [`provisioning/make-bootstrap.sh`](../provisioning/make-bootstrap.sh) builds it
-   reproducibly from the pinned official Termux release; the Gradle build bundles it.
-
-   **Still device-gated (the honest remaining risk):** the full exec/linker chain —
-   stock Termux binaries running under this app's prefix via termux-exec, then `pkg
-   install proot-distro`, `proot-distro install debian`, and the Debian toolchain —
-   has **not been validated on a real device from this build environment** (no
-   emulator/arm64 here). The pieces are wired; first-run on a real Pixel is what
-   proves it. Capture `RuntimeController.logs` (shown in the app's runtime panel) on
-   first launch to debug any failure.
+3. Install + open → **Start runtime**. First launch downloads the Debian rootfs and
+   installs the toolchain + broker (minutes, one-time); later launches just start it.
+4. Sign in via the **Runtime tab → Sign in to Claude** (native `claude setup-token`).
 
 3. **The phase-0 gate can report success on failure.** In
    [`phase0-debian.sh`](../provisioning/phase0-debian.sh) the smoke tests use

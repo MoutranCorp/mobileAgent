@@ -87,10 +87,11 @@ app/src/main/
     service/
       AgentForegroundService.kt            FGS + partial wake lock + sticky restart
       RuntimeLauncher.kt                   launches proot + broker, streams logs, health poll
-      BootstrapManager.kt                  userland extraction + script staging
+      ProotRuntime.kt                      proot staging, rootfs download/extract, provision, broker delivery
+      ClaudeLogin.kt                       native on-device `claude setup-token` sign-in flow
       RuntimeController.kt                 observable runtime state for the UI
     net/BrokerHealth.kt                    HTTP health probe
     secrets/KeystoreSecrets.kt             AES/GCM in AndroidKeyStore → env injection
-    ui/  MainScreen.kt · AgentWebView.kt · Theme.kt
-  assets/  scripts/ · README (bootstrap placeholder)
+    ui/  MainScreen.kt · AgentWebView.kt · WebAppBridge.kt · Theme.kt
+  assets/  proot-<arch>/ (staged) · broker.tar.gz (gradle) · README
 ```
