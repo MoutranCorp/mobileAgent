@@ -114,36 +114,23 @@
         <div class="composer-dock">
           <div id="attachTray" class="attach-tray hidden"></div>
           <div class="composer-card">
-            <div class="composer-input-wrap">
-              <div id="inputHl" class="input-hl" aria-hidden="true"></div>
-              <textarea id="input" rows="1" placeholder="Message the agent…"></textarea>
-              <button id="expandBtn" class="expand-btn hidden" title="Expand editor" aria-label="Expand editor">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M9 4H5a1 1 0 0 0-1 1v4"/><path d="M15 4h4a1 1 0 0 1 1 1v4"/>
-                  <path d="M15 20h4a1 1 0 0 0 1-1v-4"/><path d="M9 20H5a1 1 0 0 1-1-1v-4"/>
-                </svg>
-              </button>
-            </div>
-            <div class="composer-row">
-              <button id="attachBtn" class="icon-btn" title="Attach image / screenshot" aria-label="Attach">
+            <div class="composer-input-row">
+              <button id="attachBtn" class="icon-btn cmp-icon" title="Attach image / screenshot" aria-label="Attach">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M21 11.5l-8.4 8.4a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.6 1.6 0 0 1-2.3-2.3l7.8-7.8"/>
                 </svg>
               </button>
-              <div class="composer-pills">
-                <div class="model-pill" title="Model · reasoning effort">
-                  <select id="modelSelect"></select>
-                  <select id="effortSelect" title="Reasoning effort">
-                    <option value="low">low</option>
-                    <option value="medium">medium</option>
-                    <option value="high" selected>high</option>
-                    <option value="xhigh">xhigh</option>
-                    <option value="max">max</option>
-                    <option value="ultracode" id="ultracodeOpt">ultracode ✦</option>
-                  </select>
-                </div>
+              <div class="composer-input-wrap">
+                <div id="inputHl" class="input-hl" aria-hidden="true"></div>
+                <textarea id="input" rows="1" placeholder="Message the agent…"></textarea>
+                <button id="expandBtn" class="expand-btn hidden" title="Expand editor" aria-label="Expand editor">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M9 4H5a1 1 0 0 0-1 1v4"/><path d="M15 4h4a1 1 0 0 1 1 1v4"/>
+                    <path d="M15 20h4a1 1 0 0 0 1-1v-4"/><path d="M9 20H5a1 1 0 0 1-1-1v-4"/>
+                  </svg>
+                </button>
               </div>
-              <button id="voiceBtn" class="icon-btn" title="Voice input" aria-label="Voice">
+              <button id="voiceBtn" class="icon-btn cmp-icon" title="Voice input" aria-label="Voice">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><line x1="12" y1="17.5" x2="12" y2="21"/>
                 </svg>
@@ -160,6 +147,18 @@
                 <span class="cpill-ico" aria-hidden="true">📁</span><span id="folderPillName" class="cpill-name">folder</span>
                 <span class="cpill-chev" aria-hidden="true">▾</span>
               </button>
+              <div class="model-pill" title="Model · reasoning effort">
+                <span class="model-dot" aria-hidden="true"></span>
+                <select id="modelSelect"></select>
+                <select id="effortSelect" title="Reasoning effort">
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high" selected>high</option>
+                  <option value="xhigh">xhigh</option>
+                  <option value="max">max</option>
+                  <option value="ultracode" id="ultracodeOpt">ultracode ✦</option>
+                </select>
+              </div>
               <div class="cpill access-pill" title="Permission mode">
                 <select id="permModeSelect">
                   <option value="default">ask</option>

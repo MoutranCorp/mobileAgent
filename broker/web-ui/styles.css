@@ -268,11 +268,7 @@ svg { display: block; }
 .tab-menu-item:hover { background: var(--fill-3); }
 .tab-menu-item.tmenu-danger { color: var(--red); }
 
-/* composer pills (folder · access · model·effort all live in the composer now) */
-.composer-pills { display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0;
-  overflow-x: auto; scrollbar-width: none; }
-.composer-pills::-webkit-scrollbar { display: none; }
-.composer-pills > * { flex: 0 0 auto; } /* pills keep their size; the group scrolls instead of overlapping */
+/* composer pills (folder · access · model·effort all live on the controls row) */
 .cpill { position: relative; display: inline-flex; align-items: center; flex: 0 0 auto;
   height: 36px; background: var(--fill-3); border-radius: var(--r-pill); padding: 0 6px; }
 .cpill-ico { font-size: 13px; padding-left: 3px; flex: 0 0 auto; }
@@ -752,22 +748,32 @@ svg { display: block; }
 .expand-btn svg { width: 16px; height: 16px; }
 .expand-btn.hidden { display: none; }
 
-.composer-row { display: flex; gap: 8px; align-items: center; }
-.composer-row .icon-btn { width: 36px; height: 36px; flex: 0 0 auto; border-radius: 50%;
-  background: var(--fill-3); display: grid; place-items: center; }
-.composer-row .icon-btn:hover { background: var(--fill-2); }
-.composer-row .icon-btn svg { width: 21px; height: 21px; color: var(--accent); }
-/* model · effort selector, combined into one pill inside the composer */
-.model-pill { display: inline-flex; align-items: center; flex: 0 0 auto;
-  height: 36px; background: var(--fill-3); border-radius: var(--r-pill); padding: 0 6px; }
+/* Primary input row: attach · textarea · voice · send all inline, with the
+   send button as a rounded square at the trailing edge (iMessage-on-phone). */
+.composer-input-row { display: flex; gap: 4px; align-items: flex-end; }
+.composer-input-row .composer-input-wrap { flex: 1 1 auto; min-width: 0; }
+/* Borderless, muted glyphs that flank the field — no circular fill, so the
+   field reads as the single focal element of the row. */
+.cmp-icon { width: 38px; height: 38px; flex: 0 0 auto; border-radius: 50%;
+  background: transparent; color: var(--label-3); display: grid; place-items: center;
+  transition: background .15s, color .15s; }
+.cmp-icon:hover { background: var(--fill-3); color: var(--label-2); }
+.cmp-icon svg { width: 22px; height: 22px; }
+/* model · effort selector, combined into one pill that sits on the controls row */
+.model-pill { display: inline-flex; align-items: center; flex: 0 0 auto; gap: 2px;
+  height: 32px; background: var(--fill-3); border-radius: var(--r-pill); padding: 0 8px 0 10px; }
+.model-dot { width: 8px; height: 8px; flex: 0 0 auto; margin-right: 5px; border-radius: 50%;
+  background: var(--orange); box-shadow: 0 0 6px rgba(var(--orange-rgb), .55); }
 .model-pill select { appearance: none; -webkit-appearance: none; background: transparent; border: none;
   color: var(--label); font-family: inherit; font-size: 14px; font-weight: 560; padding: 0 3px;
   cursor: pointer; max-width: 40vw; text-overflow: ellipsis; }
 .model-pill select:focus { outline: none; }
 .model-pill select option { background: var(--sys-bg-2); color: var(--label); }
-.model-pill #effortSelect { color: var(--accent); font-weight: 650; max-width: 30vw; }
+/* effort shown as a bordered badge, matching the model status colour */
+.model-pill #effortSelect { color: var(--orange); font-weight: 650; max-width: 30vw; padding: 1px 5px;
+  border: 1px solid rgba(var(--orange-rgb), .5); border-radius: 7px; }
 #sendBtn {
-  width: 40px; height: 40px; flex: 0 0 auto; border-radius: 50%; padding: 0; border: none;
+  width: 40px; height: 40px; flex: 0 0 auto; border-radius: 12px; padding: 0; border: none;
   background: var(--fill-2); color: var(--label-2);
   display: grid; place-items: center; transition: background .2s var(--ease), transform .12s var(--ease), box-shadow .2s var(--ease);
 }
