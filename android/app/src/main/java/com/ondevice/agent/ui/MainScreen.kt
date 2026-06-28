@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.sp
 import android.content.Intent
 import android.net.Uri
 import com.ondevice.agent.service.ClaudeLogin
+import com.ondevice.agent.service.ClaudeUpdate
 import com.ondevice.agent.service.RuntimeController
 import com.ondevice.agent.service.RuntimeState
 
@@ -146,6 +147,8 @@ private fun RuntimeTab(state: RuntimeState, detail: String, actions: MainActions
         }
 
         ClaudeSignInSection()
+
+        ClaudeUpdateSection(state)
 
         var exempt by remember { mutableStateOf(actions.isBatteryExempt()) }
         Section("Battery (keep alive while testing)") {
@@ -283,6 +286,44 @@ private fun ClaudeSignInSection() {
                 Spacer(Modifier.height(8.dp))
                 OutlineButton("Sign in again") { ClaudeLogin.reset() }
             }
+        }
+    }
+}
+
+/** Update the Claude Code CLI in the guest via its built-in `claude update`. */
+@Composable
+private fun ClaudeUpdateSection(runtime: RuntimeState) {
+    val ctx = LocalContext.current
+    val st by ClaudeUpdate.state.collectAsState()
+    // Read the installed version once the runtime is up (and after an update).
+    LaunchedEffect(runtime, st.phase) {
+        if (runtime == RuntimeState.RUNNING && st.phase != ClaudeUpdate.Phase.UPDATING) {
+            ClaudeUpdate.refresh(ctx)
+        }
+    }
+    val busy = st.phase == ClaudeUpdate.Phase.UPDATING
+    Section("Claude Code") {
+        Text(
+            if (st.version.isNotEmpty()) "Installed: ${st.version}"
+            else if (runtime == RuntimeState.RUNNING) "Checking version…"
+            else "Start the runtime to check / update.",
+            color = TextMain, fontSize = 13.sp,
+        )
+        if (st.message.isNotEmpty()) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                st.message,
+                color = when (st.phase) {
+                    ClaudeUpdate.Phase.ERROR -> Red
+                    ClaudeUpdate.Phase.DONE -> Green
+                    else -> TextDim
+                },
+                fontSize = 12.sp,
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        FilledButton(if (busy) "Updating…" else "Update Claude Code") {
+            if (!busy) ClaudeUpdate.update(ctx)
         }
     }
 }

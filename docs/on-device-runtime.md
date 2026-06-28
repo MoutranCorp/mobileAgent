@@ -8,6 +8,7 @@ ground truth — this explains the *why*. Key files:
 - [`service/ProotRuntime.kt`](../android/app/src/main/java/com/ondevice/agent/service/ProotRuntime.kt) — proot staging, rootfs download/extract, provision, broker delivery, the proot command construction.
 - [`service/RuntimeLauncher.kt`](../android/app/src/main/java/com/ondevice/agent/service/RuntimeLauncher.kt) — orchestrates the launch flow + stops the broker.
 - [`service/ClaudeLogin.kt`](../android/app/src/main/java/com/ondevice/agent/service/ClaudeLogin.kt) — native `claude setup-token` sign-in.
+- [`service/ClaudeUpdate.kt`](../android/app/src/main/java/com/ondevice/agent/service/ClaudeUpdate.kt) — native `claude update` (Runtime-screen widget).
 - [`ui/AgentWebView.kt`](../android/app/src/main/java/com/ondevice/agent/ui/AgentWebView.kt) + [`RuntimeConfig.kt`](../android/app/src/main/java/com/ondevice/agent/RuntimeConfig.kt) — the WebView host.
 
 > See also [on-device-deploy.md](on-device-deploy.md) for the install/provision/update
@@ -96,6 +97,16 @@ overrides the repo.
   `CLAUDE_CODE_OAUTH_TOKEN` Keystore secret so a stale env token can't override the
   file. The broker side mirrors this — see "auth precedence" in
   [claude-cli-behaviors.md](claude-cli-behaviors.md).
+
+## Native Claude Code update (`ClaudeUpdate.kt`)
+
+A "Claude Code" section on the Runtime screen runs the CLI's built-in
+`claude update` in the guest (same `script -qec` PTY + ANSI-strip pattern as sign-in)
+and reports the installed version (`claude --version`). It's in the APK, not the web
+UI, on purpose: it's a runtime action (available before the broker is up) that
+updates the very binary the broker spawns. A refreshed CLI takes effect on **new**
+agent sessions; live engines keep the binary they launched with, so Stop & Start the
+runtime to move every session onto it. Output streams to the runtime log.
 
 ## WebView gotchas (Compose-hosted `AgentWebView`)
 
