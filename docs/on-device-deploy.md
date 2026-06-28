@@ -255,13 +255,14 @@ at the top. In short:
    installs the toolchain + broker (minutes, one-time); later launches just start it.
 4. Sign in via the **Runtime tab → Sign in to Claude** (native `claude setup-token`).
 
-3. **The phase-0 gate can report success on failure.** In
-   [`phase0-debian.sh`](../provisioning/phase0-debian.sh) the smoke tests use
-   `... || warn`, so a failed Claude `stream-json` / auth check only prints a yellow
-   warning and the script **continues to its green "gate scripted" / success message**.
-   `phase0-termux.sh` likewise `|| warn`s its `pkg update`. So "the gate passed" is not
-   a trustworthy signal — read the actual test output. **Fix:** make the
-   auth/stream-json smoke test failure hard-fail (non-zero exit) so the gate truly gates.
+3. **The phase-0 gate hard-fails on the Claude auth/stream-json check.**
+   [`phase0-debian.sh`](../provisioning/phase0-debian.sh) smoke-test 1/3 (the riskiest
+   assumption — Claude authed + running on-device) now `die`s with a non-zero exit if
+   no stream-json object is emitted, so the script can no longer reach its green "gate
+   scripted" line on an auth failure. (It was previously `... || warn`, which let a
+   broken gate look green.) The remaining steps stay best-effort by design: the Expo
+   scaffold `|| warn`s and the Metro/Fast-Refresh check is the **manual** step 3, so
+   still read the output for those two — only step 1 is auto-enforced.
 
 ## Reference: where the truth lives
 

@@ -264,9 +264,11 @@ many live `claude` CLI child processes can share one project folder. Key minting
 
 - The **first** session of a project gets `sessionKey === projectId` (back-compat:
   all old project-keyed behavior and tests are unchanged).
-- A second+ concurrent session in the same folder mints a suffixed key `projA#N`
-  (`_keySeq`), and a non-colliding suffix is always chosen so a new tab can never
-  overwrite a live engine.
+- A second+ concurrent session in the same folder mints a **project-prefixed
+  unique key `projA-<hex>`** (`crypto.randomBytes`), collision-checked via
+  `_keyTaken` against live keys, `meta`, and existing transcript files — so a new
+  tab can never overwrite a live engine, and keys are **never recycled** (the old
+  `projA#N` counter reset to 0 on every broker restart, which recycled keys).
 
 `meta` (per key) carries `{ busy, lastStatus, profileId, model, sessionId,
 projectId, cwd, lastActivityTs, pinned, title }`. `session.engine` is now a **getter**
@@ -289,13 +291,15 @@ id=`'file:'+rel`).
 - **Session tabs.** Indicators derived LIVE in `renderTabs`: `waiting(!) > working
   (spinner) > done(✓) > dot` (order matters — a waiting session is also "busy").
   Titles numbered **per folder** (`seen[k]`: first="demo", rest="demo 2"),
-  independent of the internal `#N` key suffix. The tab set is the **persisted +
+  independent of the internal `-<hex>` key suffix. The tab set is the **persisted +
   explicitly-opened** sessions only: `onSessions` refreshes existing tabs and always
   keeps one for the ACTIVE session, but does NOT auto-open a tab for every session the
   broker remembers (that flooded the strip with background/sleeping sessions on
   reconnect). Other sessions live in the **folder sheet**; tap one to open it. A fresh
-  `new_session` clears its transcript broker-side, so a recycled key (the `#N` counter
-  resets on broker restart) can't surface a dead session's leftover messages.
+  `new_session` clears its transcript broker-side, so a **reused key** (the first
+  session's key is always the projectId, so it recurs across restarts) can't surface
+  a dead session's leftover messages. The `-<hex>` suffixes are non-recycling, so the
+  extra-session keys themselves never collide.
 - **File tabs** are **client-only** — `state.activeTabId` is decoupled from the broker
   `activeKey`, so switching a file tab does NOT `switch_session`. `applyViewMode()`
   swaps in `#fileView` (name · Rendered|Source toggle · Save · ⬇ · ✕) and hides the

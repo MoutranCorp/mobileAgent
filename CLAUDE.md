@@ -39,6 +39,7 @@ Termux/proot on the phone). Lead with that path; a PC-hosted broker over
 - [docs/claude-code-surface.md](docs/claude-code-surface.md) — authoritative notes on the Claude Code stream/surface the adapter targets.
 - [docs/on-device-deploy.md](docs/on-device-deploy.md) — getting it running on a real Pixel: the self-contained provision/update *flow* + the degraded fallbacks.
 - [docs/on-device-runtime.md](docs/on-device-runtime.md) — the **internals** of the Android runtime (proot+Debian, marker versions, hardlink-safe extraction, fake `/proc`/apt/seccomp, git-clone broker delivery, PTY-based Claude sign-in, WebView dvh/http gotchas, node-direct stop). Read this before touching `ProotRuntime`/`ClaudeLogin`/`AgentWebView`.
+- [docs/multi-engine.md](docs/multi-engine.md) — roadmap (not yet implemented) for making **any** engine first-class and runnable **per-tab** (claude-code/opencode/grok/langgraph): where claude assumptions leaked, the global-singleton blockers, and the phased plan. Read before adding an engine or touching the adapter/protocol boundary.
 
 ## Quickstart (no phone, no credentials)
 

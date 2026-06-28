@@ -39,12 +39,21 @@ Press Enter once you've logged in to continue the smoke test…
 EOF
 read -r _
 
-step "Smoke test 1/3 — Claude headless stream-json"
+step "Smoke test 1/3 — Claude headless stream-json (auth + on-device check)"
 TMPD="$(mktemp -d)"
-( cd "$TMPD" && echo "hello from on-device" > note.txt
-  claude -p "List the files in this directory." --output-format stream-json | head -n 20 ) \
-  && ok "stream-json emitted (one JSON object per line)" \
-  || warn "stream-json smoke test failed — check 'claude /login' / auth status"
+( cd "$TMPD" && echo "hello from on-device" > note.txt )
+out="$TMPD/init.jsonl"
+# This is the riskiest assumption of the whole plan, so it must HARD-FAIL — a
+# `|| warn` here let the script sail on to its green "gate scripted" line even
+# when auth was broken, making "the gate passed" a lie. Capture to a file (not a
+# `| head` pipe, which SIGPIPEs claude and corrupts its exit status) and require a
+# real stream-json object before continuing.
+if timeout 90 claude -p "List the files in this directory." --output-format stream-json > "$out" 2>/dev/null \
+   && grep -q '"type"' "$out"; then
+  ok "stream-json emitted — Claude is authed and running on-device"
+else
+  die "Claude stream-json/auth smoke test FAILED — run 'claude' then '/login', then re-run this gate. (Gate stops here on purpose.)"
+fi
 
 step "Smoke test 2/3 — scaffold an Expo app"
 cd "$HOME"
