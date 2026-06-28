@@ -4,6 +4,8 @@
 > settled. Section 5 is the implementation spec; Section 6 is the build phasing.
 > Ground-truth files referenced: `broker/src/session.js`, `broker/src/engines/claude-code.js`,
 > `broker/src/profiles.js`, `broker/src/protocol.js`, `broker/web-ui/app.js`, `index.html`.
+> **Line anchors re-verified 2026-06-28 against `main` @ `75f5d39`** (after the Expo-test /
+> GitHub-sign-in batch). They drift as the code changes — treat them as hints, re-grep before relying.
 
 ## 1. Goal
 
@@ -29,7 +31,7 @@ The design rests on these verified facts:
   `{cwd, env, model, resumeId, claudeBin, permissionMode, effort, ultracode, log}`. We
   extend it with the agent's fields.
 - **Mid-session persona swap is free.** `--resume` replays only the transcript; the system
-  prompt is a separate spawn arg, rebuilt every spawn (`_spawn()`, `claude-code.js:64`). A
+  prompt is a separate spawn arg, rebuilt every spawn (`_spawn()`, `claude-code.js:71`). A
   respawn gets the NEW agent's prompt with the OLD conversation.
 - **Verified CLI levers (v2.1.195, on-device):**
   - `--append-system-prompt[-file]` / `--system-prompt[-file]` (print-mode only; broker
@@ -107,7 +109,7 @@ if user sets bypass).
 
 ### 5.2 Spawn-arg mapping (in `engines/claude-code.js` `_spawn()`)
 The engine gains agent fields (passed via `createEngine` from `session.js`). New args appended
-near the existing `--model`/`--effort` block:
+near the existing `--model`/`--effort` block (`claude-code.js:84-89`, inside `_spawn()` at :71):
 - `promptMode==="append"` → `--append-system-prompt <systemPrompt>`; `"replace"` → `--system-prompt`.
 - `tools` → `--tools <list>` when not null.
 - `allowedTools` / `disallowedTools` → `--allowed-tools` / `--disallowed-tools`.
@@ -122,6 +124,10 @@ near the existing `--model`/`--effort` block:
   built-in subagents stay available.
 - `pinnedModel`/`pinnedEffort` → resolved in `session.js` (runtime pick > agent pin > profile
   default), mirroring the existing `chosen = model || ... || profile.model` logic at `session.js:173`.
+- **Second spawn site to mind:** `_warmCapabilities()` (`claude-code.js:~216`) spawns a
+  short-lived probe to emit the skills/commands/subagents palette without costing a turn. If an
+  agent restricts skills (via `--settings`), the probe should apply the same settings or the
+  capability surface (Manage tab) will list skills the active agent can't actually use.
 
 ### 5.3 Per-turn attribution (the group-chat backbone)
 - `session.js` tags every assistant event it emits for a turn with the active agent's
@@ -164,7 +170,7 @@ Commands (UI→broker):
 ### 5.6 UI (`web-ui/`)
 - **Composer pill:** add an agent pill in `.composer-actions` beside `.model-pill`
   (`index.html:150`); `onchange` → `send({type:'switch_agent', agentId})`.
-- **Group-chat rendering:** replace the hardcoded label at `app.js:987`
+- **Group-chat rendering:** replace the hardcoded label at `app.js:997`
   (`el('div','role','Agent')`) with the per-turn agent's avatar (icon + accent color) + name;
   consecutive same-agent turns can collapse the header like a messaging app.
 - **Agents editor screen:** a new web-UI view listing agents with create/edit/delete/set-default
@@ -180,7 +186,7 @@ Commands (UI→broker):
 2. **Switching.** `SWITCH_AGENT` command + per-session active-agent tracking + hot-apply respawn;
    `AGENTS` event. Verify mid-session swap keeps history (`--resume`) and applies new prompt.
 3. **Group-chat attribution.** Per-turn `agentId` stamping + sidecar persistence + UI avatar/name
-   rendering (`app.js:987`). Verify history survives reload/resume/restart.
+   rendering (`app.js:997`). Verify history survives reload/resume/restart.
 4. **Enforcement.** Tool gating (remove + pattern); fs-scope path filter in the permission bridge;
    forced-gating rule. Test a scoped agent can't edit outside its roots.
 5. **Skills.** Per-agent skill set via settings (with disallow-Skill fallback).
@@ -275,7 +281,13 @@ exposes `--agents <json>` = a per-session custom subagent registry
   fallback is coarse Skill-tool disallow.
 - Whether `--tools` vs `--disallowed-tools` is the cleaner removal lever in practice.
 - Bash command path-extraction heuristics for fs-scope (commands can touch many paths).
-- Renaming `CONFIG kind:'agents'`→`'subagents'`: audit all call sites in broker + web-ui.
+- Renaming `CONFIG kind:'agents'`→`'subagents'` — concrete call sites (re-verified
+  2026-06-28): `protocol.js:57`, `server.js:461` (`RESCAN_KINDS`), `controls/claude-config.js`
+  (:18, :142, :267, :476, :520, :530, :636), `web-ui/managers.js` (:25, :217, :274, :396, :425,
+  :451, :467, :481). **Note:** `managers.js:25` is the *existing user-facing* "Agents" Manage tab
+  (for CC subagents) — retitle it to **"Subagents"** so it doesn't clash with the new top-level
+  Agent feature. **Do NOT rename the on-disk `.claude/agents/*.md` directory** — that's Claude
+  Code's own format; only the internal config-kind label and the UI tab title change.
 - Subagent-registry namespace prefix that keeps our personas from shadowing built-in
   subagents of the same name (our `Reviewer` vs `.claude/agents/reviewer.md`) (§7.3).
 - Broker templating of `{projectsDir}` (and any other real env values) into seed-agent
