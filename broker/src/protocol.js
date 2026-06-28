@@ -44,7 +44,7 @@ export const EventType = Object.freeze({
   // Broker-level (not from an engine) — control surface
   CONTROL_OUTPUT: 'control_output', // { channel, stream: 'stdout'|'stderr', data }
   CONTROL_STATUS: 'control_status', // { channel, state, detail? }
-  METRO_STATUS: 'metro_status', // { running, port, url, projectId }
+  METRO_STATUS: 'metro_status', // { running, port, url, projectId, starting?, error? }
   APKS: 'apks', // { items: [{ rel, name, size, mtime }] } built Android artifacts (.apk/.aab)
   RESOURCES: 'resources', // { mem:{totalMb,availMb,usedMb,usedPct}, broker:{rssMb}, agentsRssMb, engines:[{key,projectId,sessionId,pid,rssMb,status,idleMs,pinned,title}], cpu:{load1,cores}, hasProc } device/process sample
   GIT_STATUS: 'git_status', // { ... }

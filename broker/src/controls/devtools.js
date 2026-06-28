@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import http from 'node:http';
 import { EventType, event } from '../protocol.js';
 
 /**
@@ -33,11 +34,24 @@ export class DevTools {
     if (!project) return this._err('No active project to start Metro for.');
     const channel = this.metroChannel(project.id);
     const port = project.metroPort;
+    const url = `exp://127.0.0.1:${port}`;
 
     if (this.runner.isRunning(channel)) {
-      const info = this._metro.get(project.id) || { port, url: `exp://127.0.0.1:${port}` };
-      this._emitMetro(project.id, true, info.port, info.url);
+      const info = this._metro.get(project.id) || { port, url };
+      // Already alive — re-probe so we report ready (badge + Open) only if it truly is.
+      this._awaitReady(project.id, port, url);
       return info;
+    }
+
+    // Metro must run IN the Expo app dir. Agents often scaffold into a subfolder
+    // (`create-expo-app demo` → demo/), so search the project + its immediate
+    // children. No Expo project → tell the user instead of spawning a doomed start.
+    const expoDir = this._resolveExpoDir(project.dir);
+    if (!expoDir) {
+      this._emitMetro(project.id, false, port, null,
+        'No Expo project found in this folder or its subfolders. Create one first ' +
+        '(e.g. ask the agent to run `npx create-expo-app .`), then press Test.');
+      return this._err('No Expo project found.');
     }
 
     // --localhost binds 127.0.0.1; --dev-client targets the custom dev client.
@@ -48,13 +62,96 @@ export class DevTools {
       CI: '0',
       EXPO_NO_TELEMETRY: '1',
     };
-    this.runner.start(channel, cmd, { cwd: project.dir, env });
+    const { promise } = this.runner.start(channel, cmd, { cwd: expoDir, env });
+    this._metro.set(project.id, { port, url, ready: false });
+    // Report STARTING (not running) — the UI shows progress and only opens the dev
+    // client once Metro is actually ready (see _awaitReady). Reporting running too
+    // early was the "Test does nothing" bug: the dev client opened before Metro was
+    // listening, so it connected to nothing.
+    this._emitMetro(project.id, false, port, url, null, /* starting */ true);
 
-    const url = `exp://127.0.0.1:${port}`;
-    const info = { port, url };
-    this._metro.set(project.id, info);
-    this._emitMetro(project.id, true, port, url);
-    return info;
+    // Surface an early crash (not an Expo app, missing deps, port in use, …) — the
+    // process exit otherwise left the UI stuck on a stale "starting" with no reason.
+    if (promise) {
+      promise.then((r) => {
+        const info = this._metro.get(project.id);
+        const wasReady = !!(info && info.ready);
+        this._metro.delete(project.id);
+        this._emitMetro(project.id, false, port, null,
+          wasReady ? null
+            : `Metro exited (code ${r.code ?? r.signal}). Open the Terminal for the reason ` +
+              '(common fixes: run `npm install` in the app, or check the Expo SDK).');
+      });
+    }
+
+    // Flip to running only when Metro actually answers — this is what the UI waits on.
+    this._awaitReady(project.id, port, url);
+    return { port, url, starting: true };
+  }
+
+  /** Poll Metro's /status endpoint until it answers `packager-status:running`, then
+   *  emit running=true. Version-robust (independent of expo's log wording). Gives up
+   *  quietly if the process exits (the exit handler reports that) or after a timeout. */
+  async _awaitReady(projectId, port, url, timeoutMs = 150000) {
+    const channel = this.metroChannel(projectId);
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (!this.runner.isRunning(channel)) return; // exited → exit handler emits the error
+      if (await this._probeMetro(port)) {
+        const info = this._metro.get(projectId);
+        if (info) info.ready = true;
+        this._emitMetro(projectId, true, port, url);
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    // Still alive but slow — leave it running, just stop claiming "starting".
+    this._emitMetro(projectId, false, port, url,
+      'Metro is taking longer than expected — watch the Terminal, then press Open when it’s ready.');
+  }
+
+  /** True once Metro is serving on the port. Metro answers GET /status with the
+   *  literal body `packager-status:running`. */
+  _probeMetro(port) {
+    return new Promise((resolve) => {
+      const req = http.get({ host: '127.0.0.1', port, path: '/status', timeout: 1500 }, (res) => {
+        let body = '';
+        res.on('data', (d) => { body += d.toString('utf8'); });
+        res.on('end', () => resolve(/packager-status:running/.test(body)));
+      });
+      req.on('error', () => resolve(false));
+      req.on('timeout', () => { req.destroy(); resolve(false); });
+    });
+  }
+
+  /** Find the directory the Expo app actually lives in: the project root if it's an
+   *  Expo project, else its first immediate subdirectory that is. null if none. */
+  _resolveExpoDir(dir) {
+    const isExpo = (d) => {
+      try {
+        if (fs.existsSync(path.join(d, 'app.json')) ||
+            fs.existsSync(path.join(d, 'app.config.js')) ||
+            fs.existsSync(path.join(d, 'app.config.ts'))) return true;
+        const pkgPath = path.join(d, 'package.json');
+        if (fs.existsSync(pkgPath)) {
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+          const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+          if (deps.expo || deps['expo-router'] || pkg.expo) return true;
+        }
+      } catch { /* ignore */ }
+      return false;
+    };
+    if (!dir) return null;
+    if (isExpo(dir)) return dir;
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return null; }
+    const SKIP = new Set(['node_modules', '.git', '.expo', 'ios', 'android', '.gradle', 'dist', 'build']);
+    for (const e of entries) {
+      if (!e.isDirectory() || SKIP.has(e.name)) continue;
+      const sub = path.join(dir, e.name);
+      if (isExpo(sub)) return sub;
+    }
+    return null;
   }
 
   stopMetro(projectId) {
@@ -83,8 +180,8 @@ export class DevTools {
     return { running, projectId: project.id, ...info };
   }
 
-  _emitMetro(projectId, running, port, url) {
-    this.emit(event(EventType.METRO_STATUS, { running, port, url, projectId }));
+  _emitMetro(projectId, running, port, url, error = null, starting = false) {
+    this.emit(event(EventType.METRO_STATUS, { running, port, url, projectId, error, starting }));
   }
 
   // --- git --------------------------------------------------------------------

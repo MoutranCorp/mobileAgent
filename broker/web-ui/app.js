@@ -2287,11 +2287,28 @@
   function onMetro(ev) {
     state.metro = ev;
     const badge = $('metroBadge');
+    // A failure (no Expo project, crashed start, missing deps, …): stop waiting,
+    // tell the user, and surface the Terminal where the real reason is.
+    if (ev.error) {
+      clearTimeout(state._metroWait);
+      state._awaitingMetro = false;
+      badge.classList.add('hidden');
+      $('testBtn').textContent = '▶ Test';
+      toast('Metro: ' + ev.error, 'error');
+      if ($('terminal').classList.contains('hidden')) toggleTerminal();
+      return;
+    }
     if (ev.running) {
+      clearTimeout(state._metroWait);
       badge.classList.remove('hidden');
       badge.textContent = `Metro :${ev.port}`;
       $('testBtn').textContent = '▶ Open';
+      // Only NOW (Metro actually answering) do we open the dev client.
       if (state._awaitingMetro) { state._awaitingMetro = false; openDevClient(); }
+    } else if (ev.starting) {
+      badge.classList.remove('hidden');
+      badge.textContent = 'Metro starting…';
+      $('testBtn').textContent = '⏳ Starting';
     } else {
       badge.classList.add('hidden');
       $('testBtn').textContent = '▶ Test';
@@ -2302,9 +2319,18 @@
     if (state.metro && state.metro.running) return openDevClient();
     state._awaitingMetro = true;
     send({ type: 'start_metro' });
-    toast('Starting Metro…', 'info');
-    // Safety net if no metro_status arrives.
-    setTimeout(() => { if (state._awaitingMetro) { state._awaitingMetro = false; openDevClient(); } }, 8000);
+    toast('Starting Metro… first run can take a minute (it bundles the app).', 'info');
+    // Fallback ONLY for a totally silent broker. We no longer blind-open the dev
+    // client on a timer — that opened it before Metro was up. The broker now reports
+    // real readiness (running) or a failure (error); this just unsticks the UI.
+    clearTimeout(state._metroWait);
+    state._metroWait = setTimeout(() => {
+      if (state._awaitingMetro) {
+        state._awaitingMetro = false;
+        toast('Metro hasn’t reported ready — watch the Terminal, then press Open.', 'error');
+        if ($('terminal').classList.contains('hidden')) toggleTerminal();
+      }
+    }, 180000);
   }
   function openDevClient() {
     const url = (state.metro && state.metro.url) || 'exp://127.0.0.1:8081';
