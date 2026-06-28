@@ -429,13 +429,18 @@ export class ClaudeConfig {
       const msg = obj?.message;
       if (!msg) continue;
       const parent = obj.parentToolUseId || obj.parent_tool_use_id || null;
+      // The session log stamps every line with its true send time. Carry it onto
+      // each canonical event as `ts` so a reopened conversation shows the ORIGINAL
+      // message times — without it the replayed events are bare and the UI stamps
+      // them "now" (reopen time). See lastMessageTsOf for the same source of truth.
+      const ts = tsIso(obj.timestamp);
       if (obj.type === 'user') {
         const content = msg.content;
         if (typeof content === 'string') {
-          if (content.trim()) out.push({ type: 'user_echo', text: content });
+          if (content.trim()) out.push({ type: 'user_echo', text: content, ts });
         } else if (Array.isArray(content)) {
           for (const b of content) {
-            if (b.type === 'text' && b.text?.trim()) out.push({ type: 'user_echo', text: b.text });
+            if (b.type === 'text' && b.text?.trim()) out.push({ type: 'user_echo', text: b.text, ts });
             else if (b.type === 'tool_result') {
               out.push({
                 type: 'tool_result',
@@ -443,6 +448,7 @@ export class ClaudeConfig {
                 status: b.is_error ? 'error' : 'ok',
                 output: blockText(b.content),
                 parentToolUseId: parent,
+                ts,
               });
             }
           }
@@ -450,9 +456,9 @@ export class ClaudeConfig {
       } else if (obj.type === 'assistant') {
         const content = Array.isArray(msg.content) ? msg.content : [];
         for (const b of content) {
-          if (b.type === 'text' && b.text) out.push({ type: 'assistant_text', delta: b.text, parentToolUseId: parent });
-          else if (b.type === 'thinking' && b.thinking) out.push({ type: 'assistant_thinking', delta: b.thinking, parentToolUseId: parent });
-          else if (b.type === 'tool_use') out.push({ type: 'tool_call', id: b.id, name: b.name, input: b.input || {}, parentToolUseId: parent });
+          if (b.type === 'text' && b.text) out.push({ type: 'assistant_text', delta: b.text, parentToolUseId: parent, ts });
+          else if (b.type === 'thinking' && b.thinking) out.push({ type: 'assistant_thinking', delta: b.thinking, parentToolUseId: parent, ts });
+          else if (b.type === 'tool_use') out.push({ type: 'tool_call', id: b.id, name: b.name, input: b.input || {}, parentToolUseId: parent, ts });
         }
       }
     }
@@ -688,6 +694,16 @@ function blockText(content) {
   return content == null ? '' : String(content);
 }
 function readText(file) { try { return fs.readFileSync(file, 'utf8'); } catch { return ''; } }
+
+/** Normalize a Claude session-log `timestamp` (ISO) into a canonical ISO string
+ *  for a replayed event's `ts`, so reopened history renders the ORIGINAL send
+ *  time, not the reopen time. Returns undefined when missing/unparseable (the UI
+ *  then leaves the stamp to its own fallback rather than showing a wrong time). */
+function tsIso(timestamp) {
+  if (!timestamp) return undefined;
+  const t = Date.parse(timestamp);
+  return Number.isNaN(t) ? undefined : new Date(t).toISOString();
+}
 
 function firstUserTextOf(content) {
   try {

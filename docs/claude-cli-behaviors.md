@@ -80,6 +80,11 @@ conversation across the respawn with `--resume <sessionId>` to preserve context.
 - Caveat: `--resume` restores model context but does **not** re-emit past turns
   to the stream, so the broker replays stored history itself
   (`ClaudeConfig.readSessionTranscript`) to avoid a blank-looking resumed session.
+  Each `.jsonl` line carries its own `timestamp`; `readSessionTranscript` copies it
+  onto the replayed event's `ts` so a reopened conversation shows the **original**
+  message times. Without that the UI stamps replayed bubbles at reopen-time ("now").
+  (This is distinct from the file's **mtime**, which `--resume` rewrites on open —
+  see `lastMessageTsOf`, used for the session-list "how long ago" labels.)
 - For **plugins** specifically, `/reload-plugins` re-scans without a full respawn.
 
 ## 4. Skills vs. commands vs. plugins — all surface as `/<name>`

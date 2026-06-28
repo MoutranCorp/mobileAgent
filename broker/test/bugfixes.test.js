@@ -61,14 +61,17 @@ test('readSessionTranscript parses a Claude .jsonl into canonical records', asyn
   const dir = path.join(home, '.claude', 'projects', encoded);
   await fs.mkdir(dir, { recursive: true });
   const id = 'sess-test-1234';
+  const T_USER = '2024-01-02T03:04:05.000Z';
+  const T_ASST = '2024-01-02T03:04:09.000Z';
+  const T_RESULT = '2024-01-02T03:04:11.000Z';
   const lines = [
-    { type: 'user', message: { role: 'user', content: 'hello there' } },
-    { type: 'assistant', message: { role: 'assistant', content: [
+    { type: 'user', timestamp: T_USER, message: { role: 'user', content: 'hello there' } },
+    { type: 'assistant', timestamp: T_ASST, message: { role: 'assistant', content: [
       { type: 'thinking', thinking: 'pondering' },
       { type: 'text', text: 'Hi! Reading a file.' },
       { type: 'tool_use', id: 'tu_1', name: 'Read', input: { file_path: '/x' } },
     ] } },
-    { type: 'user', message: { role: 'user', content: [
+    { type: 'user', timestamp: T_RESULT, message: { role: 'user', content: [
       { type: 'tool_result', tool_use_id: 'tu_1', is_error: false, content: 'file body' },
     ] } },
   ];
@@ -84,6 +87,13 @@ test('readSessionTranscript parses a Claude .jsonl into canonical records', asyn
     assert.equal(recs[4].id, 'tu_1');
     assert.equal(recs[4].status, 'ok');
     assert.equal(recs[4].output, 'file body');
+    // Each replayed record carries the ORIGINAL message time from the .jsonl, so a
+    // reopened conversation shows when messages actually fired (not the reopen time).
+    assert.equal(recs[0].ts, T_USER, 'user_echo keeps its original timestamp');
+    assert.equal(recs[1].ts, T_ASST, 'assistant_thinking keeps the assistant turn time');
+    assert.equal(recs[2].ts, T_ASST, 'assistant_text keeps the assistant turn time');
+    assert.equal(recs[3].ts, T_ASST, 'tool_call keeps the assistant turn time');
+    assert.equal(recs[4].ts, T_RESULT, 'tool_result keeps the result turn time');
     // unknown session -> empty, no throw
     assert.deepEqual(cc.readSessionTranscript('nope'), []);
   } finally {
