@@ -273,7 +273,13 @@ id=`'file:'+rel`).
 - **Session tabs.** Indicators derived LIVE in `renderTabs`: `waiting(!) > working
   (spinner) > done(✓) > dot` (order matters — a waiting session is also "busy").
   Titles numbered **per folder** (`seen[k]`: first="demo", rest="demo 2"),
-  independent of the internal `#N` key suffix.
+  independent of the internal `#N` key suffix. The tab set is the **persisted +
+  explicitly-opened** sessions only: `onSessions` refreshes existing tabs and always
+  keeps one for the ACTIVE session, but does NOT auto-open a tab for every session the
+  broker remembers (that flooded the strip with background/sleeping sessions on
+  reconnect). Other sessions live in the **folder sheet**; tap one to open it. A fresh
+  `new_session` clears its transcript broker-side, so a recycled key (the `#N` counter
+  resets on broker restart) can't surface a dead session's leftover messages.
 - **File tabs** are **client-only** — `state.activeTabId` is decoupled from the broker
   `activeKey`, so switching a file tab does NOT `switch_session`. `applyViewMode()`
   swaps in `#fileView` (name · Rendered|Source toggle · Save · ⬇ · ✕) and hides the
@@ -319,9 +325,10 @@ The folder pill is a button → a **folder switcher sheet**: folders are ordered
 (`list_sessions scope:all` → grouped by `projectId`, top-3 by mtime →
 `state.recentSessionsByProject`). Live ones are flagged, tap=`switchTab`, and their
 dot takes the **folder's colour** when open as a tab; historical tap=`RESUME
-{sessionId, projectId, projectDir}` (NOT `switch_session`). The "ago" label uses a
-broker-tracked **`lastTurnTs`** (last prompt/response, *not* tab focus or file
-mtime) for live sessions, falling back to the transcript mtime for historical ones.
+{sessionId, projectId, projectDir}` (NOT `switch_session`). The "ago" label uses the
+session's **transcript mtime** (time of the latest message), NOT `lastTurnTs` — which
+the engine bumps on any status change, so opening/spawning a session made a fresh tab
+read "just now". Folder recency is likewise by newest-message mtime.
 Ambiguous-encoding sessions bucket under "Folder unknown". Resume is **project-aware**
 (`claude-config` re-encodes each known project dir to map a session folder →
 projectId), so it resumes in the right cwd and seeds from the right `.jsonl` without

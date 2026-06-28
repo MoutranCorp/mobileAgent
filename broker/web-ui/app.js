@@ -352,12 +352,14 @@
     if (ev.activeKey) state.activeKey = ev.activeKey;
     // The focused session is never "dismissed" — re-surface it if it was.
     undismissSession(state.activeKey);
-    // Give EVERY broker-known session a tab (live or sleeping) so a dormant/idle-
-    // evicted session never silently vanishes from the workspace — except ones the
-    // user explicitly closed (dismissed; still on disk, resumable via Sessions).
+    // Only (re)surface tabs the user actually has open — refresh the project/title on
+    // existing tabs and always keep one for the ACTIVE session. Do NOT auto-open a tab
+    // for every session the broker remembers (live + sleeping): that flooded the strip
+    // with background sessions the user never opened on reconnect. Other sessions live
+    // in the folder sheet (tap to open one), not forced into the tab strip.
     for (const s of state.sessions) {
-      if (s.key !== state.activeKey && isDismissed(s.key)) continue;
-      ensureTab({ key: s.key, projectId: s.projectId, title: s.title });
+      const open = state.tabs.some((t) => t.kind !== 'file' && t.key === s.key);
+      if (s.key === state.activeKey || open) ensureTab({ key: s.key, projectId: s.projectId, title: s.title });
     }
     const act = state.sessions.find((s) => s.key === state.activeKey);
     if (!act && state.activeKey) ensureTab({ key: state.activeKey, projectId: state.activeProjectId });
@@ -826,9 +828,10 @@
       row.appendChild(dot);
       const info = el('div', 'fs-session-info');
       info.appendChild(el('span', 'fs-session-name', s.summary || s.id.slice(0, 8)));
-      // Prefer the live "last turn" time (last prompt/response) over the file mtime,
-      // which can sit at spawn time while a fresh session waits to respond.
-      const ts = (live && live.lastTurnTs) ? live.lastTurnTs : s.mtime;
+      // Time of the latest MESSAGE in the session (transcript file mtime), not the
+      // last time it was opened — opening/spawning a session bumps lastTurnTs, which
+      // made a just-opened tab read "just now". mtime tracks the real conversation.
+      const ts = s.mtime || (live && live.lastTurnTs) || null;
       info.appendChild(el('span', 'fs-session-meta', relTime(ts) + (live ? ' · live' : '')));
       row.appendChild(info);
       row.onclick = () => {
@@ -841,11 +844,10 @@
     // Folders ordered most-recently-touched first, by the latest activity across their
     // sessions (live "last turn" time, else newest transcript mtime).
     const folderRecency = (pid) => {
-      let best = 0;
+      // Newest message across the folder's sessions (transcript mtime), so a folder
+      // doesn't jump to the top merely because you opened one of its sessions.
       const recents = state.recentSessionsByProject[pid] || [];
-      if (recents[0] && recents[0].mtime) best = recents[0].mtime;
-      for (const s of state.sessions) if (s.projectId === pid && s.lastTurnTs) best = Math.max(best, s.lastTurnTs);
-      return best;
+      return (recents[0] && recents[0].mtime) || 0;
     };
     const sortedProjects = state.projects.filter((x) => x.id).slice()
       .sort((a, b) => folderRecency(b.id) - folderRecency(a.id));

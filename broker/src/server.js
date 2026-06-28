@@ -578,6 +578,11 @@ export class BrokerServer {
         // running. Point the transcript at the new key and start it blank.
         await this.session.newSession();
         this.transcript.setProject(this.session.activeKey);
+        // A fresh session's key (projA#N) is minted from a counter that resets when the
+        // broker restarts, so it can collide with a dead session's leftover transcript
+        // file on disk — which would make the "new" tab open showing old messages.
+        // Clear it so a new session is always blank.
+        this.transcript.clear();
         this.broadcast(event(EventType.TRANSCRIPT, { events: this.transcript.replay(), reset: true }));
         this.broadcast(event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
         return;
