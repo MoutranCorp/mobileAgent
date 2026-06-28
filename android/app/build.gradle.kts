@@ -20,13 +20,33 @@ android {
         versionName = "0.1.0"
     }
 
+    signingConfigs {
+        // A STABLE, repo-committed signing identity so every build (on any machine)
+        // is signed with the same key. That lets a new APK install OVER an existing
+        // install (in-place update) instead of requiring an uninstall — which would
+        // wipe the app's internal storage (the whole proot runtime, projects,
+        // sessions, and Claude login). Debug-grade key: the password is the
+        // conventional "android" and not a secret for a sideloaded app.
+        getByName("debug") {
+            storeFile = rootProject.file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // Sign release with the same stable key too, so a release-built APK can
+            // also update an install in place (and vice-versa is NOT possible across
+            // keys — keep one identity everywhere).
+            signingConfig = signingConfigs.getByName("debug")
         }
         debug {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
