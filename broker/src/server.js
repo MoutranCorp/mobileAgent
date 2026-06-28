@@ -12,6 +12,7 @@ import { DevTools } from './controls/devtools.js';
 import { ClaudeConfig } from './controls/claude-config.js';
 import { ModelResolver, labelFor } from './controls/model-resolver.js';
 import { Updater } from './controls/updater.js';
+import { backupNow, backupInfo, backupEnabled } from './controls/backup.js';
 import { TranscriptStore } from './controls/transcript.js';
 import { Checkpoints } from './controls/checkpoints.js';
 import { Files } from './controls/files.js';
@@ -394,6 +395,7 @@ export class BrokerServer {
       ...this.session.snapshot,
     }));
     this._send(ws, event(EventType.PERMISSION_MODE, { mode: this.session.permissionMode }));
+    this._send(ws, event(EventType.BACKUP_STATUS, { enabled: backupEnabled(), ...(backupInfo() || {}) }));
     // Live sessions (so a reconnecting client restores the background busy badges).
     this._send(ws, event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
     if (this.session.lastCapabilities) this._send(ws, this.session.lastCapabilities);
@@ -693,6 +695,13 @@ export class BrokerServer {
         this.broadcast(event(EventType.APP_UPDATE, { state: 'updating' }));
         const res = await this.updater.update();
         return this.broadcast(event(EventType.APP_UPDATE, res));
+      }
+      case CommandType.BACKUP_STATUS:
+        return this._send(ws, event(EventType.BACKUP_STATUS, { enabled: backupEnabled(), ...(backupInfo() || {}) }));
+      case CommandType.BACKUP_NOW: {
+        this.broadcast(event(EventType.BACKUP_STATUS, { enabled: true, busy: true }));
+        const res = await backupNow(this.config);
+        return this.broadcast(event(EventType.BACKUP_STATUS, { enabled: backupEnabled(), ...res }));
       }
 
       // harness config: skills / agents / commands / memory / settings

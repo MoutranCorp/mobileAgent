@@ -292,6 +292,7 @@
         if (ev.channel === 'run') onRunStatus(ev.state);
         break;
       case 'claude_auth': if (ev.signedIn) { const b = $('banner'); if (b) b.remove(); } break;
+      case 'backup_status': if (window.Managers) window.Managers.onBackupStatus(ev); break;
       case 'metro_status': onMetro(ev); break;
       case 'apks': onApks(ev); break;
       case 'resources': state.resources = ev; if (window.Managers) window.Managers.onResources(ev); break;

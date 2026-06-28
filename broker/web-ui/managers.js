@@ -68,6 +68,7 @@
     appVersion: null, // { sha, subject, when, branch, dirty }
     appUpdate: null, // last update result
     updating: false,
+    backup: null, // { enabled, ok?, when?, items?, dir?, busy? } shared-storage backup state
   };
 
   function el(tag, cls, text) {
@@ -241,6 +242,8 @@
       send({ type: 'config_list', kind: 'hooks', scope: m.scope });
     } else if (m.tab === 'update') {
       send({ type: 'app_version' });
+    } else if (m.tab === 'system') {
+      send({ type: 'backup_status' });
     }
   }
 
@@ -308,7 +311,30 @@
     if (s < 60) return s + 's';
     return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
   }
+  function renderBackupCard(pane) {
+    const b = m.backup;
+    pane.appendChild(el('div', 'sys-heading', 'Data backup'));
+    const card = el('div', 'sys-card');
+    if (b && b.enabled === false) {
+      card.appendChild(el('div', 'sys-sub', 'Shared storage unavailable — grant “All files access” to the app, then try again.'));
+    } else if (b && b.when) {
+      card.appendChild(el('div', 'sys-sub', 'Last backup: ' + new Date(b.when).toLocaleString() + (b.items && b.items.length ? ' · ' + b.items.join(', ') : '')));
+    } else {
+      card.appendChild(el('div', 'sys-sub', 'Projects, sessions and your Claude login are mirrored to /sdcard so they survive an uninstall; auto-restored on a fresh install.'));
+    }
+    if (b && b.ok === false && b.error) card.appendChild(el('div', 'mgr-row-desc', '⚠ ' + b.error));
+    const row = el('div', 'sys-engine-acts'); row.style.marginTop = '10px';
+    const btn = el('button', 'primary small', (b && b.busy) ? 'Backing up…' : 'Back up now');
+    btn.disabled = !!(b && b.busy);
+    btn.onclick = () => { m.backup = { ...(m.backup || {}), busy: true }; send({ type: 'backup_now' }); renderPane(); };
+    row.appendChild(btn);
+    card.appendChild(row);
+    pane.appendChild(card);
+  }
+  function onBackupStatus(ev) { m.backup = ev; if (!root.classList.contains('hidden') && m.tab === 'system') renderPane(); }
+
   function renderSystem(pane) {
+    renderBackupCard(pane);
     const r = (window.Agent && window.Agent.state.resources) || null;
     if (!r) { pane.appendChild(el('p', 'mgr-hint', 'Gathering resource metrics…')); return; }
     const mem = r.mem || {};
@@ -1689,5 +1715,6 @@
     onCheckpoints, onFiles, onFile, onFileDiff, onFileGrep, onPrompts, onScripts,
     onAutoVerify, onUsageStats, onCheckpointDiff, onWorkspaceBrowse,
     onAppVersion, onAppUpdate, onSessions, onFsList, onUserSettings, onCronJobs,
+    onBackupStatus,
   };
 })();

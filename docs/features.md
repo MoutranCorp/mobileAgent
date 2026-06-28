@@ -168,6 +168,14 @@ are cache-busted with `?v=__VER__` rewritten to a mtime-derived version at serve
 - **Tool-call cards** auto-collapse once the call finishes cleanly (diffs included;
   subagents keep their nested view open), so completed actions don't take up space —
   tap the header to re-expand. Errors stay expanded with the failure reason.
+- **Data backup / restore** (`controls/backup.js`): mirrors projects + the broker
+  state dir (sessions/transcripts/settings) + `~/.claude/.credentials.json` to
+  `/sdcard/MobileAgentBackup` (shared storage — survives an app uninstall; bind-mounted
+  into the guest). Auto-**restores** on broker startup *only when the live data is empty*
+  (non-destructive), periodic auto-backup (`BACKUP_INTERVAL_MIN`, default 30) + manual
+  **Back up now** in Manage → System (`backup_now`/`backup_status`). Pairs with the
+  stable APK signing key (install new builds OVER the app, never uninstall) so routine
+  updates don't lose data in the first place.
 - **File download** (`GET /download/<rel>`, path-guarded, binary-safe attachment):
   pulls artifacts out of the invisible proot rootfs into the phone's real Downloads.
   `_findApks()` bounded walk → `APKS` event; **APK widget** "⬇ Save to Downloads".

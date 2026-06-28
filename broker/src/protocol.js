@@ -71,6 +71,7 @@ export const EventType = Object.freeze({
   TRANSCRIPT_SEARCH_RESULT: 'transcript_search', // { query, matches: [{type, text}] }
   PROMPTS: 'prompts', // { items: [{name, text}] }
   CLAUDE_AUTH: 'claude_auth', // { signedIn } — whether an in-app Claude sign-in token/key is present
+  BACKUP_STATUS: 'backup_status', // { enabled, ok?, when?, items?, dir?, error?, busy? } shared-storage data backup state
   SCRIPTS: 'scripts', // { items: [{name, cmd}], running: [names] }
   GITHUB: 'github', // { ok, url?, message, op }
   AUTOVERIFY: 'autoverify', // { enabled, command, maxIterations, state?, iteration? }
@@ -197,6 +198,8 @@ export const CommandType = Object.freeze({
   PING: 'ping', // {}
   HELLO: 'hello', // {} — client requests a full state snapshot
   SET_SECRET: 'set_secret', // { name, value } — store a broker secret (e.g. CLAUDE_CODE_OAUTH_TOKEN) for in-app Claude sign-in; applies to new engines
+  BACKUP_NOW: 'backup_now', // {} — mirror projects/sessions/credentials to shared storage now
+  BACKUP_STATUS: 'backup_status', // {} — request current backup state
 });
 
 /** Build a canonical event object. */

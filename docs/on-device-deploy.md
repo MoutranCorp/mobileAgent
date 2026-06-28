@@ -55,6 +55,24 @@ existing bundled install to a clone without re-downloading the rootfs or re-runn
   succeeds. (To force a fresh self-contained build instead, install a new APK — but note
   delivery is marker-gated, so bump `BROKER_SOURCE_VERSION` to make a reinstall re-deliver.)
 
+**Updating the native app (new APK) = install OVER the existing app — do NOT
+uninstall.** All runtime state (the proot rootfs, Node, the `claude` CLI, projects,
+sessions, Claude login) lives in the app's internal storage, which Android **wipes on
+uninstall**. A new APK only installs over the old one when both share a signing key —
+so the repo commits a fixed `android/debug.keystore` wired via `signingConfigs.debug`,
+giving every build one identity. Build, then `adb install -r` (or tap the APK) to
+update in place with zero data loss. (Adopting the committed key the first time needs
+one final uninstall+reinstall, since the previously-installed app used an ephemeral key.)
+
+**Backup / restore (survives a true uninstall).** `broker/src/controls/backup.js`
+mirrors projects + the broker state dir (sessions/transcripts/settings) +
+`~/.claude/.credentials.json` to `/sdcard/MobileAgentBackup` (shared storage isn't
+wiped on uninstall; it's bind-mounted into the guest). On a fresh install the broker
+**auto-restores** on startup *only when the live data is empty* (non-destructive);
+it also backs up every `BACKUP_INTERVAL_MIN` (default 30) and on demand via Manage →
+System → **Back up now**. The rootfs/toolchain still re-provisions (it can't live on
+the FUSE sdcard), but work + login come back.
+
 The script-based path below is the **dev/manual fallback** (and the repo-clone +
 `start-broker.sh` workflow), not the default.
 
