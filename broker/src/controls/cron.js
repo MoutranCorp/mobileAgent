@@ -189,7 +189,7 @@ export class CronManager {
     return { cron, label: schedule.label || cron, source: 'cron' };
   }
 
-  create({ name, prompt, projectId, schedule, sessionMode = 'fresh', enabled = true } = {}) {
+  create({ name, prompt, projectId, schedule, sessionMode = 'fresh', enabled = true, profileId = null, model = null, effort = null } = {}) {
     if (!prompt || !String(prompt).trim()) throw new Error('a cron job needs a prompt');
     const sched = this._normalizeSchedule(schedule);
     const job = {
@@ -199,6 +199,10 @@ export class CronManager {
       projectId: projectId || null,
       schedule: sched,
       sessionMode: SESSION_MODES.has(sessionMode) ? sessionMode : 'fresh',
+      // Per-job engine overrides; null = use the broker's active profile/model/effort.
+      profileId: profileId || null,
+      model: model || null,
+      effort: effort || null,
       enabled: enabled !== false,
       createdAt: Date.now(),
       lastRun: null,
@@ -218,6 +222,9 @@ export class CronManager {
     if (patch.prompt != null) job.prompt = String(patch.prompt);
     if (patch.projectId !== undefined) job.projectId = patch.projectId || null;
     if (patch.sessionMode && SESSION_MODES.has(patch.sessionMode)) job.sessionMode = patch.sessionMode;
+    if (patch.profileId !== undefined) job.profileId = patch.profileId || null;
+    if (patch.model !== undefined) job.model = patch.model || null;
+    if (patch.effort !== undefined) job.effort = patch.effort || null;
     if (patch.enabled != null) job.enabled = !!patch.enabled;
     if (patch.schedule) job.schedule = this._normalizeSchedule(patch.schedule);
     this._save();

@@ -173,14 +173,17 @@ export class SessionManager {
     const chosen = model || (profileChanged ? null : this.currentModel) || profile.model;
     this.activeProfileId = profileId;
     this.currentModel = chosen;
-    const isUltra = this.effort === 'ultracode'; // maps to xhigh + the ultracode setting
+    // Effort: a per-call override (cron jobs) wins over the global pref; never mutate
+    // the global `this.effort` from a detached run.
+    const effortPref = opts.effort || this.effort;
+    const isUltra = effortPref === 'ultracode'; // maps to xhigh + the ultracode setting
 
     const engine = createEngine(profile, {
       cwd, env, model: chosen,
       resumeId: resolvedResume,
       claudeBin: this.config.claudeBin,
       permissionMode: this.permissionMode,
-      effort: isUltra ? 'xhigh' : this.effort,
+      effort: isUltra ? 'xhigh' : effortPref,
       ultracode: isUltra,
       log: (m) => this._log(m),
     });
@@ -381,7 +384,7 @@ export class SessionManager {
    * preserved. `fresh` mints a new session in the folder; pass a stable `key` +
    * `resumeId` to continue one persistent session. Returns { engine, key } or null.
    */
-  async startDetached({ projectId, cwd, resumeId = null, fresh = false, key } = {}) {
+  async startDetached({ projectId, cwd, resumeId = null, fresh = false, key, profileId = null, model = null, effort = null } = {}) {
     const project = this._projectById(projectId) || (cwd ? { id: projectId || null, dir: cwd } : this.getActiveProject());
     const pid = project?.id ?? null;
     const saved = {
@@ -389,7 +392,8 @@ export class SessionManager {
       status: this._lastStatus,
       binding: pid != null ? this._activeKeyByProject.get(pid) : undefined,
     };
-    const engine = await this.startEngine(this.activeProfileId, { key, project, cwd: cwd || project?.dir, resumeId, fresh });
+    // Per-job engine overrides (cron): fall back to the foreground profile/model/effort.
+    const engine = await this.startEngine(profileId || this.activeProfileId, { key, project, cwd: cwd || project?.dir, resumeId, fresh, model: model || undefined, effort: effort || undefined });
     const newKey = this.activeKey; // startEngine focused the (possibly minted) key; capture before restoring
     // Restore the foreground view — the detached session runs in the background.
     // Crucially also restore the project→activeKey binding, which startEngine

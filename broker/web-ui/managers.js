@@ -244,6 +244,8 @@
       send({ type: 'app_version' });
     } else if (m.tab === 'system') {
       send({ type: 'backup_status' });
+    } else if (m.tab === 'cron') {
+      send({ type: 'models_list' }); // populate the per-job Model dropdown
     }
   }
 
@@ -752,6 +754,7 @@
     return {
       id: null, name: '', projectId: st.activeProjectId || null, prompt: '',
       sessionMode: 'fresh', enabled: true,
+      profileId: null, model: null, effort: null, // null = use the active engine defaults
       schedKind: 'preset', preset: { every: 'days', n: 1, hour: 9, minute: 0, weekday: 1 }, cron: '0 9 * * *',
     };
   }
@@ -779,6 +782,11 @@
       const last = job.lastRun ? ` · last ${relTime(job.lastRun)}${job.lastStatus && job.lastStatus !== 'running' ? ' (' + job.lastStatus + ')' : ''}` : '';
       const next = job.enabled ? ` · next ${relFuture(job.nextRun)}` : ' · disabled';
       info.appendChild(el('div', 'mgr-row-desc', `${job.schedule.label} · 📁 ${projName(job.projectId)}${next}${last}`));
+      const ovr = [];
+      if (job.profileId) { const p = ((window.Agent && window.Agent.state.profiles) || []).find((x) => x.id === job.profileId); ovr.push(p ? p.label : job.profileId); }
+      if (job.model) ovr.push(job.model);
+      if (job.effort) ovr.push(job.effort);
+      if (ovr.length) info.appendChild(el('div', 'mgr-row-desc', '⚙ ' + ovr.join(' · ')));
       info.appendChild(el('div', 'mgr-row-desc cron-prompt', job.sessionMode === 'persistent' ? '↻ ' : '✦ ' + (job.prompt || '')));
       row.appendChild(info);
 
@@ -812,6 +820,7 @@
     const f = blankCronForm();
     f.id = job.id; f.name = job.name; f.projectId = job.projectId; f.prompt = job.prompt;
     f.sessionMode = job.sessionMode; f.enabled = job.enabled;
+    f.profileId = job.profileId || null; f.model = job.model || null; f.effort = job.effort || null;
     if (job.schedule.source === 'preset' && job.schedule.preset) { f.schedKind = 'preset'; f.preset = { ...f.preset, ...job.schedule.preset }; }
     else { f.schedKind = 'cron'; f.cron = job.schedule.cron; }
     return f;
@@ -864,6 +873,21 @@
     [['fresh', 'Fresh session each run'], ['persistent', 'One persistent session (accumulates context)']].forEach(([v, t]) => { const o = el('option', '', t); o.value = v; if (f.sessionMode === v) o.selected = true; mode.appendChild(o); });
     mode.onchange = () => { f.sessionMode = mode.value; };
     card.appendChild(field('Session', mode));
+
+    // Engine / Model / Effort — per-job overrides; blank = the broker's active default.
+    const st = (window.Agent && window.Agent.state) || {};
+    const selectOf = (cur, options, onPick) => {
+      const sel = el('select', 'mgr-input');
+      for (const [v, t] of options) { const o = el('option', '', t); o.value = v; if ((cur || '') === v) o.selected = true; sel.appendChild(o); }
+      sel.onchange = () => onPick(sel.value || null);
+      return sel;
+    };
+    const engineOpts = [['', 'Default (active engine)'], ...((st.profiles || []).map((p) => [p.id, p.label + (p.ready ? '' : ' — no auth')]))];
+    card.appendChild(field('Engine', selectOf(f.profileId, engineOpts, (v) => { f.profileId = v; })));
+    const modelOpts = [['', 'Default'], ...((st.models || []).map((m2) => [m2.alias, m2.label || m2.alias]))];
+    card.appendChild(field('Model', selectOf(f.model, modelOpts, (v) => { f.model = v; })));
+    const effortOpts = [['', 'Default'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh'], ['max', 'max'], ['ultracode', 'ultracode ✦']];
+    card.appendChild(field('Effort', selectOf(f.effort, effortOpts, (v) => { f.effort = v; })));
 
     // Enabled
     const enWrap = el('label', 'cron-check');
@@ -921,7 +945,11 @@
     const schedule = f.schedKind === 'preset'
       ? { source: 'preset', preset: f.preset }
       : { source: 'cron', cron: (f.cron || '').trim() };
-    const payload = { name: f.name, prompt: f.prompt, projectId: f.projectId, schedule, sessionMode: f.sessionMode, enabled: f.enabled };
+    const payload = {
+      name: f.name, prompt: f.prompt, projectId: f.projectId, schedule,
+      sessionMode: f.sessionMode, enabled: f.enabled,
+      profileId: f.profileId || null, model: f.model || null, effort: f.effort || null,
+    };
     if (f.id) send({ type: 'cron_update', id: f.id, ...payload });
     else send({ type: 'cron_create', ...payload });
     m.cron.form = null;

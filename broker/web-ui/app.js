@@ -328,7 +328,14 @@
       case 'workspace_browse': if (window.Managers) window.Managers.onWorkspaceBrowse(ev); break;
       case 'log': onLog(ev); break;
       case 'file_widget': onFileWidget(ev); break;
-      case 'toast': if (ev.message) toast(ev.message, ev.level || 'info'); break;
+      case 'toast':
+        if (ev.message) {
+          toast(ev.message, ev.level || 'info');
+          // notify=true → also fire a real OS notification (native always posts; web
+          // only when backgrounded). Used for cron-job completion.
+          if (ev.notify) notifyIfHidden(ev.title || 'On-Device Agent', ev.message);
+        }
+        break;
       case 'user_settings': onUserSettings(ev); break;
       case 'app_version': if (window.Managers) window.Managers.onAppVersion(ev); break;
       case 'app_update': onAppUpdate(ev); if (window.Managers) window.Managers.onAppUpdate(ev); break;

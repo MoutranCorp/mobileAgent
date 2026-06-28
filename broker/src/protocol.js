@@ -76,13 +76,13 @@ export const EventType = Object.freeze({
   GITHUB: 'github', // { ok, url?, message, op }
   AUTOVERIFY: 'autoverify', // { enabled, command, maxIterations, state?, iteration? }
   USAGE_STATS: 'usage_stats', // { summary: { today, days, total } }
-  CRON_JOBS: 'cron_jobs', // { jobs: [{ id, name, prompt, projectId, schedule:{cron,label,source}, sessionMode, enabled, lastRun, lastStatus, lastSessionKey, lastSessionId, nextRun }] }
+  CRON_JOBS: 'cron_jobs', // { jobs: [{ id, name, prompt, projectId, schedule:{cron,label,source}, sessionMode, profileId, model, effort, enabled, lastRun, lastStatus, lastSessionKey, lastSessionId, nextRun }] }
   CHECKPOINTS_DIFF: 'checkpoints_diff', // { id, files: [{status, path}], stat }
   TURN_CHANGES: 'turn_changes', // { checkpointId, files: [{status, path}], stat } what the agent changed this turn
   NATIVE_CHANGE: 'native_change', // { deps } native deps changed — offer rebuild
   FILE_WIDGET: 'file_widget', // { path, kind?, title? } render a generated project file inline (e.g. a Playwright screenshot) without a Write/Edit tool event
   LOG: 'log', // { level, message }  broker diagnostics
-  TOAST: 'toast', // { message, level? }  transient user-facing notice
+  TOAST: 'toast', // { message, level?, notify?, title? }  transient notice; notify=true also fires a native OS notification (title is its heading)
   USER_SETTINGS: 'user_settings', // { settings }  persisted per-user UI/engine prefs (sent in the snapshot)
   APP_VERSION: 'app_version', // { sha, subject, when, branch, dirty }  current app build
   APP_UPDATE: 'app_update', // { state?: 'updating', ok, upToDate?, fromSha, toSha, needsReload, needsRestart, ... }
@@ -104,8 +104,8 @@ export const CommandType = Object.freeze({
   SET_PERMISSION_MODE: 'set_permission_mode', // { mode } default|acceptEdits|plan|bypassPermissions
   QUESTION_RESPONSE: 'question_response', // { id, answers: [{ header?, question?, selected:[label], custom? }], sessionKey? }  answer an ask_user_question
   // Cron / scheduled jobs
-  CRON_CREATE: 'cron_create', // { name?, prompt, projectId?, schedule:{cron|source/preset}, sessionMode?, enabled? }
-  CRON_UPDATE: 'cron_update', // { id, ...patch }
+  CRON_CREATE: 'cron_create', // { name?, prompt, projectId?, schedule:{cron|source/preset}, sessionMode?, enabled?, profileId?, model?, effort? }
+  CRON_UPDATE: 'cron_update', // { id, ...patch } (incl. profileId?/model?/effort? — null = use active defaults)
   CRON_DELETE: 'cron_delete', // { id }
   CRON_TOGGLE: 'cron_toggle', // { id, enabled? }
   CRON_RUN_NOW: 'cron_run_now', // { id } fire immediately

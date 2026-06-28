@@ -76,6 +76,32 @@ test('run-now fires immediately regardless of schedule; persistent mode reuses a
   } finally { ws.close(); await server.stop(); }
 });
 
+test('cron job applies per-job model/effort overrides and notifies on completion', async () => {
+  const { server, ws, open } = await boot(['projD']);
+  try {
+    await open('projD');
+    const savedEffort = server.session.effort;
+    // Listen for the completion notification (a toast flagged notify:true).
+    const doneToast = new Promise((resolve) => {
+      const onMsg = (raw) => { const ev = JSON.parse(raw.toString());
+        if (ev.type === 'toast' && ev.notify && /finished|failed/i.test(ev.message || '')) { ws.off('message', onMsg); resolve(ev); } };
+      ws.on('message', onMsg);
+    });
+    const job = server.cron.create({ prompt: 'task', projectId: 'projD',
+      schedule: { cron: '0 0 1 1 *' }, sessionMode: 'fresh', model: 'mock-special', effort: 'low' });
+
+    await server._fireCronJob(server.cron.get(job.id));
+    const key = server.cron.get(job.id).lastSessionKey;
+    assert.ok(key && key !== 'projD', 'cron used its own session key');
+    assert.equal(server.session.meta.get(key).model, 'mock-special', 'per-job model override applied to the cron session');
+    assert.equal(server.session.effort, savedEffort, 'the global effort pref is NOT mutated by a cron run');
+
+    const t = await doneToast;
+    assert.match(t.title || '', /scheduled job/i);
+    assert.equal(t.notify, true, 'completion fires a notify-flagged toast');
+  } finally { ws.close(); await server.stop(); }
+});
+
 test('cron CRUD over the wire broadcasts cron_jobs', async () => {
   const { server, ws, open } = await boot(['projC']);
   try {

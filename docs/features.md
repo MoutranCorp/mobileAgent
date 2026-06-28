@@ -121,7 +121,12 @@ are cache-busted with `?v=__VER__` rewritten to a mtime-derived version at serve
   **⏰ Scheduled** Manage tab where a saved prompt runs in a chosen folder on a
   schedule (friendly presets **or** a raw 5-field cron expression). Per job: a
   **fresh** session each run or **one persistent** session that accumulates
-  context; enable/disable, **run-now**, edit, delete, and open the last run.
+  context; a per-job **Engine (profile) / Model / Effort** override (blank = the
+  broker's active default — `startDetached`/`_startEngineInner` apply them to the
+  detached run without mutating the foreground prefs); enable/disable, **run-now**,
+  edit, delete, and open the last run. On completion the broker broadcasts a
+  **notify-flagged toast** (`{notify:true}`) that the UI turns into a real OS
+  notification (`notifyIfHidden` → native) so you're told when a job finishes.
   Scheduling is evaluated **in-broker** (a 30s tick → `cron.due()`), so jobs fire
   while the broker is alive (the foreground service keeps it up); the structure
   leaves room for OS-level background wake (Android AlarmManager) later. Jobs fire

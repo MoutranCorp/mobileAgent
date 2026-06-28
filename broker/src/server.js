@@ -190,10 +190,20 @@ export class BrokerServer {
           this._broadcastCron();
         }
         if (ev.type === EventType.RESULT) {
+          const job = this.cron.get(jobId);
           this.cron.noteRun(jobId, { status: ev.isError ? 'error' : 'ok' });
           this._cronInflight.delete(jobId);
           this._cronKeys.delete(key); // fresh runs are done; persistent re-keys on next fire
           this._broadcastCron();
+          // Notify the user the scheduled job finished (native heads-up via the UI
+          // bridge when connected; in-app toast too). `notify` flags it for a real
+          // Android notification, not just an in-app toast.
+          this.broadcast(event(EventType.TOAST, {
+            message: `Scheduled job “${job?.name || 'job'}” ${ev.isError ? 'failed' : 'finished'}`,
+            level: ev.isError ? 'error' : 'success',
+            notify: true,
+            title: 'Scheduled job done',
+          }));
         }
       }
       if (ev.type === EventType.RESULT) {
@@ -282,11 +292,12 @@ export class BrokerServer {
     this._cronInflight.add(job.id);
     // Mark it running NOW so `due()` won't re-pick it on the next tick.
     this.cron.noteRun(job.id, { status: 'running', at: Date.now() });
+    const engineOpts = { profileId: job.profileId || null, model: job.model || null, effort: job.effort || null };
     let started;
     if (job.sessionMode === 'persistent') {
-      started = await this.session.startDetached({ projectId: proj?.id || job.projectId, cwd, key: `cron:${job.id}`, resumeId: job.lastSessionId || null });
+      started = await this.session.startDetached({ projectId: proj?.id || job.projectId, cwd, key: `cron:${job.id}`, resumeId: job.lastSessionId || null, ...engineOpts });
     } else {
-      started = await this.session.startDetached({ projectId: proj?.id || job.projectId, cwd, fresh: true });
+      started = await this.session.startDetached({ projectId: proj?.id || job.projectId, cwd, fresh: true, ...engineOpts });
     }
     if (!started) {
       this._cronInflight.delete(job.id);
