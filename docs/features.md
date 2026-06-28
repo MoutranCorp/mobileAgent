@@ -233,6 +233,12 @@ export→FileProvider share, voice→SpeechRecognizer, notifications→native,
 and falls back to web APIs on desktop. **Lesson: desktop-browser-verified features
 do not all work in a WebView — always check WebView limits.**
 
+The **Runtime screen** also hosts the native flows: Start/Stop, Claude sign-in
+(`claude setup-token`) + update (`claude update`), All-files-access toggle, provider
+secrets, and **GitHub sign-in** (`GitHubAuth.kt` — device flow or a pasted PAT) that
+wires the on-device git to push/pull/merge your repos. See
+[on-device-runtime.md](on-device-runtime.md#native-github-sign-in-githubauthkt).
+
 ## Provisioning (`provisioning/`)
 
 The **default** path is the self-contained APK: it auto-provisions on first launch

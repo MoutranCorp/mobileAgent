@@ -65,6 +65,10 @@ class RuntimeLauncher(private val ctx: Context) {
             }
         }
 
+        // If signed in to GitHub, make sure the guest gitconfig points git at the
+        // injected token env (re-applied here in case an env reset wiped the rootfs).
+        runCatching { GitHubAuth.ensureGitConfig(ctx) }
+
         val cmd = rt.brokerArgv()
         RuntimeController.setState(RuntimeState.STARTING, "Starting broker…")
         RuntimeController.log("[runtime] launching broker under proot")

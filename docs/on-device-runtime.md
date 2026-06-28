@@ -109,6 +109,31 @@ updates the very binary the broker spawns. A refreshed CLI takes effect on **new
 agent sessions; live engines keep the binary they launched with, so Stop & Start the
 runtime to move every session onto it. Output streams to the runtime log.
 
+## Native GitHub sign-in (`GitHubAuth.kt`)
+
+A "GitHub" section on the Runtime screen authenticates the on-device git so the
+agent can push/pull/merge your repos (incl. private). Two methods, both native:
+- **Device flow** — POST `https://github.com/login/device/code` (scope `repo`),
+  show the `user_code` + open `github.com/login/device`, poll
+  `login/oauth/access_token` until authorized. Needs an OAuth App **Client ID**
+  (stored in plain `SharedPreferences`; no client secret in device flow).
+- **Personal access token** — validate a pasted token via `GET /user`.
+
+The token is stored in the **Keystore** as `GITHUB_TOKEN` + `GH_TOKEN` (so
+`ProotRuntime.prootGuest` injects it into the guest env for the broker → claude →
+git, *and* the `gh` CLI), plus `GITHUB_USER`/`GITHUB_EMAIL` for commit identity.
+The token is **never written to a file**: `applyGitConfig` points git at the env
+via a per-host credential helper —
+`credential.https://github.com.helper = '!f() { echo username=$GITHUB_USER; echo password=$GITHUB_TOKEN; }; f'`
+(the `$VARS` stay literal in `.gitconfig` and expand at git-run time). The same
+`prootGuest` secret-injection that powers provider tokens is the delivery path, so
+no broker change is needed — but a sign-in while the runtime is RUNNING needs a
+Stop+Start to pick up the new env (same as Claude sign-in). `ensureGitConfig` is
+called from `RuntimeLauncher.launch()` to re-apply the gitconfig if the rootfs lost
+it (env reset) while the token secret survived; it's gated on a host-side
+`.gitconfig` check so it costs nothing once configured. Sign-out removes the
+secrets and `git config --remove-section`s the helper.
+
 ## Native notification bridge (`Notifier.kt`)
 
 Background work that finishes when the app UI is closed (chiefly **scheduled cron

@@ -29,6 +29,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.ondevice.agent.service.ClaudeLogin
 import com.ondevice.agent.service.ClaudeUpdate
+import com.ondevice.agent.service.GitHubAuth
 import com.ondevice.agent.service.RuntimeController
 import com.ondevice.agent.service.RuntimeState
 
@@ -154,6 +155,8 @@ private fun RuntimeTab(state: RuntimeState, detail: String, actions: MainActions
         }
 
         ClaudeSignInSection()
+
+        GitHubSection()
 
         ClaudeUpdateSection(state)
 
@@ -294,6 +297,89 @@ private fun ClaudeSignInSection() {
                 Text(st.message, color = Green, fontSize = 13.sp)
                 Spacer(Modifier.height(8.dp))
                 OutlineButton("Sign in again") { ClaudeLogin.reset() }
+            }
+        }
+    }
+}
+
+/** Native on-device GitHub sign-in (device flow OR a pasted token) so the agent's
+ *  git can push/pull/merge your repos. The token lands in the Keystore and is
+ *  injected into the guest env; git's credential helper reads it for github.com. */
+@Composable
+private fun GitHubSection() {
+    val ctx = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val st by GitHubAuth.state.collectAsState()
+    var signedIn by remember { mutableStateOf(GitHubAuth.signedInUser(ctx)) }
+    LaunchedEffect(st.phase) {
+        if (st.phase == GitHubAuth.Phase.DONE || st.phase == GitHubAuth.Phase.IDLE) {
+            signedIn = GitHubAuth.signedInUser(ctx)
+        }
+    }
+    val inFlow = st.phase == GitHubAuth.Phase.DEVICE_STARTING ||
+        st.phase == GitHubAuth.Phase.AWAITING_AUTH || st.phase == GitHubAuth.Phase.VERIFYING
+    Section("GitHub") {
+        when {
+            // Signed in (and not mid-flow): show the account + sign out.
+            signedIn != null && !inFlow -> {
+                Text("Signed in as @$signedIn ✓", color = Green, fontSize = 14.sp)
+                if (st.phase == GitHubAuth.Phase.DONE && st.message.isNotEmpty()) {
+                    Spacer(Modifier.height(4.dp)); Text(st.message, color = TextDim, fontSize = 12.sp)
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlineButton("Sign out") { GitHubAuth.signOut(ctx); signedIn = null }
+            }
+            // Device flow: show the code + open-link + waiting state.
+            st.phase == GitHubAuth.Phase.AWAITING_AUTH -> {
+                Text("Open the link, enter this code, and authorize:", color = TextMain, fontSize = 13.sp)
+                Spacer(Modifier.height(8.dp))
+                Text(st.userCode ?: "", color = Accent, fontSize = 24.sp, fontFamily = FontFamily.Monospace)
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledButton("Open github.com/login/device") {
+                        runCatching {
+                            ctx.startActivity(Intent(Intent.ACTION_VIEW,
+                                Uri.parse(st.verificationUri ?: "https://github.com/login/device"))
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        }
+                    }
+                    OutlineButton("Copy code") { clipboard.setText(AnnotatedString(st.userCode ?: "")) }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(st.message, color = TextDim, fontSize = 12.sp)
+                Spacer(Modifier.height(6.dp))
+                OutlineButton("Cancel") { GitHubAuth.cancel() }
+            }
+            st.phase == GitHubAuth.Phase.DEVICE_STARTING || st.phase == GitHubAuth.Phase.VERIFYING ->
+                Text(st.message.ifEmpty { "Working…" }, color = TextDim, fontSize = 13.sp)
+            // Signed out: offer both a pasted token and device login.
+            else -> {
+                Text("Authenticate so the agent can push, pull, and merge your repos (including private ones).",
+                    color = TextDim, fontSize = 12.sp)
+                if (st.phase == GitHubAuth.Phase.ERROR) {
+                    Spacer(Modifier.height(6.dp)); Text(st.message, color = Red, fontSize = 12.sp)
+                }
+                Spacer(Modifier.height(10.dp))
+                Text("Personal access token", color = TextMain, fontSize = 13.sp)
+                var pat by remember { mutableStateOf("") }
+                Spacer(Modifier.height(4.dp))
+                DarkField(pat, { pat = it }, "ghp_… (classic 'repo' or fine-grained, repo R/W)", secret = true)
+                Spacer(Modifier.height(6.dp))
+                FilledButton("Save token") { if (pat.isNotBlank()) { GitHubAuth.signInWithToken(ctx, pat.trim()); pat = "" } }
+
+                Spacer(Modifier.height(14.dp))
+                Text("Or log in with your account (device flow)", color = TextMain, fontSize = 13.sp)
+                var cid by remember { mutableStateOf(GitHubAuth.clientId(ctx)) }
+                Spacer(Modifier.height(4.dp))
+                DarkField(cid, { cid = it }, "OAuth App Client ID")
+                Spacer(Modifier.height(6.dp))
+                FilledButton("Sign in with GitHub") {
+                    if (cid.isNotBlank()) { GitHubAuth.setClientId(ctx, cid.trim()); GitHubAuth.startDeviceFlow(ctx, cid.trim()) }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text("Token: GitHub → Settings → Developer settings → Personal access tokens (give it repo read/write). " +
+                    "Device login: create an OAuth App (Settings → Developer settings → OAuth Apps, enable Device Flow) and paste its Client ID.",
+                    color = TextDim, fontSize = 11.sp)
             }
         }
     }
