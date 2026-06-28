@@ -279,9 +279,8 @@ export class ClaudeCodeEngine extends EngineAdapter {
         message: `API retry ${msg.attempt}/${msg.max_retries}: ${msg.error || ''}`,
       });
     } else {
-      // Surface any other system note (e.g. a future subtype) so the user sees it
-      // rather than it vanishing into the broker log.
-      if (msg.subtype) this.emitEvent(EventType.LOG, { level: 'info', message: `system: ${msg.subtype}` });
+      // Other system subtypes (status, thinking_tokens, post_turn_summary, …) are
+      // routine protocol chatter — log for diagnostics only, never surface in chat.
       this.log(`unhandled system subtype: ${msg.subtype}`);
     }
   }

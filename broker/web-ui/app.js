@@ -1805,12 +1805,15 @@
     scrollDown();
   }
 
-  // Broker / engine diagnostics (api_retry, unusual stop reasons, system notes) —
-  // a dim inline note so the user sees what's happening instead of a silent stall.
+  // Curated, user-facing notices only (api_retry, unusual stop reasons) — a dim
+  // inline note so a stall/retry isn't silent. Routine engine diagnostics arrive at
+  // level "debug"/"info" (session._log) and would FLOOD the chat — they belong in
+  // the broker/runtime log, never the transcript.
   function onLog(ev) {
     if (!ev || !ev.message) return;
+    if (ev.level !== 'warn' && ev.level !== 'error') return;
     finalizeAssistant();
-    const div = el('div', 'sys-note ' + (ev.level || 'info'), ev.message);
+    const div = el('div', 'sys-note ' + ev.level, ev.message);
     $('transcript').appendChild(div);
     scrollDown();
   }
