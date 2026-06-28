@@ -936,6 +936,16 @@
     if (ev.model) state.resolvedModel = ev.model;
     if (ev.effort) { state.effort = ev.effort; const s = $('effortSelect'); if (s) s.value = ev.effort; }
     if (ev.permissionMode) onPermissionMode({ mode: ev.permissionMode });
+    // Narrate the cold-start window: while we're still latched waiting for the FOCUSED
+    // session to wake, turn the spawn lifecycle into honest user-facing phases. Gated on
+    // _coldStart + the active key so a background/cron spawn or a model-switch restart
+    // can't repaint the label. The long pause is between 'ready' and the first thinking
+    // status (claude booting + --resume reading the transcript) — so 'ready' shows the
+    // Resuming/Loading line, and the real status event hands off to "Thinking…".
+    if (state._coldStart && ev.sessionKey === state.activeKey && awaitingActive()) {
+      if (ev.state === 'starting') setActivity('working', 'Starting Claude…');
+      else if (ev.state === 'ready') setActivity('working', state._wakeResuming ? 'Resuming session…' : 'Loading session…');
+    }
     renderModelOptions();
   }
 
@@ -1095,7 +1105,7 @@
   // actually produces a real event — so waking a cold/idle-evicted session (proot +
   // claude init takes a few seconds) doesn't flicker idle before "thinking" appears.
   function awaitingActive() { return !!state._awaitingFirstEvent && Date.now() < (state._awaitingUntil || 0); }
-  function clearAwaiting() { state._awaitingFirstEvent = false; }
+  function clearAwaiting() { state._awaitingFirstEvent = false; state._coldStart = false; }
   function beginAwaiting(wakeMs) {
     state._awaitingFirstEvent = true;
     state._awaitingUntil = Date.now() + 60000; // safety cap if the engine never responds
@@ -2633,7 +2643,13 @@
     // tell the user that's happening instead of leaving the composer looking inert.
     const liveAct = state.sessions.find((s) => s.key === state.activeKey);
     const waking = !liveAct || liveAct.sleeping;
-    setActivity('working', waking ? 'Waking up…' : 'Thinking…');
+    // Cold start has honest sub-phases the UI narrates as the real engine_state events
+    // arrive (Waking → Starting Claude → Resuming → Thinking) instead of one static
+    // label. _coldStart gates onEngineState so a background/cron spawn can't hijack it;
+    // _wakeResuming picks "Resuming" vs "Loading" from whether this session has history.
+    state._coldStart = waking;
+    state._wakeResuming = !!(liveAct && liveAct.sessionId);
+    setActivity('working', waking ? 'Waking session…' : 'Thinking…');
     beginAwaiting(waking ? 8000 : 2000); // latch the indicator until the engine responds
     const payload = { type: 'user_message', text, images: images.length ? images : undefined };
     requestAnimationFrame(() => send(payload)); // send after the UI has painted

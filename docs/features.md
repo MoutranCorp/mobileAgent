@@ -162,9 +162,15 @@ are cache-busted with `?v=__VER__` rewritten to a mtime-derived version at serve
   iMessage typing-dots bubble labelled with the live action; thinking traces in a
   collapsible pulsing card; send button morphs to **Stop** (interrupt) while working.
   After a send the indicator is **latched** (`beginAwaiting`/`awaitingActive`) until
-  the engine produces a real event, so waking a cold/idle-evicted session shows
-  **"Waking up…"** instantly and never flickers back to idle on the engine's init
-  status (addresses the "send to a sleeping session feels dead" lag).
+  the engine produces a real event, so the indicator shows instantly and never flickers
+  back to idle on the engine's init status (addresses the "send to a sleeping session
+  feels dead" lag). For a cold/idle-evicted **focused** session the latch window is
+  **narrated through honest phases** driven by the real `engine_state` events — *Waking
+  session… → Starting Claude… → Resuming/Loading session… → Thinking…* — then the
+  existing detail-level tool labels (`Reading app.js…`, `Running npm test…`) take over.
+  The narration is gated on a `_coldStart` flag + the active `sessionKey`, so a
+  background/cron spawn or a model-switch restart can't repaint the focused label.
+  (Background tabs stay a bare working spinner for now — see roadmap.)
 - **Full trace transparency:** the claude-code adapter surfaces the whole stream —
   tool calls appear at their block-start and their **input streams live**
   (`input_json_delta` → `tool_delta`, an ephemeral preview that finalizes to the
@@ -402,6 +408,13 @@ in the active folder), `LIST_LIVE_SESSIONS`, `LIST_SESSIONS { scope:'all' }`,
 
 - **Background-session permission prompts** — DEFERRED. A background session awaiting
   approval shows busy, but the permission card only appears when you switch to it.
+- **Background-session phase labels** — DEFERRED. The cold-start/phase narration
+  (Waking → Starting → Resuming → Thinking → detail-level tool labels) is wired for the
+  **focused** session only; background tabs still show just a working spinner. The
+  broker already tracks `lastStatus` per session, so surfacing the live phase on a tab
+  (tooltip + expanding the "N background working" nav badge into a `folder — Reading X…`
+  list) is a small follow-up — it'd need `lastDetail` (tool name/target) plumbed into
+  session meta + `liveSessions()`.
 - **Per-session cost display** — DEFERRED. The usage ledger is aggregate/by-day; cost
   is not yet broken out per concurrent session.
 - **On-device deploy path is now WORKING end-to-end** on a real Pixel (verified
