@@ -175,6 +175,26 @@ stream, not a wire-protocol event — don't confuse it with `protocol.js`.
   so it works even before the broker is updated. Page errors/load errors are logged
   as `[webui] …` in the runtime log.
 
+## Expo "Test": Metro must bind IPv4, and readiness ≠ /status
+
+The composer **Test** button starts Metro via `DevTools.startMetro` (`controls/devtools.js`)
+and deep-links Expo Go. Three device-specific gotchas, all learned the hard way:
+- **Metro binds IPv6 `::1` by default here.** `expo start --localhost` binds whatever
+  `localhost` resolves to — in the Debian guest that's `::1` — but Expo's manifest
+  always advertises `hostUri: 127.0.0.1`. So Expo Go follows the manifest to IPv4
+  127.0.0.1, finds nothing, and shows "Something went wrong" (a browser works because
+  it uses `localhost`→`::1`). Fix: spawn Metro with
+  `NODE_OPTIONS=--dns-result-order=ipv4first` so it binds 127.0.0.1, matching the
+  manifest. The `exp://` URL + readiness probe use 127.0.0.1 to match.
+- **Readiness isn't `/status`.** Expo's dev server leaves `/status` hanging; probe the
+  manifest endpoint (`GET /` + `expo-platform` header) instead, and accept any HTTP
+  response as "up" (the probe tries both 127.0.0.1 and ::1 as a safety net).
+- **The bundle builds fine in proot** (verified ~4.7 MB / HTTP 200); the failures were
+  always the binding, not the toolchain. `_diagnoseExpoManifest`/`_probeBundle` log a
+  `[diag]` line (manifest + native-bundle build result) to the terminal to confirm.
+- Expo Go also only runs apps whose **Expo SDK** it supports — keep Expo Go updated, or
+  pin scaffolded apps to a supported SDK.
+
 ## Stopping the broker: signal node directly, not proot
 
 `RuntimeLauncher.stop()` does NOT just kill the proot process. node runs as proot's
