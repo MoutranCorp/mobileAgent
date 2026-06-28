@@ -660,8 +660,13 @@
     const live = m.liveSessions || [];
     const busyById = new Map(); // sessionId -> busy
     const keyById = new Map();  // sessionId -> project key (to switch to a live bg session)
-    const turnById = new Map(); // sessionId -> last prompt/response time (authoritative for live sessions)
-    for (const s of live) if (s.sessionId) { busyById.set(s.sessionId, s.busy); keyById.set(s.sessionId, s.key); if (s.lastTurnTs) turnById.set(s.sessionId, s.lastTurnTs); }
+    for (const s of live) if (s.sessionId) { busyById.set(s.sessionId, s.busy); keyById.set(s.sessionId, s.key); }
+    // How long since the last real MESSAGE in a session — NOT the file mtime
+    // (`claude --resume` rewrites it on open) and NOT the live `lastTurnTs` (bumped
+    // when a tab is opened), both of which made a just-opened old session read
+    // "just now". `lastTs` is parsed from the session log's last user/assistant
+    // entry (see claude-config `lastMessageTsOf`) and always falls back to mtime.
+    const sessTs = (s) => (s && (s.lastTs || s.mtime)) || 0;
     const activeId = (live.find((s) => s.active) || {}).sessionId || m.activeSessionId || null;
 
     const items = m.items.sessions || [];
@@ -676,7 +681,9 @@
       if (!groups.has(k)) groups.set(k, { label: s.project || k, sess: [] });
       groups.get(k).sess.push(s);
     }
-    const order = [...groups.values()].sort((a, b) => (b.sess[0]?.mtime || 0) - (a.sess[0]?.mtime || 0));
+    // Sort sessions within each group, then groups, by newest last-message time.
+    for (const g of groups.values()) g.sess.sort((a, b) => sessTs(b) - sessTs(a));
+    const order = [...groups.values()].sort((a, b) => sessTs(b.sess[0]) - sessTs(a.sess[0]));
 
     for (const { label: project, sess } of order) {
       const head = el('div', 'mgr-label');
@@ -698,7 +705,7 @@
         // The folder is already shown in the group header above; only flag the case
         // where resuming can't reopen the original folder (it's not a tracked project,
         // so --resume falls back to the active folder).
-        const ts = turnById.get(s.id) || s.mtime; // live sessions: time since last prompt/response, not file mtime
+        const ts = sessTs(s); // time since the last MESSAGE, not when the tab was opened
         info.appendChild(el('div', 'mgr-row-desc', relTime(ts) + ' · ' + s.id.slice(0, 8) + tag + (!s.projectId && !isLive ? ' · opens in active folder' : '')));
         row.appendChild(info);
 
