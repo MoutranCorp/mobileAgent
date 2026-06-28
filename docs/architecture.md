@@ -103,10 +103,15 @@ viewing). Background sessions keep generating while you look at another. Read
   (busy, lastStatus, profileId, model, sessionId, projectId, cwd, lastActivityTs,
   pinned, title).
 - **Session keys.** The first session of a project uses `key === projectId` (so
-  all existing project-keyed behavior/tests are unchanged). A second+ concurrent
-  session in the same folder mints a suffixed key (`projA#2`) via
-  `_sessionKeyFor(project, { fresh: true })`. `_activeKeyByProject` binds each
-  project to its current foreground key. The no-project case uses `'__main__'`.
+  resume/cold-resume + project binding stay simple and readable). A second+ concurrent
+  session in the same folder mints `projectId-<token>` (a random hex suffix) via
+  `_sessionKeyFor(project, { fresh: true })`. The suffix is **non-recycling and
+  collision-checked** (`_keyTaken` rejects a clash with a live engine, a persisted
+  resume id, or an existing transcript file) — the old `projA#N` counter reset to 0 on
+  every broker restart, so keys recycled and a fresh session could inherit a dead
+  session's leftover transcript/resume id ("new tab shows old messages"). `-` is also
+  filesystem/URL-safe (unlike `#`). `_activeKeyByProject` binds each project to its
+  current foreground key. The no-project case uses `'__main__'`.
 - **`activeKey` is a view pointer**, not a lifecycle gate.
   `setActiveKey(key)` switches which session the UI sees *without stopping the
   others*; `newSession()` starts a fresh concurrent session in the active folder.

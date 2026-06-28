@@ -1,9 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { createEngine } from './engines/index.js';
 import { EventType, StatusState, event } from './protocol.js';
 
 export const MAIN_KEY = '__main__'; // session key when no project is open
+// Mirror of TranscriptStore's filename sanitizer, so we can tell whether a candidate
+// key would collide with an existing transcript on disk.
+const safeKey = (s) => String(s).replace(/[^a-zA-Z0-9_-]/g, '_');
 
 /**
  * SessionManager — owns one engine PER PROJECT (the session key) so background
@@ -29,7 +33,6 @@ export class SessionManager {
     this.engines = new Map(); // sessionKey -> engine (MANY live sessions, may share a project)
     this.meta = new Map(); // sessionKey -> { busy, lastStatus, profileId, model, sessionId, projectId, lastActivityTs, pinned, title }
     this._activeKeyByProject = new Map(); // projectId -> the project's currently-bound session key
-    this._keySeq = 0; // suffix counter for additional concurrent sessions in the same folder
     this.activeKey = this._sessionKeyFor(getActiveProject());
     this.activeProfileId = config.defaultProfile;
     this.permissionMode = config.permissionMode || 'default'; // global default for new engines
@@ -43,10 +46,16 @@ export class SessionManager {
 
   /**
    * The session key bound to a project's foreground session. For the FIRST session
-   * of a project the key === projectId, so all existing project-keyed behavior (and
-   * tests) is unchanged. `fresh` mints an additional suffixed key for a second+
-   * concurrent session in the same folder (`projA#2`), and binds it as the project's
-   * current session.
+   * of a project the key === projectId (readable, and keeps resume/cold-resume +
+   * project binding back-compatible). `fresh` mints an additional session in the same
+   * folder as `projectId-<token>` — a **non-recycling, collision-checked** suffix.
+   *
+   * The old scheme used `projectId#N` from an in-memory counter that RESET to 0 on
+   * every broker restart, so keys recycled and a "new" session could collide with a
+   * dead session's leftover transcript / resume id on disk (the "new tab shows old
+   * messages" bug). A random token never recycles; `-` is filesystem/URL-safe (unlike
+   * `#`); and `_keyTaken` rejects any clash with a live engine, a persisted resume id,
+   * or an existing transcript file.
    */
   _sessionKeyFor(project, { fresh = false } = {}) {
     const pid = project?.id || MAIN_KEY;
@@ -56,13 +65,23 @@ export class SessionManager {
       this._activeKeyByProject.set(pid, pid); // first session: key === projectId
       return pid;
     }
-    // Use the bare projectId only when it's truly unused; otherwise mint a fresh,
-    // non-colliding suffix so a new tab can never overwrite a live engine.
-    if (!bound && !this.meta.has(pid)) { this._activeKeyByProject.set(pid, pid); return pid; }
+    // Bare projectId only when truly unused (no live engine, no leftover state);
+    // otherwise mint a unique suffixed key that can't overwrite anything.
+    if (!bound && !this._keyTaken(pid)) { this._activeKeyByProject.set(pid, pid); return pid; }
     let key;
-    do { key = `${pid}#${++this._keySeq}`; } while (this.meta.has(key));
+    do { key = `${pid}-${crypto.randomBytes(4).toString('hex')}`; } while (this._keyTaken(key));
     this._activeKeyByProject.set(pid, key);
     return key;
+  }
+
+  /** A key is unavailable if a live engine/meta holds it, a persisted resume id is
+   *  keyed by it, OR a transcript file already exists for it — so a freshly-minted key
+   *  is guaranteed blank (no recycled history) even across broker restarts. */
+  _keyTaken(key) {
+    if (this.meta.has(key)) return true;
+    if (Object.prototype.hasOwnProperty.call(this._sessionByProject, key)) return true;
+    try { return fs.existsSync(path.join(this.config.stateDir, 'transcripts', `${safeKey(key)}.jsonl`)); }
+    catch { return false; }
   }
 
   _projectById(id) { return (id && this.getProject(id)) || null; }

@@ -415,9 +415,9 @@
   }
   function tabTitleFor(key, projectId, title) {
     if (title) return title;
-    const base = projectName(projectId) || (projectId ? String(projectId) : 'Session');
-    const suffix = String(key).includes('#') ? ' ' + String(key).slice(String(key).indexOf('#')) : '';
-    return base + suffix;
+    // renderTabs numbers tabs per folder ("demo", "demo 2") independent of the key,
+    // so just return the folder base here (the opaque key suffix isn't user-facing).
+    return projectName(projectId) || (projectId ? String(projectId) : 'Session');
   }
   // Sessions the user explicitly closed (✕). Persisted so a reload doesn't re-add
   // their tabs from the SESSIONS list. They stay on disk (resumable via Sessions).

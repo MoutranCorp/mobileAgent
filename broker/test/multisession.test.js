@@ -53,11 +53,14 @@ test('multiple live sessions per folder: new_session keeps the first alive, dist
     send({ type: 'new_session' });
     await waitFor((e) => e.type === 'sessions' && e.items.length === 2);
     const keys = server.session.liveSessions().map((s) => s.key).sort();
-    assert.deepEqual(keys, ['projA', 'projA#1']);
+    assert.equal(keys.length, 2);
+    assert.ok(keys.includes('projA'), 'the first session keeps key === projectId');
+    const fresh = keys.find((k) => k !== 'projA');
+    assert.ok(/^projA-[0-9a-f]+$/.test(fresh), `the new session is a project-prefixed unique key, got ${fresh}`);
     const pids = server.session.liveSessions().map((s) => s.projectId);
     assert.deepEqual(pids, ['projA', 'projA'], 'both sessions in the same folder');
     assert.equal(server.session.engines.size, 2, 'both engines live concurrently');
-    assert.equal(server.session.activeKey, 'projA#1', 'the new session is focused');
+    assert.equal(server.session.activeKey, fresh, 'the new session is focused');
   } finally { ws.close(); await server.stop(); }
 });
 
@@ -89,8 +92,9 @@ test('_projectForKey resolves a suffixed session key to its folder via meta', as
     await open('projA');
     send({ type: 'new_session' });
     await waitFor((e) => e.type === 'sessions' && e.items.length === 2);
-    // 'projA#2' is not a projectId — old code would return null.
-    assert.equal(server._projectForKey('projA#1')?.id, 'projA');
+    // The suffixed key (projA-<token>) is not a projectId — old code would return null.
+    const fresh = server.session.liveSessions().map((s) => s.key).find((k) => k !== 'projA');
+    assert.equal(server._projectForKey(fresh)?.id, 'projA');
     assert.equal(server._projectForKey('projA')?.id, 'projA'); // first session still resolves
   } finally { ws.close(); await server.stop(); }
 });
@@ -204,14 +208,15 @@ test('SWITCH_SESSION keeps projects.activeId synced to the focused session proje
   try {
     await open('projA');
     const p1 = waitNext((e) => e.type === 'sessions' && e.items.length === 2);
-    send({ type: 'new_session' });           // projA#1 in projA
+    send({ type: 'new_session' });           // a 2nd session (projA-<token>) in projA
     await p1;
+    const fresh = server.session.liveSessions().map((s) => s.key).find((k) => k !== 'projA');
     await open('projB');                      // now active projB
-    const p2 = waitNext((e) => e.type === 'sessions' && e.activeKey === 'projA#1');
-    send({ type: 'switch_session', key: 'projA#1' });
+    const p2 = waitNext((e) => e.type === 'sessions' && e.activeKey === fresh);
+    send({ type: 'switch_session', key: fresh });
     await p2;
-    assert.equal(server.session.activeKey, 'projA#1');
-    assert.equal(server.projects.activeId, server.session.meta.get('projA#1').projectId, 'activeId tracks the focused session folder');
+    assert.equal(server.session.activeKey, fresh);
+    assert.equal(server.projects.activeId, server.session.meta.get(fresh).projectId, 'activeId tracks the focused session folder');
     assert.equal(server.projects.activeId, 'projA');
   } finally { ws.close(); await server.stop(); }
 });
@@ -227,28 +232,32 @@ test('concurrent sessions in the same folder get DISTINCT session ids (no resume
     while (Date.now() - t0 < ms) { if (fn()) return; await new Promise((r) => setTimeout(r, 25)); }
     throw new Error('timeout waiting for state');
   };
+  const liveKeys = () => server.session.liveSessions().map((s) => s.key);
+  const freshKeys = () => liveKeys().filter((k) => k !== 'projA');
   try {
     await open('projA');
     await waitState(() => server.session.meta.get('projA')?.sessionId);
     const id1 = server.session.meta.get('projA').sessionId;
 
     send({ type: 'new_session' }); // fresh concurrent tab in the same folder
-    await waitState(() => server.session.meta.get('projA#1')?.sessionId);
-    const id2 = server.session.meta.get('projA#1').sessionId;
+    await waitState(() => freshKeys().some((k) => server.session.meta.get(k)?.sessionId));
+    const key2 = freshKeys()[0];
+    const id2 = server.session.meta.get(key2).sessionId;
 
     assert.ok(id1 && id2, 'both sessions resolved a session id');
     assert.notEqual(id1, id2, 'concurrent fresh sessions must NOT share a Claude session id');
 
     // A third tab too — still distinct.
     send({ type: 'new_session' });
-    await waitState(() => server.session.meta.get('projA#2')?.sessionId);
-    const id3 = server.session.meta.get('projA#2').sessionId;
+    await waitState(() => freshKeys().length === 2 && freshKeys().every((k) => server.session.meta.get(k)?.sessionId));
+    const key3 = freshKeys().find((k) => k !== key2);
+    const id3 = server.session.meta.get(key3).sessionId;
     assert.equal(new Set([id1, id2, id3]).size, 3, 'three tabs -> three distinct sessions');
 
     // The persisted resume map is keyed by session KEY, not the folder, so each
     // tab's id is recoverable independently.
     assert.equal(server.session._sessionByProject['projA'], id1);
-    assert.equal(server.session._sessionByProject['projA#1'], id2);
-    assert.equal(server.session._sessionByProject['projA#2'], id3);
+    assert.equal(server.session._sessionByProject[key2], id2);
+    assert.equal(server.session._sessionByProject[key3], id3);
   } finally { ws.close(); await server.stop(); }
 });

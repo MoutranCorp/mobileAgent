@@ -578,10 +578,9 @@ export class BrokerServer {
         // running. Point the transcript at the new key and start it blank.
         await this.session.newSession();
         this.transcript.setProject(this.session.activeKey);
-        // A fresh session's key (projA#N) is minted from a counter that resets when the
-        // broker restarts, so it can collide with a dead session's leftover transcript
-        // file on disk — which would make the "new" tab open showing old messages.
-        // Clear it so a new session is always blank.
+        // Belt-and-suspenders: session keys are now collision-checked against existing
+        // transcripts (_keyTaken), so a fresh key is already unused — clear() just
+        // guarantees the new session starts blank.
         this.transcript.clear();
         this.broadcast(event(EventType.TRANSCRIPT, { events: this.transcript.replay(), reset: true }));
         this.broadcast(event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
@@ -665,7 +664,7 @@ export class BrokerServer {
       case CommandType.LIST_LIVE_SESSIONS:
         return this._send(ws, event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
       case CommandType.SWITCH_SESSION: {
-        // A session key may be suffixed (projA#2), so resolve its folder via meta;
+        // A session key may be suffixed (projA-<token>), so resolve its folder via meta;
         // keep projects.activeId synced to the focused session's project.
         const pid = this.session.meta.get(cmd.key)?.projectId || (cmd.key && cmd.key !== '__main__' ? cmd.key : null);
         if (pid && this.projects.get(pid) && pid !== this.projects.activeId) {
