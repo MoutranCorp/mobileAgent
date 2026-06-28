@@ -72,6 +72,14 @@ export class DevTools {
     };
     const { promise } = this.runner.start(channel, cmd, { cwd: expoDir, env });
     this._metro.set(project.id, { port, url, ready: false });
+    // Print the Expo Go URL into the terminal. Expo's QR code + "Press a │ open
+    // Android" menu only render when it's attached to a real TTY; run headlessly
+    // (piped) it stays silent, so surface the deep link ourselves — the Test button
+    // opens it, or paste it into Expo Go → "Enter URL manually".
+    this.emit(event(EventType.CONTROL_OUTPUT, {
+      channel, stream: 'stdout',
+      data: `\n▶ Open in Expo Go: ${url}  (Test opens this for you; or paste it into Expo Go → Enter URL manually)\n`,
+    }));
     // Report STARTING (not running) — the UI shows progress and only opens the dev
     // client once Metro is actually ready (see _awaitReady). Reporting running too
     // early was the "Test does nothing" bug: the dev client opened before Metro was
