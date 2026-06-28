@@ -77,6 +77,9 @@ test('startMetro spawns in the Expo app dir and reports "starting" (not running)
   assert.match(runner.calls[0].cmd, /expo start/);
   assert.match(runner.calls[0].cmd, /--go/, 'defaults to Expo Go (the no-build, store-installed client)');
   assert.doesNotMatch(runner.calls[0].cmd, /--dev-client/);
+  // Critical: force Metro to bind IPv4 so it matches the manifest's 127.0.0.1 hostUri
+  // (else `--localhost` binds ::1-only and Expo Go can't connect on-device).
+  assert.match(runner.calls[0].opts.env.NODE_OPTIONS || '', /--dns-result-order=ipv4first/);
   const first = metro()[0];
   assert.equal(first.running, false);
   assert.equal(first.starting, true, 'reports starting, not running — the client must not open yet');

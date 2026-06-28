@@ -42,11 +42,11 @@ export class DevTools {
     if (!project) return this._err('No active project to start Metro for.');
     const channel = this.metroChannel(project.id);
     const port = project.metroPort;
-    // Use `localhost`, not `127.0.0.1`: `expo start --localhost` binds whatever
-    // `localhost` resolves to (often IPv6 `::1` in the Debian guest), so an IPv4
-    // exp:// URL is refused. `localhost` resolves the same way on the device, so
-    // Expo Go reaches the same socket Metro bound.
-    const url = `exp://localhost:${port}`;
+    // exp:// host is 127.0.0.1 to MATCH the manifest's hostUri (Expo always advertises
+    // 127.0.0.1 here) AND Metro's bind — which we force to IPv4 below. Without that,
+    // `--localhost` bound IPv6 `::1` only while the manifest told Expo Go to use
+    // 127.0.0.1, so Expo Go connected to a dead address ("Something went wrong").
+    const url = `exp://127.0.0.1:${port}`;
 
     if (this.runner.isRunning(channel)) {
       const info = this._metro.get(project.id) || { port, url };
@@ -66,13 +66,19 @@ export class DevTools {
       return this._err('No Expo project found.');
     }
 
-    // --localhost binds 127.0.0.1; the client flag picks Expo Go vs a dev build.
+    // --localhost keeps the dev server on loopback; the client flag picks Expo Go
+    // vs a dev build.
     const cmd = `npx --yes expo start --localhost ${this._expoFlag()} --port ${port}`;
     const env = {
       // Metro file-watching is flaky under proot; fall back to Node's watcher.
       WATCHMAN_DISABLE: '1',
       CI: '0',
       EXPO_NO_TELEMETRY: '1',
+      // THE Expo-Go-on-device fix: force Node to resolve `localhost` to IPv4 first so
+      // Metro binds 127.0.0.1 — matching the manifest's hostUri (always 127.0.0.1).
+      // Otherwise `--localhost` binds IPv6 `::1` only and Expo Go (which follows the
+      // manifest to 127.0.0.1) hits a dead address. Preserve any inherited NODE_OPTIONS.
+      NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --dns-result-order=ipv4first`.trim(),
     };
     const { promise } = this.runner.start(channel, cmd, { cwd: expoDir, env });
     this._metro.set(project.id, { port, url, ready: false });
@@ -273,7 +279,7 @@ export class DevTools {
     const alive = this.runner.isRunning(this.metroChannel(project.id));
     const info = this._metro.get(project.id) || {
       port: project.metroPort,
-      url: `exp://localhost:${project.metroPort}`,
+      url: `exp://127.0.0.1:${project.metroPort}`,
     };
     // running only once it has answered (ready); alive-but-not-ready = starting. This
     // keeps a tab switch from reporting a still-booting Metro as openable.
