@@ -306,28 +306,35 @@ export class SessionManager {
       // while holding real history (a sessionId) it must still surface — otherwise
       // it vanished irrecoverably until a reload.
       if (key === MAIN_KEY && !m.sessionId) continue;
+      // A session with inTurn but no engine is WAKING — a prompt was queued and the
+      // engine is still (re)spawning (proot + claude + --resume). It must read as working,
+      // not 💤 sleeping, or the tab + focused chrome show idle during the whole cold start.
+      const waking = !!m.inTurn;
       out.push({
         key, projectId: m.projectId, profileId: m.profileId, model: m.model,
-        sessionId: m.sessionId, busy: false, lastStatus: 'idle',
-        active: key === this.activeKey, pid: null, status: 'sleeping',
-        idleMs: m.lastActivityTs ? Math.max(0, now - m.lastActivityTs) : 0,
+        sessionId: m.sessionId, busy: waking, lastStatus: waking ? 'working' : 'idle',
+        active: key === this.activeKey, pid: null, status: waking ? 'working' : 'sleeping',
+        idleMs: waking ? 0 : (m.lastActivityTs ? Math.max(0, now - m.lastActivityTs) : 0),
         lastTurnTs: m.lastTurnTs || m.lastActivityTs || null,
-        pinned: !!m.pinned, title: m.title || (key === MAIN_KEY ? 'Main' : null), sleeping: true,
+        pinned: !!m.pinned, title: m.title || (key === MAIN_KEY ? 'Main' : null), sleeping: !waking,
       });
     }
     return out;
   }
 
   async sendUserMessage(text, images) {
-    const engine = await this.ensureEngine();
-    if (!engine) return;
+    // inTurn marks the session busy the INSTANT a prompt is queued — set it BEFORE
+    // ensureEngine(), because a cold/idle-evicted session's spawn (proot + claude +
+    // --resume) takes SECONDS, and during that window the session must already read as
+    // busy: it shows the working indicator immediately, keeps the focused chrome (Stop
+    // button / pill / activity row) from reconciling back to idle on the optimistic
+    // timeout, and protects the session from eviction mid-spawn. Cleared on
+    // result / error / interrupt. (Fixes the cold-send "stays idle" bug.)
     const m = this.meta.get(this.activeKey);
-    // inTurn marks the session busy the INSTANT a prompt is queued — before the engine
-    // emits its first status (seconds, for a cold session). It protects the session
-    // from eviction for the whole turn and shows the working indicator immediately;
-    // cleared on result / error / interrupt. (Fixes the dropped-prompt race + lag.)
     if (m) { m.inTurn = true; m.lastTurnTs = Date.now(); m.lastActivityTs = Date.now(); }
     this._emitSessions();
+    const engine = await this.ensureEngine();
+    if (!engine) { if (m) m.inTurn = false; this._emitSessions(); return; }
     await engine.send({ type: 'user_message', text, images });
   }
 

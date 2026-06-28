@@ -137,6 +137,27 @@ test('inTurn marks a session working the instant a prompt is queued, protecting 
   } finally { ws.close(); await server.stop(); }
 });
 
+test('sendUserMessage marks a COLD session working before its engine finishes spawning (no idle/💤 gap)', async () => {
+  const { server, ws, open } = await boot(['projA']);
+  try {
+    await open('projA'); // active = projA, engine live
+    await server.session.stopEngineKeepTranscript('projA'); // idle-evict -> cold; meta kept
+    assert.equal(server.session.engines.has('projA'), false);
+    let ui = server.session.uiSessions().find((s) => s.key === 'projA');
+    assert.equal(ui.sleeping, true, 'evicted session is sleeping before we send');
+    // Queue a prompt but DON'T await: inTurn is set synchronously BEFORE ensureEngine's
+    // (multi-second) cold spawn, so the session must already read as working — not idle,
+    // not 💤. (This is the bug the screenshot caught: inTurn used to be set AFTER the
+    // await, leaving the whole cold-start window looking idle.)
+    const turn = server.session.sendUserMessage('hello');
+    ui = server.session.uiSessions().find((s) => s.key === 'projA');
+    assert.equal(ui.busy, true, 'cold session is busy the instant the prompt is queued');
+    assert.equal(ui.status, 'working');
+    assert.equal(ui.sleeping, false, 'a waking session is never shown as sleeping');
+    await turn; // let the cold-resume + turn complete
+  } finally { ws.close(); await server.stop(); }
+});
+
 test('RESOURCES is emitted on connect with a valid shape', async () => {
   const { server, ws, waitFor } = await boot(['projA']);
   try {

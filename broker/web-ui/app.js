@@ -398,7 +398,10 @@
       const idleOk = Date.now() > (state._optimisticUntil || 0) && !awaitingActive();
       // Nav status pill = the ACTIVE session's engine status. Background statuses are
       // suppressed, so without this it stays stuck (e.g. "thinking") after a switch.
-      const ps = act.busy ? (act.lastStatus || 'thinking') : (idleOk ? 'idle' : null);
+      // A session busy via inTurn (cold start / queued prompt) has no real engine status
+      // yet (lastStatus is still 'idle'); show 'working' rather than a misleading 'idle'.
+      const liveStatus = act.lastStatus && act.lastStatus !== 'idle' ? act.lastStatus : 'working';
+      const ps = act.busy ? liveStatus : (idleOk ? 'idle' : null);
       if (ps) { const pill = $('statusPill'); if (pill) { pill.className = 'status-pill ' + ps; pill.textContent = ps; } }
       const want = act.busy ? (act.lastStatus === 'waiting' ? 'waiting' : 'working') : 'idle';
       if (want !== state.activity && (want !== 'idle' || idleOk)) setActivity(want);
@@ -1105,6 +1108,9 @@
   // actually produces a real event — so waking a cold/idle-evicted session (proot +
   // claude init takes a few seconds) doesn't flicker idle before "thinking" appears.
   function awaitingActive() { return !!state._awaitingFirstEvent && Date.now() < (state._awaitingUntil || 0); }
+  // The broker's authoritative "is the focused session working" (busy = engine status OR
+  // inTurn) — used to keep the header from flickering idle on a stray init status.
+  function activeSessionBusy() { const a = state.sessions.find((s) => s.key === state.activeKey); return !!(a && a.busy); }
   function clearAwaiting() { state._awaitingFirstEvent = false; state._coldStart = false; }
   function beginAwaiting(wakeMs) {
     state._awaitingFirstEvent = true;
@@ -1794,6 +1800,11 @@
   // ---- status / usage / context --------------------------------------------
 
   function setStatus(stateName, detail) {
+    // A freshly-spawned engine emits 'idle' at init, BEFORE 'thinking'. That must not
+    // downgrade the header mid-turn: we're either still latched awaiting the first real
+    // event, or the broker reports the active session busy (inTurn). The turn ends on
+    // RESULT, not this init idle — so swallow a stray idle while a turn is in flight.
+    if (stateName === 'idle' && (awaitingActive() || activeSessionBusy())) return;
     const pill = $('statusPill');
     pill.className = 'status-pill ' + (stateName || 'idle');
     pill.textContent = stateName || 'idle';
@@ -2650,6 +2661,9 @@
     state._coldStart = waking;
     state._wakeResuming = !!(liveAct && liveAct.sessionId);
     setActivity('working', waking ? 'Waking session…' : 'Thinking…');
+    // Flip the header pill now too — setActivity drives the composer/activity row but not
+    // the pill, which otherwise stays "idle" until the first engine status round-trips.
+    { const pill = $('statusPill'); if (pill) { pill.className = 'status-pill working'; pill.textContent = 'working'; } }
     beginAwaiting(waking ? 8000 : 2000); // latch the indicator until the engine responds
     const payload = { type: 'user_message', text, images: images.length ? images : undefined };
     requestAnimationFrame(() => send(payload)); // send after the UI has painted
