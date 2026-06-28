@@ -72,7 +72,8 @@ Reasons, all of which will bite a naive rewrite:
 
 `ensureBrokerSource()` `git clone`s the repo to `/root/mobileAgent` and runs the
 broker from `/root/mobileAgent/broker` — a **real checkout** whose toplevel is the
-repo, so the in-app Update (`updater.js` → `git pull --ff-only`) works. Falls back
+repo, so the in-app Update (`updater.js` → shallow `git fetch` + `git reset --hard`,
+re-clone on corruption) works. Falls back
 to extracting the bundled `broker.tar.gz` at `/root/agent-broker` when a clone
 isn't possible (offline / private repo / no token). `brokerArgv()` runs from
 whichever exists. A `GITHUB_TOKEN`/`GIT_TOKEN` secret (injected into the guest env)

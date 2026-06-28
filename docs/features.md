@@ -61,9 +61,16 @@ Components: [`broker/`](../broker) (heart + tests), [`broker/web-ui/`](../broker
   scan), `frontmatter`, `devtools`.
 - **In-app self-update** (`controls/updater.js`): finds the app repo via
   `git rev-parse --show-toplevel`, reports the current build (sha/subject/branch/
-  dirty), runs `git pull --ff-only`, and classifies changed paths — web-ui → one-tap
-  Reload (served from disk), broker src/deps → "restart the broker", android →
-  rebuild. `APP_VERSION` / `APP_UPDATE` protocol messages.
+  dirty), and updates by **`git fetch --depth=1 origin <branch>` + `git reset --hard
+  FETCH_HEAD`** (NOT `git pull`). The delivery clone is shallow (`--depth 1`), and
+  `git pull` on a shallow clone is fragile — it fails with "did not send all necessary
+  objects" and a half-finished pull corrupts the object store ("bad object …");
+  fetch+reset skips history reconciliation and jumps straight to the tip even if the
+  old HEAD is corrupt. If the fetch itself fails (deeper corruption), it **re-clones
+  fresh and swaps the directory** in (`_reclone`; the clone holds no user data).
+  Classifies changed paths — web-ui → one-tap Reload (served from disk), broker
+  src/deps → "restart the broker", android → rebuild. Dirty-tree guard refuses to
+  reset over local edits. `APP_VERSION` / `APP_UPDATE` protocol messages.
 - **Revert/rewind:** `REVERT { turnId, checkpointId?, text }` restores files and
   truncates the conversation to before a user message (`REVERTED` event).
 

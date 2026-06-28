@@ -39,12 +39,23 @@ each step gated by its own marker so it runs once:
 3. **provision the toolchain** — apt + Node 22 + Claude CLI (`.provisioned`),
 4. **deliver the broker source** (`.broker_source`, version `BROKER_SOURCE_VERSION`).
 
-**Updating the broker / UI = the in-app Update (git pull).** Step 4 delivers the
-broker as a real **git clone** at `/root/mobileAgent` (broker runs from
-`/root/mobileAgent/broker`), so the Manage → Update panel's `git pull --ff-only`
-works: web-ui changes apply on a browser reload, `broker/src` changes need a Stop+Start
-(Runtime tab). Bumping `BROKER_SOURCE_VERSION` re-runs *only* step 4, migrating an
+**Updating the broker / UI = the in-app Update.** Step 4 delivers the broker as a real
+**`git clone --depth 1`** at `/root/mobileAgent` (broker runs from
+`/root/mobileAgent/broker`), so the Manage → Update panel works: web-ui changes apply
+on a browser reload, `broker/src` changes need a Stop+Start (Runtime tab). The clone
+is **shallow**, so Update uses `git fetch --depth=1 origin <branch>` + `git reset
+--hard FETCH_HEAD` (NOT `git pull` — which on a shallow clone fails with "did not send
+all necessary objects" and can corrupt the object store); if the fetch fails it
+**re-clones fresh**. Bumping `BROKER_SOURCE_VERSION` re-runs *only* step 4, migrating an
 existing bundled install to a clone without re-downloading the rootfs or re-running apt.
+
+**Manual recovery if the clone is corrupt** ("`fatal: bad object …`" / "did not send
+all necessary objects" from a `git pull` interrupted mid-fetch) — in the in-app
+Terminal: `cd /root/mobileAgent && git fetch --depth=1 origin main && git reset --hard
+FETCH_HEAD`; if that still errors, re-clone: `cd /root && git clone --depth 1
+<repo-url> mobileAgent.new && rm -rf mobileAgent && mv mobileAgent.new mobileAgent`,
+then Stop & Start the runtime. The clone holds no user data (projects + sessions live
+outside it).
 
 - **Private repo:** set a `GITHUB_TOKEN` (or `GIT_TOKEN`) secret in the Runtime tab. It's
   injected into the guest env and stored as a git credential (`/root/.git-credentials`,

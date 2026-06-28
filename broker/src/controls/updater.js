@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import fs from 'node:fs';
 import path from 'node:path';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -45,11 +46,18 @@ export class Updater {
     return { ok: log.code === 0, sha, subject, when, branch: branch.stdout || 'HEAD', dirty: !!status.stdout, top };
   }
 
-  /** Run `git pull --ff-only` and classify what changed. */
+  /**
+   * Update to the latest commit on the current branch. The broker runs from a
+   * `git clone --depth 1` (shallow) delivery clone, and `git pull` on a shallow
+   * clone is fragile — it can fail with "did not send all necessary objects", and a
+   * half-finished pull corrupts the local object store ("bad object …"). So we
+   * **fetch the branch tip at depth 1 and hard-reset to it**: no history
+   * reconciliation, and it jumps straight to the new tip even if the old HEAD is
+   * corrupt. If even the fetch fails (deeper corruption), we re-clone fresh.
+   */
   async update() {
     const top = await this._toplevel();
-    // Pre-check for a dirty tree: `git pull --ff-only` fails opaquely when there
-    // are local edits. Surface it as an actionable message instead.
+    // Pre-check for a dirty tree: a hard reset would silently discard local edits.
     const dirty = await this._git(['status', '--porcelain'], { cwd: top });
     if (dirty.code === 0 && dirty.stdout.trim()) {
       return {
@@ -60,24 +68,63 @@ export class Updater {
         top,
       };
     }
+    const branch = (await this._git(['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: top })).stdout || 'main';
     const before = (await this._git(['rev-parse', 'HEAD'], { cwd: top })).stdout;
-    const pull = await this._git(['pull', '--ff-only'], { cwd: top, timeout: 90000 });
-    const after = (await this._git(['rev-parse', 'HEAD'], { cwd: top })).stdout;
-    const log = [pull.stdout, pull.stderr].filter(Boolean).join('\n');
+    const fetch = await this._git(['fetch', '--depth=1', 'origin', branch], { cwd: top, timeout: 120000 });
+    if (fetch.code === 0) {
+      const reset = await this._git(['reset', '--hard', 'FETCH_HEAD'], { cwd: top });
+      if (reset.code === 0) {
+        const after = (await this._git(['rev-parse', 'HEAD'], { cwd: top })).stdout;
+        const log = [fetch.stdout, fetch.stderr, reset.stdout].filter(Boolean).join('\n');
+        if (before && before === after) {
+          return { ok: true, upToDate: true, fromSha: short(before), toSha: short(after), changed: [], log, top };
+        }
+        const diff = before ? await this._git(['diff', '--name-only', before, after], { cwd: top }) : { code: 1 };
+        const changed = diff.code === 0 ? diff.stdout.split('\n').map((s) => s.trim()).filter(Boolean) : [];
+        // If we couldn't diff (corrupt/absent old HEAD), assume the worst so the user restarts.
+        const cls = diff.code === 0 ? classifyChanges(changed) : { needsReload: true, needsRestart: true, needsRebuild: false };
+        const subject = (await this._git(['log', '-1', '--format=%s', after], { cwd: top })).stdout;
+        return {
+          ok: true, upToDate: false, fromSha: short(before), toSha: short(after), subject,
+          changed, count: changed.length, ...cls, log, top,
+        };
+      }
+    }
+    // Fetch (or reset) failed — the local clone is likely corrupt. Re-clone fresh.
+    return this._reclone(top, branch, [fetch.stdout, fetch.stderr].filter(Boolean).join('\n'));
+  }
 
-    if (pull.code !== 0) {
-      return { ok: false, message: firstLine(pull.stderr || pull.stdout) || 'git pull failed', log, top };
+  /** Last-resort recovery: clone a fresh copy beside the broken clone and swap it in.
+   *  The clone holds no user data (projects/sessions live outside it), so this is
+   *  safe; the running broker keeps its open files until a restart picks up the new
+   *  copy. Uses the existing origin URL + stored git credentials. */
+  async _reclone(top, branch, priorLog = '') {
+    let url = (await this._git(['remote', 'get-url', 'origin'], { cwd: top })).stdout;
+    // If the clone is corrupt enough that even `git remote` fails, read the URL
+    // straight out of .git/config (plain text, no objects needed).
+    if (!url) {
+      try { url = (fs.readFileSync(path.join(top, '.git', 'config'), 'utf8').match(/^\s*url\s*=\s*(.+)$/m) || [])[1]?.trim() || ''; } catch { /* ignore */ }
     }
-    if (before === after) {
-      return { ok: true, upToDate: true, fromSha: short(before), toSha: short(after), changed: [], log, top };
+    if (!url) return { ok: false, message: 'Update failed and no origin URL to re-clone from.', log: priorLog, top };
+    const parent = path.dirname(top);
+    const tmp = path.join(parent, path.basename(top) + '.new');
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* ignore */ }
+    const clone = await this._git(['clone', '--depth', '1', '--branch', branch, url, tmp], { cwd: parent, timeout: 180000 });
+    if (clone.code !== 0) {
+      return { ok: false, message: 'Re-clone failed: ' + (firstLine(clone.stderr || clone.stdout) || 'git clone error'), log: [priorLog, clone.stderr].filter(Boolean).join('\n'), top };
     }
-    const diff = await this._git(['diff', '--name-only', before, after], { cwd: top });
-    const changed = diff.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
-    const cls = classifyChanges(changed);
-    const subject = (await this._git(['log', '-1', '--format=%s', after], { cwd: top })).stdout;
+    try {
+      fs.rmSync(top, { recursive: true, force: true });
+      fs.renameSync(tmp, top);
+    } catch (e) {
+      return { ok: false, message: 'Re-clone swap failed: ' + e.message, log: priorLog, top };
+    }
+    const after = (await this._git(['rev-parse', 'HEAD'], { cwd: top })).stdout;
     return {
-      ok: true, upToDate: false, fromSha: short(before), toSha: short(after), subject,
-      changed, count: changed.length, ...cls, log, top,
+      ok: true, recloned: true, upToDate: false, toSha: short(after), changed: [],
+      needsReload: true, needsRestart: true,
+      message: 'The local clone was corrupt — re-cloned a fresh copy. Stop & Start the runtime to apply.',
+      log: [priorLog, 'Re-cloned ' + url].filter(Boolean).join('\n'), top,
     };
   }
 }
