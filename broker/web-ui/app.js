@@ -2930,6 +2930,14 @@
       copyToClipboard(text);
       toast(`Copied terminal output (${text.split('\n').length} lines)`, 'info');
     };
+    // Ctrl-C: stop whatever's running from the terminal — the foreground `run`
+    // command AND the active project's Metro (the "runtime"). Harmless if idle.
+    $('termCtrlC').onclick = () => {
+      send({ type: 'run_stop' });
+      if (state.activeProjectId) send({ type: 'stop_metro', projectId: state.activeProjectId });
+      appendTerminalMeta('^C — stopping the running command + Metro');
+      toast('Sent ⌃C — stopping running command + Metro', 'info');
+    };
     $('termInput').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         const line = e.target.value;
