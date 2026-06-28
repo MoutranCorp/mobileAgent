@@ -1518,7 +1518,9 @@
     if (w.hideBtn) { w.hideBtn.textContent = collapsed ? 'Show' : 'Hide'; w.hideBtn.classList.toggle('on', !collapsed); }
     if (collapsed) {
       w.code.classList.add('hidden'); w.codeShown = false; if (w.codeBtn) w.codeBtn.classList.remove('on');
-      if (w.kind === 'html' && w.frame) { w.body.innerHTML = ''; w.frame = null; w.running = false; } // stop the running app
+      // Stop the running app. We discard the iframe, so mark it unrendered — the
+      // next Show must rebuild it (otherwise the body re-opens empty).
+      if (w.kind === 'html' && w.frame) { w.body.innerHTML = ''; w.frame = null; w.running = false; w._rendered = false; }
     } else if (!w._rendered || w._dirty) {
       renderFileBody(w); w._rendered = true; w._dirty = false;
     }
