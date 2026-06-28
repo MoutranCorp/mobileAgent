@@ -10,6 +10,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.PowerManager
 import android.provider.Settings
 import android.speech.RecognitionListener
@@ -50,6 +51,11 @@ class MainActivity : ComponentActivity(), MainActions {
             if (granted) beginRecognition() else { voiceCb?.invoke(null); voiceCb = null }
         }
 
+    // Pre-API-30 path for "all files access": the legacy WRITE_EXTERNAL_STORAGE
+    // runtime permission (with targetSdk 28 this grants broad shared-storage access).
+    private val storagePermLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* state re-read on resume */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AgentForegroundService.start(this)
@@ -72,6 +78,24 @@ class MainActivity : ComponentActivity(), MainActions {
             Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
         }
         runCatching { startActivity(intent) }
+    }
+
+    override fun hasAllFilesAccess(): Boolean =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) Environment.isExternalStorageManager()
+        else checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+
+    override fun requestAllFilesAccess() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // Open this app's "All files access" screen; fall back to the global list.
+            val scoped = runCatching {
+                Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName"))
+            }.getOrNull()
+            val ok = scoped != null && runCatching { startActivity(scoped) }.isSuccess
+            if (!ok) runCatching { startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) }
+                .onFailure { Toast.makeText(this, "Open Settings → Apps → special access → All files access", Toast.LENGTH_LONG).show() }
+        } else {
+            storagePermLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
     }
 
     override fun brokerUrl(): String = RuntimeConfig.brokerUrl(this)

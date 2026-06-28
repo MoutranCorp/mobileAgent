@@ -24,6 +24,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.ondevice.agent.service.ClaudeLogin
 import com.ondevice.agent.service.ClaudeUpdate
 import com.ondevice.agent.service.RuntimeController
@@ -35,6 +38,10 @@ interface MainActions {
     fun stopService()
     fun isBatteryExempt(): Boolean
     fun requestBatteryExempt()
+    // "All files access" (MANAGE_EXTERNAL_STORAGE) so the File Manager + agent can
+    // read the whole shared-storage tree, not just the app-scoped view.
+    fun hasAllFilesAccess(): Boolean
+    fun requestAllFilesAccess()
     fun brokerUrl(): String
     fun setBrokerUrl(url: String)
     fun defaultProfile(): String
@@ -149,6 +156,8 @@ private fun RuntimeTab(state: RuntimeState, detail: String, actions: MainActions
         ClaudeSignInSection()
 
         ClaudeUpdateSection(state)
+
+        FileAccessSection(actions)
 
         var exempt by remember { mutableStateOf(actions.isBatteryExempt()) }
         Section("Battery (keep alive while testing)") {
@@ -325,6 +334,41 @@ private fun ClaudeUpdateSection(runtime: RuntimeState) {
         FilledButton(if (busy) "Updating…" else "Update Claude Code") {
             if (!busy) ClaudeUpdate.update(ctx)
         }
+    }
+}
+
+/** Toggle Android "All files access" so the File Manager (and the agent) can reach
+ *  the whole shared-storage tree, not just the app-scoped view. */
+@Composable
+private fun FileAccessSection(actions: MainActions) {
+    val owner = LocalLifecycleOwner.current
+    var granted by remember { mutableStateOf(actions.hasAllFilesAccess()) }
+    // Re-read the grant when returning from the system settings screen.
+    DisposableEffect(owner) {
+        val obs = LifecycleEventObserver { _, e ->
+            if (e == Lifecycle.Event.ON_RESUME) granted = actions.hasAllFilesAccess()
+        }
+        owner.lifecycle.addObserver(obs)
+        onDispose { owner.lifecycle.removeObserver(obs) }
+    }
+    Section("File access") {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Access all device files", color = TextMain, fontSize = 14.sp)
+                Text(
+                    if (granted) "On — the File Manager can browse all of shared storage."
+                    else "Off — only app-scoped files are visible.",
+                    color = if (granted) Green else TextDim, fontSize = 12.sp,
+                )
+            }
+            Switch(checked = granted, onCheckedChange = { actions.requestAllFilesAccess() })
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Grants Android “All files access”. System files and other apps’ private " +
+                "storage stay inaccessible without root.",
+            color = TextDim, fontSize = 11.sp,
+        )
     }
 }
 

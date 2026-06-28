@@ -135,6 +135,10 @@ force-kill proot.
 ## Storage permissions
 
 `MANAGE_EXTERNAL_STORAGE` + legacy `READ/WRITE_EXTERNAL_STORAGE` are declared and
-**load-bearing** even though no Kotlin API references them by name: they gate the
-guest's access to the `/sdcard` and `/storage` binds (the on-device File Manager /
-"file explorer"). Don't remove them as "unused".
+**load-bearing**: they gate the guest's access to the `/sdcard` and `/storage` binds
+(the on-device File Manager / "file explorer"). The **Runtime screen's "File access"
+toggle** (`MainScreen.FileAccessSection`) drives the grant: API ≥ 30 opens
+`ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION` and reflects
+`Environment.isExternalStorageManager()`; API < 30 requests `WRITE_EXTERNAL_STORAGE`
+(broad under targetSdk 28). Once granted, the unsandboxed broker FileSystemManager
+reads all shared storage through those binds. Don't remove the permissions as "unused".

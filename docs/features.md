@@ -130,7 +130,13 @@ are cache-busted with `?v=__VER__` rewritten to a mtime-derived version at serve
   `fs_browse/read/write/mkdir/rename/move/copy/delete/extract` → `fs_list`/`fs_file`.
   Deliberately **unsandboxed** (loopback-only broker, single on-device user); the
   UI gates destructive actions behind confirms and the control refuses to delete
-  `$HOME` or `/`.
+  `$HOME` or `/`. Reach of the host filesystem is gated by Android's **All files
+  access** (`MANAGE_EXTERNAL_STORAGE`): a **toggle on the native Runtime screen**
+  (`MainScreen.FileAccessSection` → `MainActivity.requestAllFilesAccess`, reflecting
+  `Environment.isExternalStorageManager()`; legacy `WRITE_EXTERNAL_STORAGE` on
+  API < 30) opens the grant screen, after which the `/sdcard` + `/storage` proot
+  binds let the browser read all shared storage. System files and other apps'
+  private storage still require root.
 - **Transcript:** persistence + replay; Markdown rendering (`web-ui/markdown.js`,
   dependency-free, XSS-safe, tolerant of partial mid-stream input; supports GFM
   pipe tables with column alignment, rendered in a horizontal scroller so wide
