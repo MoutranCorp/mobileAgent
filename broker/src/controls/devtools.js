@@ -127,15 +127,17 @@ export class DevTools {
       'Metro is taking longer than expected — watch the Terminal, then press Open when it’s ready.');
   }
 
-  /** True once the dev server is listening on the port. ANY HTTP response counts:
-   *  the classic React Native packager answers GET /status with
-   *  `packager-status:running`, but EXPO's dev server (what we actually run) doesn't
-   *  serve that — it 404s /status while being fully ready ("Waiting on http://…").
-   *  So we treat a reachable HTTP endpoint as ready rather than matching a body —
-   *  matching the old body was why the Test button hung on "Starting" forever. */
+  /** True once the dev server is serving. We hit the MANIFEST endpoint Expo Go uses
+   *  (GET / with the expo-platform header), not /status: Expo's dev server leaves
+   *  /status hanging (no response), so the old /status probe timed out forever and
+   *  the Test button hung on "Starting". The manifest path is the one a browser and
+   *  Expo Go both get a response from, so any HTTP response here = up. */
   _probeMetro(port) {
     return new Promise((resolve) => {
-      const req = http.get({ host: '127.0.0.1', port, path: '/status', timeout: 2000 }, (res) => {
+      const req = http.get({
+        host: '127.0.0.1', port, path: '/', timeout: 5000,
+        headers: { 'expo-platform': 'android', Accept: 'application/expo+json,application/json' },
+      }, (res) => {
         res.resume(); // drain so the socket frees
         resolve(true); // got an HTTP response → the server is up
       });

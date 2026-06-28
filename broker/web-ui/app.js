@@ -505,6 +505,14 @@
     state._optimisticUntil = 0; // show the destination tab's real state immediately
     clearAwaiting(); // a pending "waking" latch belongs to the tab we just left
     applyViewMode();
+    // Reflect the destination tab's folder in the composer IMMEDIATELY from the tab
+    // itself — don't wait on the broker's PROJECTS broadcast (ordering/edge cases left
+    // the pill showing the previous tab's folder). The broker confirms/corrects it.
+    if (t.projectId && t.projectId !== state.activeProjectId) {
+      state.activeProjectId = t.projectId;
+      updateFolderPill();
+      renderMetro();
+    }
     if (t.key !== state.activeKey) {
       // Mark the switch in-flight: until the broker's SESSIONS reports this key as
       // active, onSessions must not yank activeTabId back to the old session (which
