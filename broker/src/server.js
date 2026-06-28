@@ -204,6 +204,14 @@ export class BrokerServer {
             notify: true,
             title: 'Scheduled job done',
           }));
+          // …and ask the native shell to post a REAL Android notification, so the
+          // user is told even when the app UI (WebView/WS) is fully closed — the
+          // in-app `notify` toast above can only reach a live page.
+          this._nativeNotify({
+            title: 'Scheduled job done',
+            text: `“${job?.name || 'job'}” ${ev.isError ? 'failed' : 'finished'}`,
+            level: ev.isError ? 'error' : 'success',
+          });
         }
       }
       if (ev.type === EventType.RESULT) {
@@ -1219,6 +1227,26 @@ export class BrokerServer {
 
   _log(message) {
     if (this.config.verbose) process.stderr.write(`[broker] ${message}\n`);
+  }
+
+  /**
+   * Emit a one-line marker the native foreground service watches for, so it can
+   * post a REAL Android notification that survives the app being killed (the
+   * in-app `notify` toast only reaches a live WebView/WS). Written to STDERR, not
+   * stdout: the test runner's TAP lives on stdout and a stray line would corrupt
+   * it, while the Android pump merges stderr into the stream it reads
+   * (ProcessBuilder.redirectErrorStream(true)). The marker is unconditional —
+   * NOT gated behind --verbose — so a notification never depends on log level.
+   */
+  _nativeNotify({ title, text, level } = {}) {
+    try {
+      const payload = JSON.stringify({
+        title: title || 'On-Device Agent',
+        text: text || '',
+        level: level || 'info',
+      });
+      process.stderr.write(`@@NATIVE_NOTIFY@@ ${payload}\n`);
+    } catch { /* never let a notification break the stream */ }
   }
 }
 

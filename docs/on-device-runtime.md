@@ -109,6 +109,33 @@ updates the very binary the broker spawns. A refreshed CLI takes effect on **new
 agent sessions; live engines keep the binary they launched with, so Stop & Start the
 runtime to move every session onto it. Output streams to the runtime log.
 
+## Native notification bridge (`Notifier.kt`)
+
+Background work that finishes when the app UI is closed (chiefly **scheduled cron
+jobs**) still needs to reach the user. The web UI's `notifyIfHidden` only fires
+when a WebView/WS is alive, so it can't help once the app is swiped away — but the
+**foreground service stays running**, and it already pumps every line of the
+broker's output. So the broker speaks to the service over that existing pipe:
+
+- **Broker → marker line.** `server._nativeNotify({title,text,level})` writes one
+  line to **stderr**: `@@NATIVE_NOTIFY@@ {json}`. stderr (not stdout) on purpose —
+  the test runner's TAP lives on stdout and a stray line corrupts it, while the
+  service merges stderr into the stream it reads (`ProcessBuilder.redirectErrorStream(true)`).
+  It's **unconditional**, NOT gated behind `--verbose`, so a notification never
+  depends on log level. The cron RESULT handler calls it alongside the in-app
+  `notify` toast.
+- **Service → real notification.** `RuntimeLauncher.pump()` runs each line through
+  `Notifier.handleMarkerLine(ctx, line)`; a match is parsed and posted (and **not**
+  re-logged as noise). `Notifier` posts on a **distinct, alerting channel**
+  (`agent_jobs`, `IMPORTANCE_DEFAULT`) — separate from the silent `IMPORTANCE_LOW`
+  "Agent runtime" ongoing-service channel — with stacking ids (1000–9000) so each
+  completion is its own heads-up. `POST_NOTIFICATIONS` is declared in the manifest
+  and pre-granted by the `targetSdk 28` install, so there's no runtime-permission flow.
+
+This is broker-emitted but **service-handled**: no part of it touches the WebView,
+so it works with the app fully killed. The marker is a plain protocol on the output
+stream, not a wire-protocol event — don't confuse it with `protocol.js`.
+
 ## WebView gotchas (Compose-hosted `AgentWebView`)
 
 - **Loopback must be HTTP, never HTTPS.** The broker serves plain HTTP; an

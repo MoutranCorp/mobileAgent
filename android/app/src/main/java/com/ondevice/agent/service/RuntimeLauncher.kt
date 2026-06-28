@@ -82,7 +82,14 @@ class RuntimeLauncher(private val ctx: Context) {
     }
 
     private fun pump(p: Process) {
-        runCatching { p.inputStream.bufferedReader().forEachLine { RuntimeController.log(it) } }
+        runCatching {
+            p.inputStream.bufferedReader().forEachLine { line ->
+                // A `@@NATIVE_NOTIFY@@ {json}` marker becomes a real Android
+                // notification (fires even when the UI is dead) instead of log noise.
+                if (Notifier.handleMarkerLine(ctx, line)) return@forEachLine
+                RuntimeController.log(line)
+            }
+        }
         val code = runCatching { p.waitFor() }.getOrDefault(-1)
         RuntimeController.log("[runtime] broker process exited (code=$code)")
         if (RuntimeController.state.value == RuntimeState.RUNNING) {

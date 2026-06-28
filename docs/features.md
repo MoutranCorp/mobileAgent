@@ -124,9 +124,13 @@ are cache-busted with `?v=__VER__` rewritten to a mtime-derived version at serve
   context; a per-job **Engine (profile) / Model / Effort** override (blank = the
   broker's active default — `startDetached`/`_startEngineInner` apply them to the
   detached run without mutating the foreground prefs); enable/disable, **run-now**,
-  edit, delete, and open the last run. On completion the broker broadcasts a
-  **notify-flagged toast** (`{notify:true}`) that the UI turns into a real OS
-  notification (`notifyIfHidden` → native) so you're told when a job finishes.
+  edit, delete, and open the last run. On completion the broker tells you the job
+  finished two ways: a **notify-flagged toast** (`{notify:true}`) the UI turns
+  into an OS notification while a page is live (`notifyIfHidden` → native), **and**
+  a `@@NATIVE_NOTIFY@@`-marked stderr line (`server._nativeNotify`) the Android
+  foreground service catches (`Notifier` / `RuntimeLauncher.pump`) to post a real
+  notification **even when the app UI is fully closed** — see
+  [on-device-runtime.md](on-device-runtime.md#native-notification-bridge).
   Scheduling is evaluated **in-broker** (a 30s tick → `cron.due()`), so jobs fire
   while the broker is alive (the foreground service keeps it up); the structure
   leaves room for OS-level background wake (Android AlarmManager) later. Jobs fire
