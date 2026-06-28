@@ -806,7 +806,7 @@
     state._sessionListLoaded = true;
     const by = {};
     for (const s of ev.items) { const pid = s.projectId || '_unknown'; (by[pid] = by[pid] || []).push(s); }
-    for (const pid in by) by[pid] = by[pid].sort((a, b) => (b.mtime || 0) - (a.mtime || 0)).slice(0, 3);
+    for (const pid in by) by[pid] = by[pid].sort((a, b) => ((b.lastTs || b.mtime) || 0) - ((a.lastTs || a.mtime) || 0)).slice(0, 3);
     state.recentSessionsByProject = by;
     if (folderSheetOpen()) renderFolderSheet();
   }
@@ -835,10 +835,11 @@
       row.appendChild(dot);
       const info = el('div', 'fs-session-info');
       info.appendChild(el('span', 'fs-session-name', s.summary || s.id.slice(0, 8)));
-      // Time of the latest MESSAGE in the session (transcript file mtime), not the
-      // last time it was opened — opening/spawning a session bumps lastTurnTs, which
-      // made a just-opened tab read "just now". mtime tracks the real conversation.
-      const ts = s.mtime || (live && live.lastTurnTs) || null;
+      // Time of the latest MESSAGE in the session (parsed from the session log's last
+      // real user/assistant entry — `lastTs`). NOT the file mtime (claude --resume
+      // rewrites the file on open) and NOT lastTurnTs (bumped on any status change),
+      // both of which made a just-opened session read "just now".
+      const ts = s.lastTs || s.mtime || (live && live.lastTurnTs) || null;
       info.appendChild(el('span', 'fs-session-meta', relTime(ts) + (live ? ' · live' : '')));
       row.appendChild(info);
       row.onclick = () => {
@@ -851,10 +852,10 @@
     // Folders ordered most-recently-touched first, by the latest activity across their
     // sessions (live "last turn" time, else newest transcript mtime).
     const folderRecency = (pid) => {
-      // Newest message across the folder's sessions (transcript mtime), so a folder
+      // Newest message across the folder's sessions (last-message time), so a folder
       // doesn't jump to the top merely because you opened one of its sessions.
       const recents = state.recentSessionsByProject[pid] || [];
-      return (recents[0] && recents[0].mtime) || 0;
+      return (recents[0] && (recents[0].lastTs || recents[0].mtime)) || 0;
     };
     const sortedProjects = state.projects.filter((x) => x.id).slice()
       .sort((a, b) => folderRecency(b.id) - folderRecency(a.id));

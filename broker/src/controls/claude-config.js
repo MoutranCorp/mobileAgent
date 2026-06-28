@@ -359,15 +359,17 @@ export class ClaudeConfig {
         const full = path.join(dir, n);
         const stat = fs.statSync(full);
         const id = n.replace(/\.jsonl$/, '');
+        const content = readText(full);
         return {
           id,
-          summary: titles[id] || firstUserText(full),
+          summary: titles[id] || firstUserTextOf(content),
           titled: !!titles[id],
           mtime: stat.mtimeMs,
+          lastTs: lastMessageTsOf(content) || stat.mtimeMs, // last real message, not file mtime
           size: stat.size,
         };
       })
-      .sort((a, b) => b.mtime - a.mtime)
+      .sort((a, b) => b.lastTs - a.lastTs)
       .slice(0, PER_PROJECT_SESSION_CAP);
   }
 
@@ -398,11 +400,12 @@ export class ClaudeConfig {
         let stat;
         try { stat = fs.statSync(full); } catch { continue; }
         const id = n.replace(/\.jsonl$/, '');
-        out.push({ id, summary: titles[id] || firstUserText(full), titled: !!titles[id],
-          mtime: stat.mtimeMs, size: stat.size, project, projectDir: enc, projectId });
+        const content = readText(full);
+        out.push({ id, summary: titles[id] || firstUserTextOf(content), titled: !!titles[id],
+          mtime: stat.mtimeMs, lastTs: lastMessageTsOf(content) || stat.mtimeMs, size: stat.size, project, projectDir: enc, projectId });
       }
     }
-    return out.sort((a, b) => b.mtime - a.mtime).slice(0, max);
+    return out.sort((a, b) => b.lastTs - a.lastTs).slice(0, max);
   }
 
   /**
@@ -684,25 +687,43 @@ function blockText(content) {
   }
   return content == null ? '' : String(content);
 }
-function firstUserText(file) {
+function readText(file) { try { return fs.readFileSync(file, 'utf8'); } catch { return ''; } }
+
+function firstUserTextOf(content) {
   try {
-    const head = fs.readFileSync(file, 'utf8').split('\n').slice(0, 40);
+    const head = String(content).split('\n').slice(0, 40);
     for (const line of head) {
       if (!line.trim()) continue;
       const obj = JSON.parse(line);
-      const content = obj?.message?.content;
-      if (obj.type === 'user' && content) {
-        const text = typeof content === 'string'
-          ? content
-          : (content.find?.((b) => b.type === 'text')?.text || '');
+      const c = obj?.message?.content;
+      if (obj.type === 'user' && c) {
+        const text = typeof c === 'string' ? c : (c.find?.((b) => b.type === 'text')?.text || '');
         // Strip Claude's slash-command XML wrappers (<command-name>…) so the
         // session summary reads cleanly instead of showing raw markup.
         const clean = String(text).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
         if (clean) return clean.slice(0, 80);
       }
     }
-  } catch {
-    /* ignore */
-  }
+  } catch { /* ignore */ }
   return '(session)';
+}
+
+/** Timestamp (ms) of the last REAL message in a Claude session log — scanned from
+ *  the end for the last user/assistant entry (skipping replays + system/summary
+ *  rows). This is the true "last activity" time; the FILE mtime is unreliable
+ *  because `claude --resume` rewrites the file on open (so it tracks open-time). */
+function lastMessageTsOf(content) {
+  try {
+    const lines = String(content).split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      let obj; try { obj = JSON.parse(line); } catch { continue; }
+      if ((obj.type === 'user' || obj.type === 'assistant') && !obj.isReplay && obj.timestamp) {
+        const t = Date.parse(obj.timestamp);
+        if (!Number.isNaN(t)) return t;
+      }
+    }
+  } catch { /* ignore */ }
+  return null;
 }
