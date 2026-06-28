@@ -174,10 +174,15 @@ export class DevTools {
         }
         let m; try { m = JSON.parse(body); } catch { /* not json */ }
         if (m) {
-          const bundle = m?.launchAsset?.url || m?.bundleUrl || '(unknown)';
+          const bundle = m?.launchAsset?.url || m?.bundleUrl || null;
           const sdk = m?.extra?.expoClient?.sdkVersion || m?.sdkVersion || m?.runtimeVersion || '(unknown)';
           log(`\n[diag] ✓ Native manifest served (HTTP ${res.statusCode}). SDK/runtime ${sdk}; ` +
-              `bundle ${bundle}. If Expo Go still errors, it's an SDK mismatch — check this SDK vs your Expo Go version.\n`);
+              `bundle ${bundle || '(unknown)'}. Now build-testing the native bundle (what Expo Go fetches next)…\n`);
+          // The real test: does the NATIVE JS bundle actually BUILD in this guest?
+          // A browser only exercises the web bundle; Expo Go fetches this one, and a
+          // build failure here (missing native lib / arch-mismatched tool in proot)
+          // is exactly the "Something went wrong" Expo Go shows.
+          if (bundle) this._probeBundle(channel, bundle, host, port);
         } else {
           log(`\n[diag] ? Manifest request returned HTTP ${res.statusCode}, content-type "${ct}", ` +
               `not parseable as a manifest. First bytes: ${body.slice(0, 120).replace(/\s+/g, ' ')}\n`);
@@ -186,6 +191,35 @@ export class DevTools {
     });
     req.on('error', (e) => log(`\n[diag] manifest probe failed: ${e.message}\n`));
     req.on('timeout', () => { req.destroy(); });
+  }
+
+  /** Build-test the NATIVE JS bundle (the URL from the manifest) the way Expo Go
+   *  would, and report the result. HTTP 200 = it builds (Expo Go should load it); a
+   *  non-200 means Metro failed to bundle — we surface the error body, which is the
+   *  actual reason Expo Go shows "Something went wrong" even though the web/manifest
+   *  worked. We reach the bundle on the host that answered the probe (the manifest's
+   *  own host may be a family this guest can't reach). */
+  _probeBundle(channel, bundleUrl, host, port) {
+    const log = (data) => this.emit(event(EventType.CONTROL_OUTPUT, { channel, stream: 'stdout', data }));
+    let target;
+    try { target = new URL(bundleUrl); target.hostname = host; target.port = String(port); }
+    catch { log(`\n[diag] couldn't parse bundle URL: ${bundleUrl}\n`); return; }
+    const req = http.get(target, { timeout: 180000 }, (res) => {
+      if (res.statusCode === 200) {
+        log(`\n[diag] ✓ Native bundle BUILDS (HTTP 200). Expo Go should load it — if it still ` +
+            `errors, screenshot the Expo Go error.\n`);
+        res.destroy(); // don't pull the whole multi-MB bundle; we only needed the status
+        return;
+      }
+      let body = '';
+      res.on('data', (d) => { if (body.length < 4000) body += d.toString('utf8'); });
+      res.on('end', () => {
+        log(`\n[diag] ⚠ Native bundle FAILED to build (HTTP ${res.statusCode}). THIS is why Expo Go ` +
+            `fails. Metro's error:\n${body.slice(0, 1500)}\n`);
+      });
+    });
+    req.on('error', (e) => log(`\n[diag] bundle build request errored: ${e.message}\n`));
+    req.on('timeout', () => { req.destroy(); log(`\n[diag] native bundle build timed out (>180s) — it may be too slow in the guest.\n`); });
   }
 
   /** Find the directory the Expo app actually lives in: the project root if it's an
