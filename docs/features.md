@@ -339,16 +339,27 @@ A first-class manager pane fed by the `RESOURCES` event. Source = `controls/reso
 
 ### Session lifecycle & eviction
 
-Always-warm = **working OR focused OR pinned**. A background session **idle > 5 min**
-drops its process (cold-resume from its `.jsonl` on focus/send); under memory pressure
-an **idle-only LRU** eviction runs. There is **no cap** on concurrent agents (cost is
-flat-subscription; the only real limit is the Pixel's RAM). Mechanism:
+Always-warm = **working OR focused OR pinned OR recently-left**. A background session
+**idle > 5 min** drops its process (cold-resume from its `.jsonl` on focus/send); under
+memory pressure an **idle-only LRU** eviction runs. There is **no cap** on concurrent
+agents (cost is flat-subscription; the only real limit is the Pixel's RAM). Mechanism:
 `server._lifecycleTick` (in `server.js`, **started by `index.js` via `startLifecycle`,
 NOT the constructor** — keeps tests deterministic) broadcasts `RESOURCES` then evicts:
 `evictionCandidates(sample)` (LRU, `usedPct >= 88`, max 3, never working/focused/pinned)
 plus a hard `IDLE_TTL_MS = 5*60*1000`. Eviction calls
 `stopEngineKeepTranscript(key)` — the engine dies but `meta` (incl. `sessionId`) and
 the transcript survive for cold resume. (5 min ≈ prompt-cache TTL.)
+
+Two refinements stop the memory backstop from instantly 💤-ing a tab you just left
+(the chronic ≥88 %-RAM phone case): an **`inTurn`** flag set the moment a prompt is
+queued (`sendUserMessage`/`sendTo`) marks the session `working` **before** the engine's
+first status — so the indicator shows instantly *and* the session is eviction-exempt for
+the whole turn (cleared on `RESULT`/`ERROR`/`interrupt`, not on init `idle`); and a
+**90 s recency grace** (`graceMs`) that, between the low (`memEvictPct` 88 %) and critical
+(`memCriticalPct` 95 %) thresholds, keeps a just-left tab warm — `setActiveKey` restamps
+the *left* tab's `lastActivityTs` so the grace clock starts when you switch away. At/above
+the critical threshold the grace is bypassed (OOM risk wins). All tunable via
+`BROKER_MEM_EVICT_PCT` / `BROKER_MEM_CRITICAL_PCT`.
 
 ### Folder switcher & sessions
 

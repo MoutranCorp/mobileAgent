@@ -67,3 +67,24 @@ test('evictionCandidates: only idle, unpinned, non-active; LRU first; gated on p
   const evict = evictionCandidates({ mem: { usedPct: 95 }, engines }, { maxEvict: 5 });
   assert.deepEqual(evict, ['old', 'recent']);
 });
+
+test('evictionCandidates: recency grace keeps a just-used session warm below the critical threshold', () => {
+  const engines = [
+    { key: 'old', status: 'idle', idleMs: 600000 },   // 10 min idle
+    { key: 'recent', status: 'idle', idleMs: 30000 },  // unfocused 30s ago — within the 90s grace
+  ];
+  // Between low (88) and critical (95): keep the recent one, evict only the stale one.
+  assert.deepEqual(
+    evictionCandidates({ mem: { usedPct: 90 }, engines }, { maxEvict: 5 }), ['old'],
+    'a session used 30s ago is protected by the recency grace under moderate pressure');
+  // At/above critical (95): OOM risk overrides recency — evict both.
+  assert.deepEqual(
+    evictionCandidates({ mem: { usedPct: 95 }, engines }, { maxEvict: 5 }), ['old', 'recent'],
+    'critical pressure ignores the grace');
+  // Past the grace window (2 min idle) it is evictable even below critical.
+  assert.deepEqual(
+    evictionCandidates({ mem: { usedPct: 90 }, engines: [{ key: 'a', status: 'idle', idleMs: 120000 }] }), ['a']);
+  // A working session (e.g. inTurn) is never a candidate, even at critical pressure.
+  assert.deepEqual(
+    evictionCandidates({ mem: { usedPct: 99 }, engines: [{ key: 'w', status: 'working', idleMs: 0 }] }), []);
+});

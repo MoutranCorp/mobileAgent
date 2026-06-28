@@ -256,7 +256,9 @@ export class BrokerServer {
     // are to evicting (it was a hidden 88% constant before).
     if (sample.mem) sample.mem.evictThreshold = lowMemPct;
     try { this.broadcast(event(EventType.RESOURCES, sample)); } catch { /* ignore */ }
-    for (const key of evictionCandidates(sample, { lowMemPct })) this.session.stopEngineKeepTranscript(key);
+    for (const key of evictionCandidates(sample, { lowMemPct, criticalPct: this.config.memCriticalPct })) {
+      this.session.stopEngineKeepTranscript(key);
+    }
     for (const s of sample.engines) {
       if (s.status === 'idle' && !s.pinned && !s.active && s.idleMs >= IDLE_TTL_MS) {
         this.session.stopEngineKeepTranscript(s.key);

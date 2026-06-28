@@ -125,6 +125,18 @@ viewing). Background sessions keep generating while you look at another. Read
   via `--resume`. `setPinned(key, …)` exempts a session from the memory backstop.
   `forgetSession(key)` is called when a `.jsonl` is deleted: it drops the resume
   hint, tears down the engine, and rebinds the project to a surviving sibling.
+- **Eviction policy (`evictionCandidates` in `controls/resources.js`).** Only
+  *idle, unpinned, non-active* engines are evictable, LRU-first. Two guards keep a
+  just-used session warm so flipping between a few tabs doesn't instantly 💤 the one
+  you left: (1) an **`inTurn`** meta flag set the instant a prompt is queued
+  (`sendUserMessage`/`sendTo`) — before the engine's first status — marks the session
+  `working` (so it shows the indicator immediately *and* is filtered out of eviction);
+  it's cleared on `RESULT`/`ERROR`/`interrupt`, **not** on an init `idle`. (2) A
+  **recency grace** (`graceMs`, 90 s): between the low (`memEvictPct`, 88 %) and
+  critical (`memCriticalPct`, 95 %) memory thresholds, a session idle for less than
+  the grace is kept; at/above critical, OOM risk overrides the grace and it's evicted
+  regardless. `setActiveKey` restamps the *left* tab's `lastActivityTs` so the grace
+  measures "time since you switched away."
 - **Event tagging.** `_onEngineEvent` stamps every engine event with its owning
   `sessionKey` before re-emitting, so the server records it to the right
   transcript and only surfaces the active session's full stream (plus a busy

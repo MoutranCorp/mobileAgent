@@ -245,6 +245,11 @@ export class SessionManager {
 
   /** Switch which session the UI is viewing WITHOUT stopping the others. */
   async setActiveKey(key) {
+    // Leaving a tab counts as "just used": restamp the session we're switching AWAY
+    // from so its recency-grace window starts now. Without this the memory evictor
+    // would sleep the tab you just left on the very next tick (the "instant 💤" bug).
+    const prev = this.activeKey;
+    if (prev && prev !== key) { const pm = this.meta.get(prev); if (pm) pm.lastActivityTs = Date.now(); }
     this.activeKey = key;
     const m = this.meta.get(key);
     if (m) {
@@ -269,13 +274,14 @@ export class SessionManager {
     for (const [key, m] of this.meta) {
       const e = this.engines.get(key);
       if (!e) continue; // idle-evicted sessions hold no process -> not "live"
+      const working = !!(m.busy || m.inTurn); // a queued-but-not-yet-acked prompt counts as working
       out.push({
         key, projectId: m.projectId, profileId: m.profileId, model: m.model,
-        sessionId: m.sessionId, busy: !!m.busy, lastStatus: m.lastStatus,
+        sessionId: m.sessionId, busy: working, lastStatus: m.lastStatus,
         active: key === this.activeKey,
         pid: e.proc?.pid ?? null,
-        status: m.busy ? 'working' : 'idle',
-        idleMs: m.busy ? 0 : (m.lastActivityTs ? Math.max(0, now - m.lastActivityTs) : 0),
+        status: working ? 'working' : 'idle',
+        idleMs: working ? 0 : (m.lastActivityTs ? Math.max(0, now - m.lastActivityTs) : 0),
         lastTurnTs: m.lastTurnTs || m.lastActivityTs || null,
         pinned: !!m.pinned,
         title: m.title || null,
@@ -316,7 +322,12 @@ export class SessionManager {
     const engine = await this.ensureEngine();
     if (!engine) return;
     const m = this.meta.get(this.activeKey);
-    if (m) { m.lastTurnTs = Date.now(); m.lastActivityTs = Date.now(); } // sending a prompt is real activity
+    // inTurn marks the session busy the INSTANT a prompt is queued — before the engine
+    // emits its first status (seconds, for a cold session). It protects the session
+    // from eviction for the whole turn and shows the working indicator immediately;
+    // cleared on result / error / interrupt. (Fixes the dropped-prompt race + lag.)
+    if (m) { m.inTurn = true; m.lastTurnTs = Date.now(); m.lastActivityTs = Date.now(); }
+    this._emitSessions();
     await engine.send({ type: 'user_message', text, images });
   }
 
@@ -333,7 +344,15 @@ export class SessionManager {
     const e = (key && this.engines.get(key)) || this.engine;
     if (e && e.respondQuestion) e.respondQuestion(id, answers);
   }
-  interrupt() { if (this.engine) this.engine.interrupt(); }
+  interrupt() {
+    // Stop ends the turn now — even if a hung cold-resume never emits a result — so the
+    // session stops being eviction-protected and the indicator clears. (Your point:
+    // a stuck session is just a Stop click away.)
+    const m = this.meta.get(this.activeKey);
+    if (m) m.inTurn = false;
+    if (this.engine) this.engine.interrupt();
+    this._emitSessions();
+  }
 
   async switchEngine(profileId) { this._log(`switching engine -> ${profileId}`); return this.startEngine(profileId, {}); }
 
@@ -420,7 +439,8 @@ export class SessionManager {
     const engine = this.engines.get(key);
     if (!engine) return false;
     const m = this.meta.get(key);
-    if (m) { m.lastTurnTs = Date.now(); m.lastActivityTs = Date.now(); }
+    if (m) { m.inTurn = true; m.lastTurnTs = Date.now(); m.lastActivityTs = Date.now(); }
+    this._emitSessions();
     await engine.send({ type: 'user_message', text, images });
     return true;
   }
@@ -482,8 +502,12 @@ export class SessionManager {
     }
     if (ev.type === EventType.STATUS && ev.state) {
       const busy = ev.state !== StatusState.IDLE && ev.state !== StatusState.ERROR;
+      // A plain IDLE here is the engine's INIT (before "thinking"), NOT the end of the
+      // turn — so DON'T clear inTurn on idle; only ERROR ends a turn (result clears the
+      // normal completion). This is why we track inTurn separately from busy.
       const changed = !m || m.busy !== busy || m.lastStatus !== ev.state;
-      if (m) { m.lastStatus = ev.state; m.busy = busy; m.lastActivityTs = Date.now(); m.lastTurnTs = Date.now(); } // engine status change = real conversation activity (unlike focus)
+      if (m) { m.lastStatus = ev.state; m.busy = busy; m.lastActivityTs = Date.now(); m.lastTurnTs = Date.now(); // engine status change = real conversation activity (unlike focus)
+        if (ev.state === StatusState.ERROR) m.inTurn = false; }
       if (key === this.activeKey) this._lastStatus = ev.state;
       // Keep the sessions screen + nav badge live for EVERY session (active too),
       // so a working session always shows its indicator.
@@ -495,7 +519,7 @@ export class SessionManager {
     }
     if (ev.type === EventType.PERMISSION_MODE && ev.mode && key === this.activeKey) this.permissionMode = ev.mode;
     if (ev.type === EventType.SESSION_META && ev.sessionId) this._emitSessions(); // sessionId now known
-    if (ev.type === EventType.RESULT && m) { if (m.busy) m.busy = false; m.lastActivityTs = Date.now(); m.lastTurnTs = Date.now(); this._emitSessions(); }
+    if (ev.type === EventType.RESULT && m) { if (m.busy) m.busy = false; m.inTurn = false; m.lastActivityTs = Date.now(); m.lastTurnTs = Date.now(); this._emitSessions(); }
     this.emit(ev);
   }
 

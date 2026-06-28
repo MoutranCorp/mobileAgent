@@ -7,6 +7,7 @@ import { WebSocket } from 'ws';
 import { loadConfig } from '../src/config.js';
 import { BrokerServer } from '../src/server.js';
 import { EventType } from '../src/protocol.js';
+import { evictionCandidates } from '../src/controls/resources.js';
 
 async function tmpDir(p) { return fs.mkdtemp(path.join(os.tmpdir(), p)); }
 
@@ -110,6 +111,29 @@ test('liveSessions() carries the resource/lifecycle fields the sampler needs', a
     assert.ok(['working', 'idle'].includes(s.status));
     assert.equal(typeof s.idleMs, 'number');
     assert.equal(s.active, true);
+  } finally { ws.close(); await server.stop(); }
+});
+
+test('inTurn marks a session working the instant a prompt is queued, protecting a background session from eviction', async () => {
+  const { server, ws, open } = await boot(['projA', 'projB']);
+  try {
+    await open('projA');
+    await open('projB'); // active = projB; projA is now a live BACKGROUND session
+    // Queue a prompt into the background session but DON'T await the turn — inTurn is set
+    // synchronously (before the first internal await / any engine status), so we can observe
+    // the in-flight state. (Awaiting would let the mock reach RESULT, which clears inTurn.)
+    const turn = server.session.sendTo('projA', 'hello');
+    const live = server.session.liveSessions();
+    const a = live.find((s) => s.key === 'projA');
+    assert.equal(a.busy, true, 'background session is busy the instant its prompt is queued');
+    assert.equal(a.status, 'working');
+    assert.equal(a.idleMs, 0, 'a working session reports zero idle time');
+    // Even under critical memory pressure it must NOT be an eviction candidate (a turn in
+    // flight would be lost). Only a genuinely idle background session is evictable.
+    const sample = { mem: { usedPct: 99 }, engines: live };
+    assert.ok(!evictionCandidates(sample, { maxEvict: 5 }).includes('projA'),
+      'an in-turn session is never evicted, even at critical pressure');
+    await turn; // let the mock finish the turn so we don't leak a pending promise
   } finally { ws.close(); await server.stop(); }
 });
 

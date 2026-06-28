@@ -101,10 +101,16 @@ export function sampleResources(engines = []) {
  *
  * @returns {string[]} session keys to evict (possibly empty)
  */
-export function evictionCandidates(sample, { lowMemPct = 88, maxEvict = 3 } = {}) {
+export function evictionCandidates(sample, { lowMemPct = 88, criticalPct = 95, graceMs = 90000, maxEvict = 3 } = {}) {
   if (!sample?.mem || sample.mem.usedPct < lowMemPct) return [];
+  const critical = sample.mem.usedPct >= criticalPct;
   const idle = (sample.engines || [])
     .filter((e) => e.status === 'idle' && !e.pinned && !e.active)
+    // Recency grace: between the low and critical thresholds, KEEP a just-unfocused
+    // session warm for `graceMs` so flipping between your few tabs doesn't sleep the
+    // one you just left (the "instant 💤 on switch" bug). At/above the critical
+    // threshold OOM risk outranks UX, so evict regardless of how recent it was.
+    .filter((e) => critical || (e.idleMs || 0) >= graceMs)
     .sort((a, b) => (b.idleMs || 0) - (a.idleMs || 0)); // most-idle first
   return idle.slice(0, maxEvict).map((e) => e.key);
 }
