@@ -1389,7 +1389,12 @@
         card.el.__pre.textContent = String(ev.output) || '(no output)';
       }
     }
-    if (ev.status !== 'error' && !card.isDiff && card.name !== 'Agent') card.body.classList.add('collapsed');
+    // Once a tool call finishes cleanly, collapse it (diffs included) so completed
+    // actions don't take up conversation space. Subagents keep their nested view open.
+    if (ev.status !== 'error' && card.name !== 'Agent') {
+      card.body.classList.add('collapsed');
+      card.head.setAttribute('aria-expanded', 'false');
+    }
     // A generated viewable file becomes an inline viewer (html app / svg / image / md).
     if (card.fileKind && ev.status !== 'error' && card.filePath) addFileWidget(card.filePath, card.fileKind);
     scrollDown();
@@ -1456,8 +1461,8 @@
     if (w) { // file re-written: refresh in place + bump to the bottom
       w.url = url; w.kind = kind;
       $('transcript').appendChild(w.card);
-      renderFileBody(w);
-      if (w.codeShown) refreshFileCode(w);
+      if (w.collapsed) { w._dirty = true; }            // re-render lazily the next time it's shown
+      else { renderFileBody(w); if (w.codeShown) refreshFileCode(w); }
       w.card.classList.remove('flash'); void w.card.offsetWidth; w.card.classList.add('flash');
       scrollDown();
       return;
@@ -1473,15 +1478,14 @@
     const codeEl = el('div', 'html-app-code hidden');
     card.appendChild(head); card.appendChild(bodyEl); card.appendChild(codeEl);
     $('transcript').appendChild(card);
-    w = { card, body: bodyEl, code: codeEl, url, filePath, fname, kind, running: kind === 'html', frame: null, codeShown: false };
+    w = { card, body: bodyEl, code: codeEl, url, filePath, fname, kind, running: false, frame: null, codeShown: false, collapsed: true, _rendered: false, _dirty: false };
     fileWidgets.set(wkey, w);
 
-    // Run/Hide only makes sense for the interactive html app.
-    if (kind === 'html') {
-      const runBtn = el('button', 'ghost small', 'Hide'); w.runBtn = runBtn;
-      runBtn.onclick = () => (w.running ? hideHtmlApp(w) : runHtmlApp(w));
-      actions.appendChild(runBtn);
-    }
+    // Hide/Show toggle — consistent across every artifact kind. Widgets start
+    // collapsed (header only) so generated files don't flood the transcript.
+    const hideBtn = el('button', 'ghost small', 'Show'); hideBtn.title = 'Show / hide preview'; w.hideBtn = hideBtn;
+    hideBtn.onclick = () => setFileCollapsed(w, !w.collapsed);
+    actions.appendChild(hideBtn);
     // View source for text-based kinds (binary images have no useful source).
     if (kind === 'html' || kind === 'svg' || kind === 'markdown') {
       const codeBtn = el('button', 'ghost small', '</> Code'); codeBtn.title = 'View source'; w.codeBtn = codeBtn;
@@ -1491,9 +1495,9 @@
     const dlBtn = el('button', 'ghost small', '⬇'); dlBtn.title = 'Download';
     dlBtn.onclick = () => downloadFile(filePath, fname);
     actions.appendChild(dlBtn);
-    const editBtn = el('button', 'ghost small', '✎ Edit'); editBtn.title = 'Open as an editable tab';
-    editBtn.onclick = () => openFileTab(filePath, kind);
-    actions.appendChild(editBtn);
+    const tabBtn = el('button', 'ghost small', '⧉ Tab'); tabBtn.title = 'Open the file in a new tab';
+    tabBtn.onclick = () => openFileTab(filePath, kind);
+    actions.appendChild(tabBtn);
     const openBtn = el('button', 'primary small', '⤢ Open'); openBtn.title = 'Open full screen';
     openBtn.onclick = () => {
       const full = location.origin + w.url;
@@ -1501,10 +1505,24 @@
     };
     actions.appendChild(openBtn);
 
-    renderFileBody(w); // show it immediately
+    setFileCollapsed(w, true); // start hidden — the body renders lazily on first Show
     scrollDown();
   }
   function _bust(url) { return url + (url.includes('?') ? '&' : '?') + 'r=' + Date.now(); }
+  // Collapse/expand a file widget's preview. Widgets default to collapsed so
+  // generated artifacts don't take over the transcript; the body (and the html
+  // iframe) is built lazily on first expand and torn down again on collapse.
+  function setFileCollapsed(w, collapsed) {
+    w.collapsed = collapsed;
+    w.body.classList.toggle('hidden', collapsed);
+    if (w.hideBtn) { w.hideBtn.textContent = collapsed ? 'Show' : 'Hide'; w.hideBtn.classList.toggle('on', !collapsed); }
+    if (collapsed) {
+      w.code.classList.add('hidden'); w.codeShown = false; if (w.codeBtn) w.codeBtn.classList.remove('on');
+      if (w.kind === 'html' && w.frame) { w.body.innerHTML = ''; w.frame = null; w.running = false; } // stop the running app
+    } else if (!w._rendered || w._dirty) {
+      renderFileBody(w); w._rendered = true; w._dirty = false;
+    }
+  }
   function renderFileBody(w) {
     w.body.className = 'html-app-body'; // reset; each kind re-applies its own modifiers
     if (w.kind === 'html') { runHtmlApp(w); return; }
@@ -1530,6 +1548,7 @@
     }
   }
   async function toggleFileCode(w) {
+    if (w.collapsed) setFileCollapsed(w, false); // viewing source implies expanding the widget
     if (w.codeShown) { w.code.classList.add('hidden'); w.codeShown = false; w.codeBtn.classList.remove('on'); return; }
     w.codeShown = true; w.codeBtn.classList.add('on'); w.code.classList.remove('hidden');
     await refreshFileCode(w);
@@ -1556,10 +1575,7 @@
     f.setAttribute('allow', 'autoplay; clipboard-write');
     f.src = w.url + (w.url.includes('?') ? '&' : '?') + 'r=' + Date.now();
     w.body.innerHTML = ''; w.body.appendChild(f);
-    w.frame = f; w.running = true; w.runBtn.textContent = 'Hide';
-  }
-  function hideHtmlApp(w) {
-    w.body.innerHTML = ''; w.frame = null; w.running = false; w.runBtn.textContent = 'Run';
+    w.frame = f; w.running = true;
   }
 
   // ---- APK / build-artifact widget ----------------------------------------

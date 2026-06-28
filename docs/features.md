@@ -147,9 +147,15 @@ are cache-busted with `?v=__VER__` rewritten to a mtime-derived version at serve
   (`renderTodos`, markers drawn by CSS).
 - **Inline viewer widgets:** any GENERATED viewable file from a Write/Edit tool gets
   an inline preview card served from `/preview/<rel>` — html runs live in a sandboxed
-  iframe, svg/image render on a checker bg, markdown via `MD.render`. All get
-  `</> Code` view-source + Copy + **Download** + Open-full. Reconstructed on resume
-  via transcript replay.
+  iframe, svg/image render on a checker bg, markdown via `MD.render`. Every kind shares
+  the **same action set**: a **Show/Hide** toggle, `</> Code` view-source + Copy,
+  **Download**, **⧉ Tab** (open the file as an editable tab), and Open-full. Widgets
+  **default to collapsed** (header only) and render their body lazily on first Show
+  (`setFileCollapsed`), so generated files don't flood the transcript; the html iframe
+  is torn down on collapse. Reconstructed on resume via transcript replay.
+- **Tool-call cards** auto-collapse once the call finishes cleanly (diffs included;
+  subagents keep their nested view open), so completed actions don't take up space —
+  tap the header to re-expand. Errors stay expanded with the failure reason.
 - **File download** (`GET /download/<rel>`, path-guarded, binary-safe attachment):
   pulls artifacts out of the invisible proot rootfs into the phone's real Downloads.
   `_findApks()` bounded walk → `APKS` event; **APK widget** "⬇ Save to Downloads".
@@ -246,7 +252,7 @@ id=`'file:'+rel`).
   `activeKey`, so switching a file tab does NOT `switch_session`. `applyViewMode()`
   swaps in `#fileView` (name · Rendered|Source toggle · Save · ⬇ · ✕) and hides the
   transcript+composer. Source is an editable textarea fetched from `/preview`; **Save**
-  round-trips via `files_write`. Entry points: inline file-widget "✎ Edit" + ☰ Files
+  round-trips via `files_write`. Entry points: inline file-widget "⧉ Tab" + ☰ Files
   "↗ Open as tab" (`window.Agent.openFileTab`).
 - **Gestures** (`wireTabGesture`, pointer events, `touch-action:none`): tap=switch,
   450ms hold=menu, post-hold slide=drag-reorder (insertion by neighbor centers),

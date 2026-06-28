@@ -170,6 +170,9 @@ try {
   const ap = page.locator('.approval-actions button.accent');
   if (await ap.count()) await ap.first().click();
   await sleep(2600);
+  // Widgets default to collapsed now — click Show to reveal the iframe.
+  const showBtn = page.locator('.html-app-actions .ghost.small', { hasText: 'Show' });
+  if (await showBtn.count()) { await showBtn.first().click(); await sleep(900); }
   await page.evaluate(() => { const a = document.querySelector('.html-app'); if (a) a.scrollIntoView({ block: 'center' }); });
   await sleep(800);
   console.log('CHECK html-app iframe present:', await page.evaluate(() => !!document.querySelector('.html-app .html-app-iframe')));
@@ -197,6 +200,9 @@ try {
   await page.evaluate(() => { const imgs = [...document.querySelectorAll('.html-app')]; const a = imgs[imgs.length - 1]; if (a) a.scrollIntoView({ block: 'center' }); });
   await sleep(700);
   const svgCardOf = () => `[...document.querySelectorAll('.html-app')].find(c => c.querySelector('.html-app-name')?.textContent === 'icon.svg')`;
+  // Reveal the collapsed svg widget first.
+  await page.evaluate(`(() => { const card = ${svgCardOf()}; const btn = [...(card?.querySelectorAll('.html-app-actions .ghost.small')||[])].find(b => /Show/.test(b.textContent)); btn && btn.click(); })()`);
+  await sleep(700);
   console.log('CHECK svg viewer img present:', await page.evaluate(`(${svgCardOf()})?.querySelector('.html-app-body.media img.html-app-img') ? true : false`));
   console.log('CHECK svg viewer checker bg:', await page.evaluate(`(${svgCardOf()})?.querySelector('.html-app-body.media.checker') ? true : false`));
   console.log('CHECK svg viewer loaded ok:', await page.evaluate(`(() => { const i = (${svgCardOf()})?.querySelector('img.html-app-img'); return !!i && i.complete && i.naturalWidth > 0; })()`));
@@ -207,8 +213,8 @@ try {
   console.log('CHECK svg source shown:', await page.evaluate(`(() => { const card = ${svgCardOf()}; const panel = card?.querySelector('.html-app-code'); return !!panel && !panel.classList.contains('hidden') && (panel.querySelector('code')?.textContent || '').includes('<svg'); })()`));
   await page.evaluate(`(${svgCardOf()})?.scrollIntoView({ block: 'center' })`);
   await shot('10b-svg-code');
-  // File tab (Phase 3): open the svg as an editable tab via the widget Edit button.
-  const editBtn = page.locator('.html-app-actions .ghost.small', { hasText: 'Edit' });
+  // File tab (Phase 3): open the svg as an editable tab via the widget Tab button.
+  const editBtn = page.locator('.html-app-actions .ghost.small', { hasText: 'Tab' });
   if (await editBtn.count()) {
     await editBtn.last().click(); await sleep(800);
     console.log('CHECK file view opens:', await page.evaluate(() => !document.getElementById('fileView').classList.contains('hidden')));
@@ -230,6 +236,9 @@ try {
   const ap3 = page.locator('.approval-actions button.accent');
   if (await ap3.count()) await ap3.first().click();
   await sleep(2200);
+  // Reveal the collapsed markdown widget first.
+  await page.evaluate(() => { const a = [...document.querySelectorAll('.html-app')].pop(); const btn = [...(a?.querySelectorAll('.html-app-actions .ghost.small')||[])].find(b => /Show/.test(b.textContent)); btn && btn.click(); });
+  await sleep(700);
   await page.evaluate(() => { const a = [...document.querySelectorAll('.html-app')].pop(); if (a) a.scrollIntoView({ block: 'center' }); });
   await sleep(700);
   console.log('CHECK md viewer rendered:', await page.evaluate(() => !!document.querySelector('.html-app-body.mdbody .bubble.md h1')));
