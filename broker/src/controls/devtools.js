@@ -117,6 +117,7 @@ export class DevTools {
         const info = this._metro.get(projectId);
         if (info) info.ready = true;
         this._emitMetro(projectId, true, port, url);
+        this._diagnoseExpoManifest(this.metroChannel(projectId), port); // log what Expo Go would receive
         return;
       }
       await new Promise((r) => setTimeout(r, 1500));
@@ -141,6 +142,44 @@ export class DevTools {
       req.on('error', () => resolve(false)); // ECONNREFUSED while still booting
       req.on('timeout', () => { req.destroy(); resolve(false); });
     });
+  }
+
+  /** Fetch the manifest exactly as Expo Go (Android) would and log the verdict to the
+   *  terminal — so we can see WHY Expo Go fails even when a browser loads the page.
+   *  HTML back = the server only has a web/dev-build target (Expo Go can't run it);
+   *  a JSON manifest = good, and we surface its bundle URL + SDK/runtime. Diagnostic
+   *  only; never affects the running state. */
+  _diagnoseExpoManifest(channel, port) {
+    const log = (data) => this.emit(event(EventType.CONTROL_OUTPUT, { channel, stream: 'stdout', data }));
+    const req = http.get({
+      host: '127.0.0.1', port, path: '/', timeout: 6000,
+      headers: { 'expo-platform': 'android', Accept: 'application/expo+json,application/json' },
+    }, (res) => {
+      let body = '';
+      res.on('data', (d) => { body += d.toString('utf8'); });
+      res.on('end', () => {
+        const ct = String(res.headers['content-type'] || '');
+        if (/text\/html/i.test(ct)) {
+          log(`\n[diag] ⚠ Dev server returned WEB HTML to an Expo Go (Android) manifest request ` +
+              `(HTTP ${res.statusCode}). Expo Go can't run this — it needs a native manifest. ` +
+              `Likely the app is web-only or requires a development build, OR the Expo SDK doesn't ` +
+              `match your installed Expo Go.\n`);
+          return;
+        }
+        let m; try { m = JSON.parse(body); } catch { /* not json */ }
+        if (m) {
+          const bundle = m?.launchAsset?.url || m?.bundleUrl || '(unknown)';
+          const sdk = m?.extra?.expoClient?.sdkVersion || m?.sdkVersion || m?.runtimeVersion || '(unknown)';
+          log(`\n[diag] ✓ Native manifest served (HTTP ${res.statusCode}). SDK/runtime ${sdk}; ` +
+              `bundle ${bundle}. If Expo Go still errors, it's an SDK mismatch — check this SDK vs your Expo Go version.\n`);
+        } else {
+          log(`\n[diag] ? Manifest request returned HTTP ${res.statusCode}, content-type "${ct}", ` +
+              `not parseable as a manifest. First bytes: ${body.slice(0, 120).replace(/\s+/g, ' ')}\n`);
+        }
+      });
+    });
+    req.on('error', (e) => log(`\n[diag] manifest probe failed: ${e.message}\n`));
+    req.on('timeout', () => { req.destroy(); });
   }
 
   /** Find the directory the Expo app actually lives in: the project root if it's an
