@@ -2925,6 +2925,11 @@
     $('termBtn').onclick = toggleTerminal;
     $('termClose').onclick = toggleTerminal;
     $('termClear').onclick = () => { $('termBody').innerHTML = ''; };
+    $('termCopy').onclick = () => {
+      const text = $('termBody').innerText || $('termBody').textContent || '';
+      copyToClipboard(text);
+      toast(`Copied terminal output (${text.split('\n').length} lines)`, 'info');
+    };
     $('termInput').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         const line = e.target.value;

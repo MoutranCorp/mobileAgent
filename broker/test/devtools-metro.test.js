@@ -106,12 +106,10 @@ test('metroInfo reports starting while booting and running once ready', async ()
   assert.equal(info.starting, false);
 });
 
-test('_probeMetro is true only when Metro answers /status with packager-status:running', async () => {
+test('_probeMetro is true for ANY HTTP response (Expo 404s /status but is ready), false when nothing listens', async () => {
   const { dt } = mkDevTools({ id: 'p', dir: '/x', metroPort: 1 });
-  const server = http.createServer((req, res) => {
-    if (req.url === '/status') res.end('packager-status:running');
-    else res.end('nope');
-  });
+  // Expo's dev server 404s /status yet is fully up — must still count as ready.
+  const server = http.createServer((req, res) => { res.statusCode = 404; res.end('Cannot GET /status'); });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const port = server.address().port;
   // A deterministically-closed port: bind one, read it, close it, then probe it.
