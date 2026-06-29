@@ -54,6 +54,8 @@ export class EngineAdapter extends EventEmitter {
     // Honor the per-call model override — without this, switching models only
     // relabeled the UI while the CLI kept spawning with the profile default.
     this.model = model || profile?.model || null;
+    this.permissionMode = opts.permissionMode || profile?.permissionMode || 'default';
+    this.effort = opts.effort || null;
     this.state = 'stopped'; // stopped | starting | ready | stopping
     this.features = Object.freeze({
       ...DEFAULT_ENGINE_FEATURES,

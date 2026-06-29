@@ -297,17 +297,26 @@ many live `claude` CLI child processes can share one project folder. Key minting
   tab can never overwrite a live engine, and keys are **never recycled** (the old
   `projA#N` counter reset to 0 on every broker restart, which recycled keys).
 
-`meta` (per key) carries `{ busy, lastStatus, profileId, model, sessionId,
-projectId, cwd, lastActivityTs, pinned, title }`. `session.engine` is now a **getter**
-for the active key's engine. A global **start-lock** serializes (re)starts so
-closely-timed restarts can't orphan a child process. Switching
-model/effort/permission/profile replaces ONLY the active key's engine; opening
-another project just `setActiveKey`s (siblings keep generating in the background).
+`meta` (per key) carries `{ busy, lastStatus, profileId, harness, model, effort,
+permissionMode, sessionId, projectId, cwd, lastActivityTs, pinned, title }`, and
+capabilities are cached per key (`capabilitiesByKey`). `activeKey` is only the
+view pointer; focusing a tab rebroadcasts that tab's own profile/model/effort/
+permission/status/capabilities without mutating background sessions.
+`session.engine` is now a **getter** for the active key's engine. A global
+**start-lock** serializes (re)starts so closely-timed restarts can't orphan a
+child process. Switching model/effort/permission/profile replaces ONLY the active
+key's engine; opening another project just `setActiveKey`s (siblings keep
+generating in the background).
 `ensureEngine` **cold-resumes a previously idle-evicted session in its OWN folder**
 via stored `meta.cwd` (never the globally-active project — a HIGH bug that was fixed).
 Every engine event is stamped `ev.sessionKey` so the server records it to the right
 transcript and only broadcasts the active session's full stream (others → a
 lightweight `SESSIONS` busy overlay).
+
+Resume hints persist in `<stateDir>/sessions.json` keyed by `sessionKey` as
+`{ resumeId, harness }`, so a Claude resume id is never handed to an opencode/Codex
+profile (and vice versa). Legacy string values are treated as Claude-only until
+rewritten by the next session metadata event.
 
 ### The tab strip (sessions + files)
 

@@ -112,8 +112,9 @@ viewing). Background sessions keep generating while you look at another. Read
 [`broker/src/session.js`](../broker/src/session.js) for the exact behavior.
 
 - **`engines: Map<sessionKey, engine>`** and **`meta: Map<sessionKey, {...}>`**
-  (busy, lastStatus, profileId, model, sessionId, projectId, cwd, lastActivityTs,
-  pinned, title).
+  (busy, lastStatus, profileId, harness, model, effort, permissionMode,
+  sessionId, projectId, cwd, lastActivityTs, pinned, title). Capabilities are
+  cached per session in `capabilitiesByKey`.
 - **Session keys.** The first session of a project uses `key === projectId` (so
   resume/cold-resume + project binding stay simple and readable). A second+ concurrent
   session in the same folder mints `projectId-<token>` (a random hex suffix) via
@@ -127,6 +128,9 @@ viewing). Background sessions keep generating while you look at another. Read
 - **`activeKey` is a view pointer**, not a lifecycle gate.
   `setActiveKey(key)` switches which session the UI sees *without stopping the
   others*; `newSession()` starts a fresh concurrent session in the active folder.
+  On focus, the broker rebroadcasts the focused session's own profile/model/
+  effort/permission/status/capabilities. Switching tabs does not mutate a
+  background session's controls.
 - **Restart-in-place semantics.** Changing the active model/effort/permission/
   profile (`switchModel`, `setEffort`, `setPermissionMode`, `switchEngine`,
   `refreshCapabilities`) replaces **only the active key's** engine with a
@@ -159,12 +163,14 @@ viewing). Background sessions keep generating while you look at another. Read
 
 `startEngine` is serialized behind a `_startLock` so closely-timed restarts can't
 orphan a child `claude` process. Resume ids persist to `<stateDir>/sessions.json`
-keyed by **`sessionKey`** (the first session's key === its `projectId`, so the file
-stays back-compatible) — keying by `projectId` let a 2nd concurrent session in the
-same folder clobber the 1st's resume id and resume *into* it on the next restart
-(the "sessions merged" bug). `setActiveKey` also rebinds `_activeKeyByProject` to
-the focused key so a later `newSession()`/restart-in-place can't route a turn into a
-sibling session.
+keyed by **`sessionKey`** as `{ resumeId, harness }` (the first session's key ===
+its `projectId`, so the file stays back-compatible; legacy string values are
+treated as Claude-only until rewritten). Keying by `projectId` let a 2nd
+concurrent session in the same folder clobber the 1st's resume id and resume
+*into* it on the next restart (the "sessions merged" bug); storing the harness
+also prevents a Claude session id from being passed to opencode/Codex or vice
+versa. `setActiveKey` also rebinds `_activeKeyByProject` to the focused key so a
+later `newSession()`/restart-in-place can't route a turn into a sibling session.
 
 ## Code map
 

@@ -31,17 +31,47 @@ export class SessionManager {
     this.emit = emit;
 
     this.engines = new Map(); // sessionKey -> engine (MANY live sessions, may share a project)
-    this.meta = new Map(); // sessionKey -> { busy, lastStatus, profileId, model, sessionId, projectId, lastActivityTs, pinned, title }
+    this.meta = new Map(); // sessionKey -> { busy, lastStatus, profileId, harness, model, effort, permissionMode, sessionId, projectId, lastActivityTs, pinned, title }
     this._activeKeyByProject = new Map(); // projectId -> the project's currently-bound session key
     this.activeKey = this._sessionKeyFor(getActiveProject());
-    this.activeProfileId = config.defaultProfile;
-    this.permissionMode = config.permissionMode || 'default'; // global default for new engines
-    this.effort = config.effort || 'high'; // low|medium|high|xhigh|max|ultracode (global pref)
-    this.currentModel = null; // active session's requested model alias (for resolver labelling)
+    this.defaultProfileId = config.defaultProfile;
+    this.defaultPermissionMode = config.permissionMode || 'default';
+    this.defaultEffort = config.effort || 'high'; // low|medium|high|xhigh|max|ultracode
+    this.defaultModel = null;
     this.sessionsFile = path.join(config.stateDir, 'sessions.json');
     this._sessionByProject = this._loadSessions();
-    this._lastStatus = StatusState.IDLE; // mirror of the ACTIVE session
-    this.lastCapabilities = null; // mirror of the ACTIVE session
+    this.capabilitiesByKey = new Map(); // sessionKey -> last capabilities event
+  }
+
+  get _activeMeta() { return this.meta.get(this.activeKey) || null; }
+  get activeProfileId() { return this._activeMeta?.profileId || this.defaultProfileId; }
+  set activeProfileId(profileId) {
+    this.defaultProfileId = profileId;
+    const m = this._activeMeta;
+    if (m) m.profileId = profileId;
+  }
+  get permissionMode() { return this._activeMeta?.permissionMode || this.defaultPermissionMode; }
+  set permissionMode(mode) {
+    this.defaultPermissionMode = mode;
+    const m = this._activeMeta;
+    if (m) m.permissionMode = mode;
+  }
+  get effort() { return this._activeMeta?.effort || this.defaultEffort; }
+  set effort(level) {
+    this.defaultEffort = level;
+    const m = this._activeMeta;
+    if (m) m.effort = level;
+  }
+  get currentModel() { return this._activeMeta?.model || this.defaultModel; }
+  set currentModel(model) {
+    this.defaultModel = model;
+    const m = this._activeMeta;
+    if (m) m.model = model;
+  }
+  get lastCapabilities() { return this.capabilitiesByKey.get(this.activeKey) || null; }
+  set lastCapabilities(caps) {
+    if (caps) this.capabilitiesByKey.set(this.activeKey, caps);
+    else this.capabilitiesByKey.delete(this.activeKey);
   }
 
   /**
@@ -89,6 +119,33 @@ export class SessionManager {
   /** The engine the UI is currently viewing (back-compat for `session.engine`). */
   get engine() { return this.engines.get(this.activeKey) || null; }
 
+  _resumeRecord(key) {
+    const rec = this._sessionByProject[key];
+    if (!rec) return null;
+    if (typeof rec === 'string') return { resumeId: rec, harness: 'claude-code', legacy: true };
+    if (rec && typeof rec === 'object' && rec.resumeId) return { resumeId: rec.resumeId, harness: rec.harness || null };
+    return null;
+  }
+
+  _resumeIdFor(key, harness) {
+    const rec = this._resumeRecord(key);
+    if (!rec?.resumeId) return null;
+    return rec.harness && rec.harness === harness ? rec.resumeId : null;
+  }
+
+  _storeResume(key, resumeId, harness) {
+    if (!key || !resumeId) return;
+    this._sessionByProject[key] = { resumeId, harness: harness || null };
+    this._saveSessions();
+  }
+
+  _deleteResume(key) {
+    if (key && this._sessionByProject[key]) {
+      delete this._sessionByProject[key];
+      this._saveSessions();
+    }
+  }
+
   // --- public API -------------------------------------------------------------
 
   async ensureEngine(key = this.activeKey) {
@@ -99,12 +156,14 @@ export class SessionManager {
       // Cold-resume a previously-live (idle-evicted) session in ITS OWN folder —
       // never the globally-active project, or it would resume in the wrong cwd.
       const project = this._projectById(m.projectId);
-      const resumeId = m.sessionId || this._sessionByProject[key] || null;
+      const profileId = m.profileId || this.activeProfileId;
+      const profile = this.profiles.get(profileId);
+      const resumeId = m.sessionId || this._resumeIdFor(key, profile?.harness) || null;
       // Pass the stored cwd so a session whose project folder was deleted resumes in
       // its OWN (now-missing) folder and fails loudly, never silently in another one.
-      return this.startEngine(m.profileId || this.activeProfileId, { key, project, cwd: m.cwd, resumeId });
+      return this.startEngine(profileId, { key, project, cwd: m.cwd, resumeId, focus: key === this.activeKey });
     }
-    return this.startEngine(this.activeProfileId, { key });
+    return this.startEngine(this.activeProfileId, { key, focus: key === this.activeKey });
   }
 
   async startEngine(profileId, opts = {}) {
@@ -147,7 +206,9 @@ export class SessionManager {
       key = canReuse ? this.activeKey : this._sessionKeyFor(project);
     }
     const prevMeta = this.meta.get(key); // preserve pin/title/projectId/cwd across a restart
-    this.activeKey = key;
+    const prevActiveKey = this.activeKey;
+    const shouldFocus = opts.focus !== false;
+    if (shouldFocus) this.activeKey = key;
     await this.stopEngine(key); // replace only THIS key's engine
 
     // The session's folder: prefer an explicit cwd (cold-resume keeps its OWN folder
@@ -164,25 +225,28 @@ export class SessionManager {
     // session (the "only one session shows in this folder" bug). The persisted
     // fallback is keyed by SESSION KEY to match how it's written (line ~389); the
     // first session's key === projectId, so cold-resume of a project still works.
+    const sameHarness = !prevMeta?.harness || prevMeta.harness === profile.harness;
+    const explicitResume = resumeId && (!opts.resumeHarness || opts.resumeHarness === profile.harness) ? resumeId : null;
+    const storedResume = key ? this._resumeIdFor(key, profile.harness) : null;
     const resolvedResume = opts.fresh
-      ? (resumeId ?? null)
-      : (resumeId ?? prevMeta?.sessionId ?? (key ? this._sessionByProject[key] : null) ?? null);
+      ? (explicitResume ?? null)
+      : (explicitResume ?? (sameHarness ? prevMeta?.sessionId : null) ?? storedResume ?? null);
 
     // Keep the chosen model across non-model restarts; drop it on a profile change.
-    const profileChanged = profileId !== this.activeProfileId;
-    const chosen = model || (profileChanged ? null : this.currentModel) || profile.model;
-    this.activeProfileId = profileId;
-    this.currentModel = chosen;
+    const profileChanged = profileId !== prevMeta?.profileId;
+    const activeModel = shouldFocus ? this.currentModel : this.defaultModel;
+    const chosen = model || (profileChanged ? null : prevMeta?.model) || (profileChanged ? null : activeModel) || profile.model;
+    const permissionMode = opts.permissionMode || prevMeta?.permissionMode || this.defaultPermissionMode;
     // Effort: a per-call override (cron jobs) wins over the global pref; never mutate
-    // the global `this.effort` from a detached run.
-    const effortPref = opts.effort || this.effort;
+    // the default effort from a detached run.
+    const effortPref = opts.effort || prevMeta?.effort || this.defaultEffort;
     const isUltra = effortPref === 'ultracode'; // maps to xhigh + the ultracode setting
 
     const engine = createEngine(profile, {
       cwd, env, model: chosen,
       resumeId: resolvedResume,
       claudeBin: this.config.claudeBin,
-      permissionMode: this.permissionMode,
+      permissionMode,
       effort: isUltra ? 'xhigh' : effortPref,
       ultracode: isUltra,
       // A detached/background session (cron) sends its prompt immediately, so its
@@ -193,7 +257,9 @@ export class SessionManager {
     });
     this.engines.set(key, engine);
     this.meta.set(key, {
-      busy: false, lastStatus: StatusState.IDLE, profileId, model: chosen,
+      busy: false, lastStatus: prevMeta?.lastStatus || StatusState.IDLE,
+      profileId, harness: profile.harness, model: chosen,
+      permissionMode, effort: effortPref,
       sessionId: resolvedResume || null, projectId, cwd,
       lastActivityTs: Date.now(), lastTurnTs: prevMeta?.lastTurnTs || Date.now(),
       pinned: prevMeta?.pinned || false, title: prevMeta?.title || null,
@@ -207,6 +273,7 @@ export class SessionManager {
     try {
       await engine.start();
     } catch (e) {
+      if (!shouldFocus) this.activeKey = prevActiveKey;
       this._emitError(`Failed to start engine: ${e.message}`);
       return null;
     }
@@ -259,9 +326,6 @@ export class SessionManager {
       // turns can route into a sibling (the "sessions merging" bug).
       if (m.projectId) this._activeKeyByProject.set(m.projectId, key);
     }
-    this._lastStatus = m?.lastStatus || StatusState.IDLE;
-    this.currentModel = m?.model || this.currentModel;
-    this.lastCapabilities = this.engines.get(key)?._lastCaps || null;
     const e = await this.ensureEngine(key);
     this._emitSessions();
     return e;
@@ -276,7 +340,8 @@ export class SessionManager {
       if (!e) continue; // idle-evicted sessions hold no process -> not "live"
       const working = !!(m.busy || m.inTurn); // a queued-but-not-yet-acked prompt counts as working
       out.push({
-        key, projectId: m.projectId, profileId: m.profileId, model: m.model,
+        key, projectId: m.projectId, profileId: m.profileId, harness: m.harness,
+        model: m.model, effort: m.effort, permissionMode: m.permissionMode,
         sessionId: m.sessionId, busy: working, lastStatus: m.lastStatus,
         active: key === this.activeKey,
         pid: e.proc?.pid ?? null,
@@ -311,7 +376,8 @@ export class SessionManager {
       // not 💤 sleeping, or the tab + focused chrome show idle during the whole cold start.
       const waking = !!m.inTurn;
       out.push({
-        key, projectId: m.projectId, profileId: m.profileId, model: m.model,
+        key, projectId: m.projectId, profileId: m.profileId, harness: m.harness,
+        model: m.model, effort: m.effort, permissionMode: m.permissionMode,
         sessionId: m.sessionId, busy: waking, lastStatus: waking ? 'working' : 'idle',
         active: key === this.activeKey, pid: null, status: waking ? 'working' : 'sleeping',
         idleMs: waking ? 0 : (m.lastActivityTs ? Math.max(0, now - m.lastActivityTs) : 0),
@@ -365,37 +431,41 @@ export class SessionManager {
 
   /** Forget the active key's resume id (used by /clear) so the next start is fresh. */
   dropActiveResume() {
-    if (this._sessionByProject[this.activeKey]) {
-      delete this._sessionByProject[this.activeKey];
-      this._saveSessions();
-    }
+    this._deleteResume(this.activeKey);
+    const m = this._activeMeta;
+    if (m) m.sessionId = null;
   }
 
   async switchModel(model) {
     this._log(`switching model -> ${model} (fresh session)`);
-    delete this._sessionByProject[this.activeKey]; // a fresh session for THIS key only
-    this._saveSessions();
+    this.defaultModel = model;
+    this._deleteResume(this.activeKey); // a fresh session for THIS key only
     return this.startEngine(this.activeProfileId, { model, resumeId: null });
   }
 
   async setPermissionMode(mode) {
-    this.permissionMode = mode;
-    const resumeId = this.engine?.sessionId || this._sessionByProject[this.activeKey] || null;
+    const m = this._activeMeta;
+    this.defaultPermissionMode = mode;
+    if (m) m.permissionMode = mode;
+    const resumeId = this.engine?.sessionId || this._resumeIdFor(this.activeKey, m?.harness || this.engine?.harness) || null;
     this._log(`set permission mode -> ${mode} (resume ${resumeId || 'none'})`);
     return this.startEngine(this.activeProfileId, { resumeId });
   }
 
   async setEffort(level) {
-    this.effort = level;
-    const resumeId = this.engine?.sessionId || this._sessionByProject[this.activeKey] || null;
+    const m = this._activeMeta;
+    this.defaultEffort = level;
+    if (m) m.effort = level;
+    const resumeId = this.engine?.sessionId || this._resumeIdFor(this.activeKey, m?.harness || this.engine?.harness) || null;
     this._log(`set effort -> ${level} (resume ${resumeId || 'none'})`);
     return this.startEngine(this.activeProfileId, { resumeId });
   }
 
   async refreshCapabilities() {
     if (!this.engine || this.engine.state === 'stopped') return null;
-    if (this._lastStatus && this._lastStatus !== StatusState.IDLE && this._lastStatus !== StatusState.ERROR) return null;
-    const resumeId = this.engine?.sessionId || this._sessionByProject[this.activeKey] || null;
+    const status = this._activeMeta?.lastStatus || StatusState.IDLE;
+    if (status && status !== StatusState.IDLE && status !== StatusState.ERROR) return null;
+    const resumeId = this.engine?.sessionId || this._resumeIdFor(this.activeKey, this._activeMeta?.harness || this.engine?.harness) || null;
     this._log(`refreshing capabilities (resume ${resumeId || 'none'})`);
     return this.startEngine(this.activeProfileId, { resumeId });
   }
@@ -406,7 +476,7 @@ export class SessionManager {
     return this.startEngine(this.activeProfileId, { project: this.getActiveProject(), fresh: true, resumeId: null });
   }
 
-  async resume(sessionId) { return this.startEngine(this.activeProfileId, { resumeId: sessionId }); }
+  async resume(sessionId, opts = {}) { return this.startEngine(this.activeProfileId, { resumeId: sessionId, resumeHarness: opts.harness }); }
 
   /**
    * Start an engine for a background task (a cron job) WITHOUT changing which
@@ -418,8 +488,7 @@ export class SessionManager {
     const project = this._projectById(projectId) || (cwd ? { id: projectId || null, dir: cwd } : this.getActiveProject());
     const pid = project?.id ?? null;
     const saved = {
-      active: this.activeKey, profile: this.activeProfileId, model: this.currentModel,
-      status: this._lastStatus,
+      active: this.activeKey,
       binding: pid != null ? this._activeKeyByProject.get(pid) : undefined,
     };
     // Per-job engine overrides (cron): fall back to the foreground profile/model/effort.
@@ -430,9 +499,6 @@ export class SessionManager {
     // (fresh) rebinds to the new session; leaving it would route the foreground
     // folder's next new_session/restart into the cron session.
     this.activeKey = saved.active;
-    this.activeProfileId = saved.profile;
-    this.currentModel = saved.model;
-    this._lastStatus = saved.status;
     if (pid != null) {
       if (saved.binding === undefined) this._activeKeyByProject.delete(pid);
       else this._activeKeyByProject.set(pid, saved.binding);
@@ -466,8 +532,8 @@ export class SessionManager {
     const pid = m?.projectId;
     // Clear the per-project resume hint only if it pointed at THIS session's id
     // (don't orphan sibling sessions that share the folder).
-    if (m?.sessionId && pid && this._sessionByProject[pid] === m.sessionId) { delete this._sessionByProject[pid]; this._saveSessions(); }
-    if (key && key !== MAIN_KEY && this._sessionByProject[key]) { delete this._sessionByProject[key]; this._saveSessions(); } // legacy: key may be a projectId
+    if (m?.sessionId && pid && this._resumeRecord(pid)?.resumeId === m.sessionId) this._deleteResume(pid);
+    if (key && key !== MAIN_KEY && this._sessionByProject[key]) this._deleteResume(key); // legacy: key may be a projectId
     if (this.engines.has(key)) await this.stopEngine(key);
     this.meta.delete(key);
     if (pid && this._activeKeyByProject.get(pid) === key) {
@@ -486,7 +552,7 @@ export class SessionManager {
       model: this.engine?.model || null,
       requestedModel: this.currentModel,
       sessionId: this.engine?.sessionId || null,
-      lastStatus: this._lastStatus,
+      lastStatus: this._activeMeta?.lastStatus || StatusState.IDLE,
       permissionMode: this.permissionMode,
       effort: this.effort,
       activeKey: this.activeKey,
@@ -504,8 +570,9 @@ export class SessionManager {
       // a 2nd concurrent session in the same folder clobber the 1st's resume id and
       // resume INTO it on the next restart (the "prompts merged into another
       // session" bug). Cold-resume/eviction also reads meta.sessionId directly.
-      this._sessionByProject[key] = ev.sessionId; this._saveSessions();
-      if (m) m.sessionId = ev.sessionId;
+      const harness = ev.engine || m?.harness || this.engines.get(key)?.harness || null;
+      this._storeResume(key, ev.sessionId, harness);
+      if (m) { m.sessionId = ev.sessionId; m.harness = harness; }
     }
     if (ev.type === EventType.STATUS && ev.state) {
       const busy = ev.state !== StatusState.IDLE && ev.state !== StatusState.ERROR;
@@ -515,16 +582,15 @@ export class SessionManager {
       const changed = !m || m.busy !== busy || m.lastStatus !== ev.state;
       if (m) { m.lastStatus = ev.state; m.busy = busy; m.lastActivityTs = Date.now(); m.lastTurnTs = Date.now(); // engine status change = real conversation activity (unlike focus)
         if (ev.state === StatusState.ERROR) m.inTurn = false; }
-      if (key === this.activeKey) this._lastStatus = ev.state;
       // Keep the sessions screen + nav badge live for EVERY session (active too),
       // so a working session always shows its indicator.
       if (changed) this._emitSessions();
     }
     if (ev.type === EventType.CAPABILITIES) {
       const e = this.engines.get(key); if (e) e._lastCaps = ev;
-      if (key === this.activeKey) this.lastCapabilities = ev;
+      this.capabilitiesByKey.set(key, ev);
     }
-    if (ev.type === EventType.PERMISSION_MODE && ev.mode && key === this.activeKey) this.permissionMode = ev.mode;
+    if (ev.type === EventType.PERMISSION_MODE && ev.mode && m) m.permissionMode = ev.mode;
     if (ev.type === EventType.SESSION_META && ev.sessionId) this._emitSessions(); // sessionId now known
     if (ev.type === EventType.RESULT && m) { if (m.busy) m.busy = false; m.inTurn = false; m.lastActivityTs = Date.now(); m.lastTurnTs = Date.now(); this._emitSessions(); }
     this.emit(ev);

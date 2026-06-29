@@ -347,6 +347,12 @@ export class BrokerServer {
     this.broadcast(event(EventType.TRANSCRIPT, { events: this.transcript.replay(), reset: true }));
     this.broadcast(event(EventType.ENGINE_STATE, { state: this.session.engine?.state || 'stopped', ...this.session.snapshot }));
     this.broadcast(event(EventType.PERMISSION_MODE, { mode: this.session.permissionMode }));
+    this.broadcast(event(EventType.EFFORT, { level: this.session.effort }));
+    this.broadcast(this._modelsEvent());
+    this.broadcast(event(EventType.PROFILES, {
+      profiles: this.profiles.list().map((p) => ({ ...p, ready: this.secrets.isReady(p) })),
+      activeProfileId: this.session.activeProfileId,
+    }));
     if (this.session.lastCapabilities) this.broadcast(this.session.lastCapabilities);
     const p = this.projects.getActive();
     if (p) this.broadcast(event(EventType.CHECKPOINTS, this.checkpoints.list(p.id, p.dir)));
@@ -643,7 +649,7 @@ export class BrokerServer {
         const seeded = this.transcript.replace(past);
         this.broadcast(event(EventType.TRANSCRIPT, { events: seeded, reset: true }));
         // resume() restarts ONLY the active project's engine (siblings untouched).
-        await this.session.resume(cmd.sessionId);
+        await this.session.resume(cmd.sessionId, { harness: 'claude-code' });
         const p = this.projects.getActive();
         if (p) this.broadcast(event(EventType.CHECKPOINTS, this.checkpoints.list(p.id, p.dir)));
         return;

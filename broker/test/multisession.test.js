@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import fs from 'node:fs/promises';
+import fssync from 'node:fs';
 import path from 'node:path';
 import { WebSocket } from 'ws';
 import { loadConfig } from '../src/config.js';
@@ -43,7 +44,36 @@ async function boot(names) {
     send({ type: 'open_project', projectId });
     await p;
   };
-  return { server, ws, port, events, waitFor, waitNext, send, open, projectsDir: projects };
+  return { server, ws, port, events, waitFor, waitNext, send, open, projectsDir: projects, state };
+}
+
+async function bootWithProfiles(names, profiles, defaultProfile = profiles[0].id) {
+  const projects = await tmpDir('ms-proj-');
+  const state = await tmpDir('ms-state-');
+  for (const n of names) await fs.mkdir(path.join(projects, n), { recursive: true });
+  await fs.mkdir(state, { recursive: true });
+  await fs.writeFile(path.join(state, 'profiles.json'), JSON.stringify(profiles, null, 2));
+  const config = loadConfig(['--profile', defaultProfile, '--port', '0', '--projects', projects, '--state', state]);
+  const server = new BrokerServer(config);
+  await server.start();
+  const port = server.httpServer.address().port;
+  const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+  const events = [];
+  const listeners = new Set();
+  ws.on('message', (raw) => { const ev = JSON.parse(raw.toString()); events.push(ev); for (const l of [...listeners]) l(ev); });
+  await new Promise((res, rej) => { ws.on('open', res); ws.on('error', rej); });
+  const waitNext = (pred, ms = 9000) => new Promise((resolve, reject) => {
+    const l = (ev) => { if (pred(ev)) { clearTimeout(t); listeners.delete(l); resolve(ev); } };
+    const t = setTimeout(() => { listeners.delete(l); reject(new Error('timeout')); }, ms);
+    listeners.add(l);
+  });
+  const send = (o) => ws.send(JSON.stringify(o));
+  const open = async (projectId) => {
+    const p = waitNext((e) => e.type === 'sessions' && e.activeKey === projectId);
+    send({ type: 'open_project', projectId });
+    await p;
+  };
+  return { server, ws, events, waitNext, send, open, state };
 }
 
 test('multiple live sessions per folder: new_session keeps the first alive, distinct keys, same project', async () => {
@@ -301,8 +331,76 @@ test('concurrent sessions in the same folder get DISTINCT session ids (no resume
 
     // The persisted resume map is keyed by session KEY, not the folder, so each
     // tab's id is recoverable independently.
-    assert.equal(server.session._sessionByProject['projA'], id1);
-    assert.equal(server.session._sessionByProject[key2], id2);
-    assert.equal(server.session._sessionByProject[key3], id3);
+    assert.deepEqual(server.session._sessionByProject['projA'], { resumeId: id1, harness: 'mock' });
+    assert.deepEqual(server.session._sessionByProject[key2], { resumeId: id2, harness: 'mock' });
+    assert.deepEqual(server.session._sessionByProject[key3], { resumeId: id3, harness: 'mock' });
+  } finally { ws.close(); await server.stop(); }
+});
+
+test('sessions retain independent profile/model/effort/permission/status/capabilities across tab switches', async () => {
+  const profiles = [
+    { id: 'mock-a', label: 'Mock A', harness: 'mock', model: 'mock-a', models: ['mock-a'], billing: 'none' },
+    { id: 'mock-b', label: 'Mock B', harness: 'mock', model: 'mock-b', models: ['mock-b'], billing: 'none' },
+  ];
+  const { server, ws, send, waitNext, open } = await bootWithProfiles(['projA', 'projB'], profiles, 'mock-a');
+  try {
+    await open('projA');
+    send({ type: 'set_effort', level: 'low' });
+    await waitNext((e) => e.type === 'effort' && e.level === 'low');
+    send({ type: 'set_permission_mode', mode: 'acceptEdits' });
+    await waitNext((e) => e.type === 'permission_mode' && e.mode === 'acceptEdits');
+
+    await open('projB');
+    send({ type: 'switch_engine', profileId: 'mock-b' });
+    await waitNext((e) => e.type === 'profiles' && e.activeProfileId === 'mock-b');
+    send({ type: 'set_effort', level: 'max' });
+    await waitNext((e) => e.type === 'effort' && e.level === 'max');
+    send({ type: 'set_permission_mode', mode: 'bypassPermissions' });
+    await waitNext((e) => e.type === 'permission_mode' && e.mode === 'bypassPermissions');
+    assert.equal(server.session.capabilitiesByKey.get('projB')?.model, 'mock-b');
+
+    const a = server.session.meta.get('projA');
+    const b = server.session.meta.get('projB');
+    assert.equal(a.profileId, 'mock-a');
+    assert.equal(a.model, 'mock-a');
+    assert.equal(a.effort, 'low');
+    assert.equal(a.permissionMode, 'acceptEdits');
+    assert.equal(b.profileId, 'mock-b');
+    assert.equal(b.model, 'mock-b');
+    assert.equal(b.effort, 'max');
+    assert.equal(b.permissionMode, 'bypassPermissions');
+    assert.equal(server.session.capabilitiesByKey.get('projA').model, 'mock-a');
+    assert.equal(server.session.capabilitiesByKey.get('projB').model, 'mock-b');
+
+    const profileA = waitNext((e) => e.type === 'profiles' && e.activeProfileId === 'mock-a');
+    const effortA = waitNext((e) => e.type === 'effort' && e.level === 'low');
+    const permissionA = waitNext((e) => e.type === 'permission_mode' && e.mode === 'acceptEdits');
+    const capsA = waitNext((e) => e.type === 'capabilities' && e.sessionKey === 'projA' && e.model === 'mock-a');
+    send({ type: 'switch_session', key: 'projA' });
+    await Promise.all([profileA, effortA, permissionA, capsA]);
+    assert.equal(server.session.activeKey, 'projA');
+    assert.equal(server.session.meta.get('projB').profileId, 'mock-b', 'background profile survives focus change');
+    assert.equal(server.session.meta.get('projB').effort, 'max', 'background effort survives focus change');
+    assert.equal(server.session.meta.get('projB').permissionMode, 'bypassPermissions', 'background permission survives focus change');
+  } finally { ws.close(); await server.stop(); }
+});
+
+test('sessions.json persists resume ids with harness and refuses cross-harness resume lookup', async () => {
+  const { server, ws, open, state } = await boot(['projA']);
+  try {
+    await open('projA');
+    const waitState = async (fn, ms = 9000) => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < ms) { if (fn()) return; await new Promise((r) => setTimeout(r, 25)); }
+      throw new Error('timeout waiting for state');
+    };
+    await waitState(() => server.session.meta.get('projA')?.sessionId);
+    server.session.flushSessionsFile();
+    const id = server.session.meta.get('projA').sessionId;
+    const stored = JSON.parse(fssync.readFileSync(path.join(state, 'sessions.json'), 'utf8'));
+    assert.deepEqual(stored.projA, { resumeId: id, harness: 'mock' });
+    assert.equal(server.session._resumeIdFor('projA', 'mock'), id);
+    assert.equal(server.session._resumeIdFor('projA', 'claude-code'), null);
+    assert.equal(server.session._resumeIdFor('projA', 'opencode'), null);
   } finally { ws.close(); await server.stop(); }
 });
