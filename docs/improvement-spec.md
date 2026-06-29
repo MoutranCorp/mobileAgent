@@ -1,4 +1,4 @@
-# mobile-agent — Improvement & Flaw Spec
+# mobile-agent — Historical Improvement & Flaw Spec
 
 > An exhaustive catalog of flaws and improvement opportunities, gathered for
 > discussion-then-implementation. Compiled from a parallel code audit of the whole
@@ -28,6 +28,11 @@
 >   decision and the broker default must change in lockstep; left for the owner.
 > - §6:197 PWA PNG icon rasters — needs binary asset generation.
 > - §5:184 "On-Device Agent"/"Agent" — deliberate PWA `name`/`short_name` split.
+
+> **Delegation warning:** this is no longer the active backlog. Many entries below
+> describe bugs that have since been fixed and tested. A delegated agent must
+> verify any item against HEAD with `rg`, source reads, and focused tests before
+> editing. Current sequencing lives in [`current-plan.md`](current-plan.md).
 
 ## How to read this
 
@@ -246,9 +251,12 @@ Agent-output XSS now tested: raw `<script>`/`<img onerror>` and fenced/inline HT
 
 ---
 
-## 9. Suggested discussion / implementation order
+## 9. Historical suggested discussion / implementation order
 
-0. **Confirmed XSS (do first — one line):** attribute-escape the markdown link/autolink URL in `markdown.js`. PoC-verified executable.
+The list below is preserved as audit history. Do not execute it literally without
+first proving the item is still open on current HEAD.
+
+0. **Confirmed XSS (historical):** attribute-escape the markdown link/autolink URL in `markdown.js`. PoC-verified at the time of the audit; verify against current `markdown.js` before editing.
 1. **Security batch** (small, high value): devtools shell-injection → arg arrays; `files.js` symlink + `deleteSession` traversal; Android `openExternal` allow-list + JS-bridge `JSONObject.quote`; `profiles.json` mode.
 2. **Approval-flow correctness**: route approve/deny/interrupt by `sessionKey`; permission IPC timeout + crash flush + bridge auth.
 3. **Per-session state**: `_pendingTurn`/`_suppressEcho`/`_turnCheckpoints` → keyed maps; effort/permission-mode scope.

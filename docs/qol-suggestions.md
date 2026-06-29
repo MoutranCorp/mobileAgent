@@ -7,13 +7,9 @@
 
 ## Sessions / workspace tabs
 
-- **Sleeping (idle-evicted) sessions vanish from the tab strip.** `liveSessions()`
-  only returns keys that still hold a running engine, so after the 5-min idle
-  eviction (or the memory backstop) a session disappears from the workspace tabs
-  even though its transcript is kept and it can cold-resume. To the user this looks
-  like "my session disappeared." Suggestion: keep evicted-but-known sessions in the
-  tab strip rendered as *sleeping* (dimmed, "💤"), and cold-resume them on tap.
-  *(Med — needs the SESSIONS event to carry sleeping sessions, not just live ones.)*
+- **Sleeping (idle-evicted) sessions vanished from the tab strip.** *(done)*
+  `uiSessions()` now includes evicted-but-known sessions as sleeping entries, and
+  tapping them cold-resumes instead of making the session look lost.
 - **No visible confirmation when a new tab is created vs. when it merges.** A brief
   toast ("New session started") would make the multi-session model legible.  *(Low)*
 - **Sessions browser said "folder unknown"** on every row whose folder isn't a

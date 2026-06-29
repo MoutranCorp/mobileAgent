@@ -1,5 +1,12 @@
 # On-Device Claude Code — Build Plan
 
+> Historical background plan. The current implementation has evolved: the phone
+> runtime remains primary, native Windows support is also required for shared
+> broker/web/test code, and the active sequencing lives in
+> [`docs/current-plan.md`](docs/current-plan.md). Do not use this file as the
+> current task order without reconciling it against `docs/current-plan.md`,
+> `docs/features.md`, and the source.
+
 **Goal:** A sideloaded Android app on the Pixel 10 Pro XL that gives the full Claude Code experience through your own custom UI, can build React Native / Expo apps, and lets you test them live on the *same* phone — with the daily loop running 100% on-device and only the occasional native-binary compile offloaded to the cloud.
 
 **Hardware reality:** Pixel 10 Pro XL = Tensor G5 + 16 GB RAM + Android 16. The RAM (not the CPU) is what matters for a JS toolchain, and 16 GB is plenty. The CPU sits ~30% behind Snapdragon/Apple flagships but chews through Metro bundling fine. The real constraint is never compute — it's Android's app-sandbox exec policy, which the decisions below route around.

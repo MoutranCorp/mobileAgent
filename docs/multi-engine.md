@@ -1,10 +1,16 @@
 # Multi-engine roadmap — making any engine a first-class citizen
 
-**Status: plan / not yet implemented.** This is the design for evolving the broker
-from "claude-code with a couple of stub adapters" to "any engine works perfectly,
-with a different engine runnable per tab simultaneously." It's the synthesis of a
-four-layer coupling audit (engine adapter, broker core, controls+protocol,
-client+Android). Implement in the phases below; keep this doc current as you do.
+**Status: active prerequisite plan / not yet implemented.** This is the design for
+evolving the broker from "claude-code with a couple of stub adapters" to "any
+engine works perfectly, with a different engine runnable per tab simultaneously."
+It is the required foundation before a production Codex adapter or an
+engine-neutral Agent/persona system. Implement this before executing older
+Claude-specific plans unless the user explicitly asks for a Claude-only feature.
+
+Shared-code portability is part of this plan: Android/proot-Debian is the
+primary deployment runtime, but broker/web/test code must also work on native
+Windows. New engine seams should use Node path/process APIs and tests should not
+assume Bash, `/tmp`, or POSIX path separators.
 
 ## The goal
 
@@ -82,6 +88,26 @@ rewrite, because the per-session map already exists.
 - Move the shared `toolId → name` map and (optionally) a reusable permission-bridge
   helper into `base.js` so new adapters don't copy 200 lines.
 
+Delegation target:
+
+```js
+features = {
+  thinking: false,
+  permissions: false,
+  questions: false,
+  resume: false,
+  slashCommands: false,
+  models: false,
+  effort: false,
+  config: false
+}
+```
+
+Every adapter overrides only the capabilities it actually implements. Base-class
+defaults must be safe no-ops that emit a visible resolved/error event rather than
+silently dropping work. For example, a default `respondQuestion` should resolve
+the pending UI request as unsupported instead of doing nothing.
+
 ### Phase 2 — Make per-session state real (the per-tab unlock)
 - Relocate the six globals (above) into per-session `meta`; turn `lastCapabilities`
   into `capabilitiesByKey`. `activeKey` stays a *view pointer* only.
@@ -89,6 +115,17 @@ rewrite, because the per-session map already exists.
   capabilities/status (today only `lastCapabilities` is re-sent, and only globally).
 - Extend `sessions.json` from `{ key: resumeId }` to `{ key: { resumeId, harness } }`
   so resume state is per-engine.
+
+Acceptance for this phase:
+
+- A Claude tab and a mock/opencode/Codex-fixture tab can hold different profile,
+  model, effort, permission, status, and capabilities at the same time.
+- Switching tabs only changes the view pointer; it does not mutate a background
+  session's engine settings.
+- The persisted resume map can never pass a Claude session id to a Codex adapter
+  or a Codex thread id to Claude.
+- Tests include Windows-style and POSIX-style project paths for any new path
+  handling.
 
 ### Phase 3 — Capability-gated UI + per-tab controls
 - Tab objects gain `{ engineProfileId, model, effort, permissionMode }`; the model /
@@ -130,6 +167,11 @@ work end-to-end is the concrete test that Phases 1–4 actually landed. Then add
 non-CLI engine (a langgraph adapter over HTTP/in-process) to prove the contract isn't
 secretly CLI-shaped.
 
+For the immediate Codex goal, a fake `codex app-server` JSON-RPC fixture may be
+used before opencode parity to validate the contract. Do not ship a real Codex
+adapter until the same capability gates and per-session state rules pass with at
+least one non-Claude fixture/adapter.
+
 ## Guardrails
 
 - Don't rebuild the agnostic parts (rendering, transcript store, most of `controls/`).
@@ -138,3 +180,6 @@ secretly CLI-shaped.
   (harness === 'claude-code')` scattered through core.
 - Keep `protocol.js` / `session.js` as ground truth; update this doc + `architecture.md`
   as the model changes.
+- Keep shared implementation portable. Android-specific provisioning/login code
+  can be Android-only; broker adapters, protocol, tests, and web UI must run on
+  Windows too.

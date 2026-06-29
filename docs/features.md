@@ -11,9 +11,9 @@ engine model). Drift notes are flagged inline. For Claude Code stream-mapping
 specifics see [`docs/claude-code-surface.md`](claude-code-surface.md).
 
 **Tests are the source of truth for "it works."** Run `cd broker && npm test`.
-At time of writing: **93 tests pass across 21 files** in `broker/test/` (glob it
-yourself; old docs that say 19/13/34/45/91 are stale). The test script is
-`node --test "test/**/*.test.js"` (the quoted glob matters on Windows Node 24).
+Do not trust hardcoded counts in docs; list the current files with
+`rg --files broker/test`. The test script is `node --test "test/**/*.test.js"`
+(the quoted glob matters on Windows Node 24).
 
 ---
 
@@ -27,6 +27,8 @@ metered billing), `opencode` (conformance), or `mock` (offline tests/UI shots).
 Components: [`broker/`](../broker) (heart + tests), [`broker/web-ui/`](../broker/web-ui)
 (the client), [`android/`](../android) (Kotlin/Compose shell, `targetSdk 28`),
 [`provisioning/`](../provisioning) (Termux→proot→toolchain→broker scripts).
+The phone runtime is primary, but the shared broker/web/test surface must also
+run natively on Windows.
 
 ---
 

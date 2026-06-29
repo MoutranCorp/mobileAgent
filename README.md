@@ -1,11 +1,20 @@
 # On-Device Claude Code
 
-A sideloaded Android app that gives you the full Claude Code experience through a
+A sideloaded Android app that gives you a full coding-agent workflow through a
 custom UI, builds React Native / Expo apps, and lets you test them live on the
-**same phone** — with the daily loop running 100% on-device and only occasional
-native compiles offloaded to the cloud.
+**same phone**. The current production engine is Claude Code; the broker is being
+evolved toward multiple engines, with Codex CLI planned next. The daily phone
+loop runs 100% on-device and only occasional native compiles are offloaded to
+the cloud.
 
-This repo is the implementation of [`ondevice-claude-code-plan.md`](ondevice-claude-code-plan.md).
+This repo grew from [`ondevice-claude-code-plan.md`](ondevice-claude-code-plan.md).
+For current implementation order, read [`docs/current-plan.md`](docs/current-plan.md).
+The phone runtime is primary, but the shared broker/web/test surface is expected
+to run on Windows too.
+
+Conceptual runtime diagram below. The current default Android install is the
+self-contained APK flow: the app stages proot, downloads the Debian rootfs, and
+starts the broker. Manual Termux provisioning is a fallback/debug path.
 
 ```
 ┌──────────────────────── Pixel (Android 16) ───────────────────────┐
@@ -128,9 +137,9 @@ any browser pointed at the broker. Open the managers with the **☰** menu, or h
 
 ## The real thing (on the phone)
 
-1. **Provision** the runtime: [`provisioning/README.md`](provisioning/README.md)
-   walks Termux → proot Debian → toolchain → broker, including the Phase 0 gate
-   that proves Claude + Metro work on-device before you build anything.
+1. **Install the self-contained APK**: [`docs/on-device-deploy.md`](docs/on-device-deploy.md)
+   covers the current auto-provisioning flow. The app stages proot, downloads the
+   Debian rootfs, installs the toolchain, and delivers the broker on first launch.
 2. **Authenticate** Claude on your Max plan: `claude` then `/login` (flat
    subscription, no metered API billing).
 3. **Build the app**: [`android/README.md`](android/README.md). It installs and
@@ -156,28 +165,24 @@ any browser pointed at the broker. Open the managers with the **☰** menu, or h
 | **3** Custom UI | **Done.** The web UI delivers the full transcript/tool-card/diff/approval experience; the Compose shell hosts it + native runtime controls. |
 | **4** One-tap Test loop | **Done.** `start_metro` + `exp://` deep-link from the Test button; native-dep change detection in the broker. |
 | **5** Projects, sessions, durability | **Done.** Project switcher + per-project Metro ports + session resume + git controls + Keystore secrets. |
-| **6** Fully self-contained native builds | Documented escape hatch (default: EAS cloud), per the plan. |
-| **§3** Engine/model pluggability | **Done.** `claude-code` + `opencode` + `mock` adapters behind one canonical schema; profiles for Claude (Max), GLM (Z.ai), opencode, mock. |
+| **6** Fully self-contained native builds | Documented escape hatch (default: EAS cloud), per the original plan. |
+| **§3** Engine/model pluggability | **Partial.** `claude-code`, `opencode`, and `mock` exist behind one canonical schema, but making every engine first-class is the active work in [`docs/multi-engine.md`](docs/multi-engine.md). |
 
-## What needs your input (placeholders)
+## What needs your input
 
-Nothing blocks the laptop demo or the external-broker app path. For a fully
-self-contained on-device build you'll supply:
+Nothing blocks the Windows/laptop demo. For the real phone runtime:
 
-- **`android/app/src/main/assets/bootstrap-aarch64.tar.gz`** — the prebuilt Termux
-  arm64 bootstrap tarball (large, arch-specific, not committed). See
-  [`android/app/src/main/assets/README.md`](android/app/src/main/assets/README.md).
-  Until present, the app runs in external-broker mode.
-- **Claude `/login`** — the one OAuth step that can't be scripted.
-- **GLM / OpenRouter keys** *(optional)* — only if you switch off the default
-  Claude (Max) profile. Add them in the app's Runtime ▸ Secrets (Keystore) or
-  `broker/<stateDir>/secrets.json`.
-- **EAS account** *(optional)* — only for cloud dev-client builds when native deps
-  change.
-- ~~Gradle wrapper jar~~ — now generated and committed; `./gradlew` works directly.
-  The app **compiles** (`gradle :app:assembleDebug` → a 16 MB debug APK) and
-  **passes lint** with the installed SDK; only on-device *runtime* testing needs a
-  phone or emulator.
+- **Stage proot assets** before building the self-contained APK when they are not
+  already present: `ARCH=aarch64 bash provisioning/make-runtime.sh`.
+- **Claude sign-in** is the one account step: use the app Runtime tab or run
+  Claude login inside the guest, depending on the path in
+  [`docs/on-device-deploy.md`](docs/on-device-deploy.md).
+- **GLM / OpenRouter keys** *(optional)* are only needed if you switch off the
+  default Claude (Max) profile.
+- **Codex auth** will be needed only after the Codex app-server adapter is
+  implemented; see [`docs/codex-app-server.md`](docs/codex-app-server.md).
+- **EAS account** *(optional)* is only for cloud dev-client builds when native
+  dependencies change.
 
 ## Why these choices
 

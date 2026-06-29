@@ -7,6 +7,14 @@
 > **Line anchors re-verified 2026-06-28 against `main` @ `75f5d39`** (after the Expo-test /
 > GitHub-sign-in batch). They drift as the code changes — treat them as hints, re-grep before relying.
 
+> **Sequencing / delegation note:** this document is a Claude Code implementation
+> design, not yet an engine-neutral implementation plan. The current repo
+> priority is `docs/multi-engine.md` Phase 1/2, then `docs/codex-app-server.md`.
+> Before implementing this feature across engines, split it into an
+> engine-neutral `AgentStore`/UI/attribution layer plus per-engine mappers
+> (Claude spawn flags, Codex app-server instructions/sandbox/approvals, etc.).
+> If implemented before that split, label the work Claude-only.
+
 ## 1. Goal
 
 Let the user **create, edit, and select "agents"** — each a reusable bundle of
@@ -180,6 +188,11 @@ Commands (UI→broker):
 
 ## 6. Build phasing
 
+0. **Precondition for cross-engine work.** Complete the multi-engine feature
+   declaration and per-session state work first. If this feature is intentionally
+   implemented earlier, keep the implementation under a Claude-specific mapper
+   boundary so Codex/opencode are not forced through Claude flags or `.claude`
+   config assumptions.
 1. **Data + spawn core.** `AgentStore` + `agents.json` + `DEFAULT_AGENTS`; thread agent fields
    through `createEngine`→`_spawn()` (prompt, tools, model/effort pin, permission mode). Manual
    JSON editing works end-to-end before any UI.

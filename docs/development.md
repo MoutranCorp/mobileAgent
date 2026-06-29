@@ -80,14 +80,13 @@ credentials** against it. All tests and the UI screenshots run on it.
 npm test     # == node --test "test/**/*.test.js"
 ```
 
-This runs the `node:test` suite (no extra test framework). As of this writing it
-is **93 tests across 21 files** in `broker/test/` (covering JSONL buffering, the
-mock engine, the WS server end-to-end, config managers, checkpoints/revert,
-sessions, multisession re-keying, the updater, widgets, downloads, and more).
-**Do not trust that count blindly** — verify with:
+This runs the `node:test` suite (no extra test framework), covering JSONL
+buffering, the mock engine, the WS server end-to-end, config managers,
+checkpoints/revert, sessions, multisession re-keying, the updater, widgets,
+downloads, and more. **Do not trust hardcoded test counts** — verify with:
 
 ```bash
-ls broker/test/*.test.js | wc -l    # file count
+rg --files broker/test              # file list
 npm test                            # the suite prints "tests N / pass N / fail N"
 ```
 
@@ -123,7 +122,12 @@ the UI loaded and drove through its states without throwing.
 # one-time: install the browser
 npx playwright install chromium
 
-# 1) start a mock broker on the UI port:
+# 1) start a mock broker on the UI port.
+# PowerShell / native Windows:
+$p = Join-Path $env:TEMP 'uiproj'; $s = Join-Path $env:TEMP 'uistate'
+node src/index.js --engine mock --port 8799 --projects $p --state $s
+
+# Bash / Android-proot / macOS / Linux:
 node src/index.js --engine mock --port 8799 --projects /tmp/uiproj --state /tmp/uistate
 
 # 2) in another shell, drive + screenshot it:
@@ -245,7 +249,8 @@ it.
 - **OS:** Windows 11. Shell is PowerShell; a Bash tool (Git Bash / POSIX `sh`) is
   also available.
 - **Node 24 / npm 11** (verified `v24.13.1` / `11.8.0`) — comfortably past the
-  Node ≥ 21 floor, so `npm test` runs the full suite here.
+  Node ≥ 21 floor, so the broker test suite is expected to run here. If a run
+  hangs, inspect lingering `node` processes and rerun the focused test file.
 - **JDK 17** installed.
 - **Android SDK at `C:/src/androidsdk`** (`ANDROID_HOME`), with platforms
   **android-34/35/36**, build-tools, platform-tools, and cmdline-tools.

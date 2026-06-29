@@ -2,20 +2,20 @@
 
 This doc is for a Claude Code agent (or human) landing in a **fresh clone** with no
 prior context. It explains how to get mobile-agent running on an actual Pixel and
-gives an **honest list of where the "pure sideload" path is still broken in code**.
+calls out where phone-only runtime verification is still required.
 
 ## The goal: a fully on-device loop
 
 The point of this project is that the **entire loop runs on the phone**:
 
 ```
-Termux (F-Droid)  →  proot Debian guest  →  Node broker (127.0.0.1:8765)
-                                                   ▲
-                          Android app WebView ──────┘  (loads http://127.0.0.1:8765/)
+Android app runtime -> proot Debian guest -> Node broker (127.0.0.1:8765)
+                                                   ^
+                          Android app WebView -----'  (loads http://127.0.0.1:8765/)
 ```
 
 Claude Code, the broker, and the web UI all execute *inside* the Debian guest on the
-Pixel. The app is just a native Compose shell that hosts the broker's web UI in a
+phone. The app is a native Compose shell that hosts the broker's web UI in a
 `WebView` and owns the Android plumbing the broker can't (foreground service, wake
 lock, battery exemption, proot launch, Keystore secret injection — see
 [`../android/README.md`](../android/README.md)).
@@ -87,12 +87,13 @@ the FUSE sdcard), but work + login come back.
 The script-based path below is the **dev/manual fallback** (and the repo-clone +
 `start-broker.sh` workflow), not the default.
 
-## Manual provisioning — the happy path
+## Manual provisioning — fallback/debug path
 
 The provisioning scripts live in [`../provisioning`](../provisioning) and are the
-**only path that actually installs a working broker today** (see
-[Known gaps](#known-gaps-the-pure-sideload-path-is-incomplete)). They run on the
-phone, inside Termux → Debian.
+legacy Termux/proot-distro flow. They are useful when debugging provisioning or
+when the self-contained APK cannot be used, but they are no longer the primary
+install path. The current default is the self-contained APK flow above. These
+scripts run on the phone, inside Termux → Debian.
 
 ### 0. Install Termux from F-Droid
 
@@ -270,5 +271,4 @@ at the top. In short:
   `broker/src/protocol.js`, `broker/src/session.js`. The broker CLI flags are
   documented in the header of `broker/src/index.js`.
 - Don't trust hardcoded test counts in older docs. Verify by running `npm test` in
-  `broker/` (there are currently 21 `*.test.js` files under `broker/test/` — but run it
-  rather than trusting this number).
+  `broker/` and by listing current test files with `rg --files broker/test`.

@@ -1,6 +1,6 @@
-# CLAUDE.md — agent onboarding for `mobile-agent`
+# AGENTS.md — agent onboarding for `mobile-agent`
 
-This file is read automatically by Claude Code when it opens this repo. It is the
+This file is read automatically by Codex when it opens this repo. It is the
 **single source of truth** for working here: everything an agent needs to be
 productive lives in this repo (this file + [`docs/`](docs/)), not in any external
 memory. If you change the project, **you are expected to keep these docs current**
@@ -10,16 +10,16 @@ memory. If you change the project, **you are expected to keep these docs current
 
 `mobile-agent` puts a full coding-agent workflow on a phone: a sideloaded
 Android app runs a Node "broker" inside a proot-Debian environment on the
-device; the broker currently drives the `claude` CLI and serves a custom web UI
-that the app hosts in a WebView. The broker is being evolved toward multiple
-engines, with Codex CLI planned next. You build/test Expo apps live on the same
-phone; only native binary compiles go to EAS cloud.
+device; the broker serves a custom web UI that the app hosts in a WebView. The
+current production engine is **Claude Code**; the next planned engine is
+**Codex CLI** through the multi-engine work. You build/test Expo apps live on
+the same phone; only native binary compiles go to EAS cloud.
 
 **Project principle:** the goal is the *fully on-device* loop (broker in
 proot-Debian on the phone). Lead with that path for Android runtime work. The
 broker, web UI, and tests must also work cleanly on Windows; do not introduce
 Linux-only assumptions into shared Node/web code. A PC-hosted broker over
-`adb reverse` is only a degraded fallback — see [docs/on-device-deploy.md](docs/on-device-deploy.md).
+`adb reverse` is a degraded fallback — see [docs/on-device-deploy.md](docs/on-device-deploy.md).
 
 ## Repo map
 
@@ -27,7 +27,7 @@ Linux-only assumptions into shared Node/web code. A PC-hosted broker over
 |------|------------|
 | `broker/` | **The heart.** Node service: WebSocket + canonical protocol, engine adapters, controls. Builds & tests here. |
 | `broker/web-ui/` | The client (vanilla JS, served by the broker from disk). Hosted in the Android WebView. |
-| `android/` | Kotlin/Compose shell, `targetSdk 28` (keeps `exec()` from the data dir legal for proot). Foreground service + proot/broker launch (`service/ProotRuntime.kt`), native Claude sign-in (`service/ClaudeLogin.kt`), WebView host (`ui/AgentWebView.kt`). |
+| `android/` | Kotlin/Compose shell, `targetSdk 28` (keeps `exec()` from the data dir legal for proot). Foreground service + proot/broker launch. |
 | `provisioning/` | Termux → proot Debian → toolchain → broker scripts (Phase 0 gate + Phase 2 provision). |
 | `dist/` | Prebuilt `app-debug.apk` for sideloading. |
 | `tools/webshot/` | An unrelated on-device website-screenshot **skill** (don't confuse with the UI test harness). |
@@ -39,12 +39,12 @@ Linux-only assumptions into shared Node/web code. A PC-hosted broker over
 - [docs/current-plan.md](docs/current-plan.md) — the active priority order; read this before executing old plans.
 - [docs/development.md](docs/development.md) — prerequisites + how to build/run/test/verify each component (incl. the UI screenshot harness and this machine's toolchain).
 - [docs/features.md](docs/features.md) — the current implemented surface, including the **tabbed-workspace / multi-session** subsystem, plus roadmap/deferred.
-- [docs/claude-cli-behaviors.md](docs/claude-cli-behaviors.md) — non-obvious `claude` CLI behaviors the broker depends on (model resolution, init-only scans, no hot-reload).
-- [docs/claude-code-surface.md](docs/claude-code-surface.md) — authoritative notes on the Claude Code stream/surface the adapter targets.
+- [docs/multi-engine.md](docs/multi-engine.md) — the required seam before Codex and engine-neutral agents.
 - [docs/codex-app-server.md](docs/codex-app-server.md) — planned Codex CLI integration via `codex app-server`.
-- [docs/on-device-deploy.md](docs/on-device-deploy.md) — getting it running on a real Pixel: the self-contained provision/update *flow* + the degraded fallbacks.
-- [docs/on-device-runtime.md](docs/on-device-runtime.md) — the **internals** of the Android runtime (proot+Debian, marker versions, hardlink-safe extraction, fake `/proc`/apt/seccomp, git-clone broker delivery, PTY-based Claude sign-in, WebView dvh/http gotchas, node-direct stop). Read this before touching `ProotRuntime`/`ClaudeLogin`/`AgentWebView`.
-- [docs/multi-engine.md](docs/multi-engine.md) — active prerequisite plan for making **any** engine first-class and runnable **per-tab** (claude-code/opencode/grok/langgraph/Codex): where claude assumptions leaked, the global-singleton blockers, and the phased plan. Read before adding an engine or touching the adapter/protocol boundary.
+- [docs/claude-cli-behaviors.md](docs/claude-cli-behaviors.md) — non-obvious Claude Code CLI behaviors the current adapter depends on.
+- [docs/claude-code-surface.md](docs/claude-code-surface.md) — authoritative notes on the current Claude stream/surface.
+- [docs/agent-management/](docs/agent-management/) — persona/agent planning; deferred until the multi-engine seam is in place unless explicitly scoped to Claude.
+- [docs/on-device-deploy.md](docs/on-device-deploy.md) — getting it running on a real Pixel + the **honest gaps** in the pure-sideload path.
 
 ## Quickstart (no phone, no credentials)
 
@@ -57,17 +57,12 @@ npm test               # node:test suite — run it for the live count, don't tr
 
 Open http://127.0.0.1:8765/ and drive the full UI against the mock engine.
 
-**On-device run / relaunch (Termux→Debian guest):** if the repo is cloned in place
-(e.g. `~/mobileAgent`), there is **no `~/agent-broker` and no `~/provisioning/`** —
-launch with the repo-root script (resolves the broker relative to itself, so it
-works after any reboot/Termux reset): `bash ~/mobileAgent/start-broker.sh`
-(`PROFILE=mock` for offline). The `~/provisioning/run-broker.sh` + `~/agent-broker`
-path only exists if you ran `provision-debian.sh`. See [docs/on-device-deploy.md](docs/on-device-deploy.md).
-
 **Prerequisites:** Node **≥ 21** (the test script relies on `node --test` glob
-expansion, which is 21+), npm, git. For the real engine: the `claude` CLI logged
-in on a Max plan. For UI screenshots: `npx playwright install chromium`. For the
-Android app: Android SDK + JDK 17. Full detail in [docs/development.md](docs/development.md).
+expansion, which is 21+), npm, git. For the current real engine: the Claude Code
+CLI logged in on a Max plan. For the planned Codex engine: Codex CLI auth, plus
+the adapter work in [docs/codex-app-server.md](docs/codex-app-server.md). For UI
+screenshots: `npx playwright install chromium`. For the Android app: Android SDK
++ JDK 17. Full detail in [docs/development.md](docs/development.md).
 
 ## High-value facts (the things that bite)
 
@@ -89,28 +84,12 @@ Android app: Android SDK + JDK 17. Full detail in [docs/development.md](docs/dev
 - **Verify UI changes** with `npm run uishot` — it drives the UI at phone size and
   **exits non-zero on any JS console error** (so it's also a smoke test). See
   [docs/development.md](docs/development.md#ui-verification).
-- **CLI is init-only:** `claude` scans skills/commands/agents/MCP **once at
-  `system/init`**; a live stream-json session does not hot-reload them
+- **Claude CLI is init-only:** Claude Code scans skills/commands/agents/MCP once
+  at `system/init`; a live stream-json session does not hot-reload them
   (re-spawn with `--resume`). See [docs/claude-cli-behaviors.md](docs/claude-cli-behaviors.md).
 - **This box can build+test the broker and compile the APK, but cannot run/install
   the app** (no emulator/system image, no adb device). On-device runtime testing
-  needs the user's phone. Compiling the APK needs a **one-time toolchain setup**:
-  `sudo android/setup-build-tools.sh`, then `android/build-apk.sh` (refreshes
-  `dist/app-debug.apk`). On **arm64 Linux** the build runs Google's x86_64 `aapt2`
-  under `qemu-user` (Android ships no arm64 `aapt2`; Debian's is too old for AGP 8.5)
-  and swaps in the native arm64 `zipalign` — both wired by the scripts. See
-  [docs/development.md](docs/development.md).
-- **On-device runtime is full of device-specific gotchas** that are documented in
-  [docs/on-device-runtime.md](docs/on-device-runtime.md), not just code comments —
-  e.g. the WebView loads **loopback HTTP only** (https → blank `ERR_SSL_PROTOCOL_ERROR`)
-  and **`dvh`/`vh` misresolve to 0** (use `calc(N*var(--vh))`); rootfs extraction must
-  stay **pure-Java** (Android blocks hardlinks); proot runs **with seccomp** + fake
-  `/proc` binds; the broker is delivered as a **git clone** (that's what makes in-app
-  Update work). Bump `ROOTFS_VERSION`/`BROKER_SOURCE_VERSION` when changing those steps.
-- **Claude auth precedence:** when `~/.claude/.credentials.json` exists (native sign-in
-  / `claude setup-token`), the engine **drops** `CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_API_KEY`
-  from its env so a stale token can't override the file (the "401 Invalid bearer token"
-  cause). See `engines/claude-code.js` + [docs/claude-cli-behaviors.md](docs/claude-cli-behaviors.md).
+  needs the user's phone. See [docs/development.md](docs/development.md#this-development-machine-windows).
 
 ## Keeping context current
 
@@ -121,10 +100,9 @@ a doc wrong, fix the doc in the same change.** Concretely:
 - Changed **build/run/test**, a tool version, or an env constraint → update [docs/development.md](docs/development.md).
 - Changed the **architecture, protocol shape, or session/engine model** → update [docs/architecture.md](docs/architecture.md) (and remember `protocol.js`/`session.js` are the real ground truth).
 - Changed the active implementation priority or sequencing → update [docs/current-plan.md](docs/current-plan.md).
-- Learned a **non-obvious `claude` CLI behavior** → add it to [docs/claude-cli-behaviors.md](docs/claude-cli-behaviors.md).
+- Learned a **non-obvious Claude Code CLI behavior** → add it to [docs/claude-cli-behaviors.md](docs/claude-cli-behaviors.md).
 - Learned a **non-obvious Codex app-server behavior** → update [docs/codex-app-server.md](docs/codex-app-server.md).
 - Touched the **on-device deploy path** → update [docs/on-device-deploy.md](docs/on-device-deploy.md).
-- Touched the **Android runtime internals** (proot/rootfs/provision/login/WebView in `ProotRuntime`/`RuntimeLauncher`/`ClaudeLogin`/`AgentWebView`) → update [docs/on-device-runtime.md](docs/on-device-runtime.md), and bump the relevant version `const` if extraction/broker delivery changed.
 
 **Anti-staleness rules:** prefer "run `npm test`" / "glob `src/`" over hardcoding
 counts and file lists (they rot). Don't duplicate `protocol.js` — link to it. After

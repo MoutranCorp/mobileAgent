@@ -6,11 +6,19 @@
 > [`broker/src/session.js`](../broker/src/session.js) as ground truth over any
 > prose here.
 
-`mobile-agent` is an **on-device Claude Code**: a sideloaded Android app that
-gives the full Claude Code experience on a Pixel, builds Expo/React-Native apps,
-and tests them live on the same phone. The daily loop runs 100% on-device; only
-native binary compiles go to the cloud (EAS). It implements
-[`ondevice-claude-code-plan.md`](../ondevice-claude-code-plan.md).
+`mobile-agent` is a phone-first coding-agent runtime: a sideloaded Android app
+hosts a local broker and web UI, builds Expo/React-Native apps, and tests them
+live on the same phone. The current production engine is Claude Code; the broker
+is being evolved toward multiple engines, with Codex CLI planned next. The daily
+phone loop runs 100% on-device; only native binary compiles normally go to EAS.
+The original background plan is [`ondevice-claude-code-plan.md`](../ondevice-claude-code-plan.md);
+the active sequencing is [`docs/current-plan.md`](current-plan.md).
+
+The supported runtime model is phone-first, not phone-only. Android/proot-Debian
+is the primary deployment runtime, while the shared broker, web UI, and tests
+must also run natively on Windows. Android-specific code can assume Android and
+proot details; shared Node/web code should use portable path/process APIs and
+must not depend on Bash-only behavior.
 
 ## The components (three + one)
 
