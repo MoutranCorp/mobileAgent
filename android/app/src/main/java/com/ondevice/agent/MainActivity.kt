@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.PowerManager
+import android.provider.OpenableColumns
 import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -28,11 +29,14 @@ import com.ondevice.agent.ui.AgentTheme
 import com.ondevice.agent.ui.MainActions
 import com.ondevice.agent.ui.MainScreen
 import java.io.File
+import org.json.JSONArray
+import org.json.JSONObject
 
 class MainActivity : ComponentActivity(), MainActions {
 
     // --- WebView bridge plumbing (registered before STARTED) -----------------
     private var imageCb: ((String?, String?) -> Unit)? = null
+    private var filesCb: ((String?) -> Unit)? = null
     private var voiceCb: ((String?) -> Unit)? = null
 
     private val pickImageLauncher =
@@ -44,6 +48,17 @@ class MainActivity : ComponentActivity(), MainActions {
                 val bytes = contentResolver.openInputStream(uri)!!.use { it.readBytes() }
                 cb?.invoke(Base64.encodeToString(bytes, Base64.NO_WRAP), mime)
             }.onFailure { cb?.invoke(null, null) }
+        }
+
+    // Multi-select picker for any file type. Returns a JSON array string of
+    // { name, mime, dataBase64 } (or null when cancelled / nothing readable).
+    private val pickFilesLauncher =
+        registerForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris: List<Uri> ->
+            val cb = filesCb; filesCb = null
+            if (uris.isEmpty()) { cb?.invoke(null); return@registerForActivityResult }
+            val arr = JSONArray()
+            for (uri in uris) readAttachment(uri)?.let { arr.put(it) }
+            cb?.invoke(if (arr.length() > 0) arr.toString() else null)
         }
 
     private val voicePermLauncher =
@@ -114,6 +129,36 @@ class MainActivity : ComponentActivity(), MainActions {
         runCatching { pickImageLauncher.launch("image/*") }
             .onFailure { onResult(null, null); imageCb = null }
     }
+
+    override fun pickFiles(onResult: (String?) -> Unit) {
+        filesCb = onResult
+        runCatching { pickFilesLauncher.launch("*/*") }
+            .onFailure { onResult(null); filesCb = null }
+    }
+
+    // Read one picked file into { name, mime, dataBase64 }. Skips unreadable files
+    // and anything over MAX_ATTACH_BYTES (keeps the base64 + the JS bridge string
+    // from blowing up memory on a phone).
+    private fun readAttachment(uri: Uri): JSONObject? = runCatching {
+        val mime = contentResolver.getType(uri) ?: "application/octet-stream"
+        var name = "file"
+        var size = -1L
+        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { c ->
+            if (c.moveToFirst()) {
+                val ni = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (ni >= 0 && !c.isNull(ni)) name = c.getString(ni)
+                val si = c.getColumnIndex(OpenableColumns.SIZE)
+                if (si >= 0 && !c.isNull(si)) size = c.getLong(si)
+            }
+        }
+        if (size > MAX_ATTACH_BYTES) return@runCatching null
+        val bytes = contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+        if (bytes.size > MAX_ATTACH_BYTES) return@runCatching null
+        JSONObject()
+            .put("name", name)
+            .put("mime", mime)
+            .put("dataBase64", Base64.encodeToString(bytes, Base64.NO_WRAP))
+    }.getOrNull()
 
     override fun saveFile(name: String, content: String) {
         runCatching {
@@ -199,5 +244,6 @@ class MainActivity : ComponentActivity(), MainActions {
 
     companion object {
         private const val EVENTS_CHANNEL = "agent_events"
+        private const val MAX_ATTACH_BYTES = 20L * 1024 * 1024 // 20 MB per file
     }
 }

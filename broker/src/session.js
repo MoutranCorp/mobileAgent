@@ -322,7 +322,7 @@ export class SessionManager {
     return out;
   }
 
-  async sendUserMessage(text, images) {
+  async sendUserMessage(text, attachments) {
     // inTurn marks the session busy the INSTANT a prompt is queued — set it BEFORE
     // ensureEngine(), because a cold/idle-evicted session's spawn (proot + claude +
     // --resume) takes SECONDS, and during that window the session must already read as
@@ -335,7 +335,7 @@ export class SessionManager {
     this._emitSessions();
     const engine = await this.ensureEngine();
     if (!engine) { if (m) m.inTurn = false; this._emitSessions(); return; }
-    await engine.send({ type: 'user_message', text, images });
+    await engine.send({ type: 'user_message', text, attachments });
   }
 
   respondPermission(id, decision, extra, key) {
@@ -442,13 +442,13 @@ export class SessionManager {
   }
 
   /** Send a user message to a SPECIFIC session (not necessarily the active one). */
-  async sendTo(key, text, images) {
+  async sendTo(key, text, attachments) {
     const engine = this.engines.get(key);
     if (!engine) return false;
     const m = this.meta.get(key);
     if (m) { m.inTurn = true; m.lastTurnTs = Date.now(); m.lastActivityTs = Date.now(); }
     this._emitSessions();
-    await engine.send({ type: 'user_message', text, images });
+    await engine.send({ type: 'user_message', text, attachments });
     return true;
   }
 

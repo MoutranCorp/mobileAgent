@@ -52,6 +52,9 @@ interface MainActions {
     fun removeSecret(name: String)
     // WebView bridge (window.AndroidAgent) — capabilities a WebView lacks.
     fun pickImage(onResult: (String?, String?) -> Unit)
+    // Multi-select picker for any file type; delivers a JSON array string of
+    // { name, mime, dataBase64 } (or null on cancel/empty).
+    fun pickFiles(onResult: (String?) -> Unit)
     fun saveFile(name: String, content: String)
     fun notifyUser(title: String, body: String)
     fun startVoice(onResult: (String?) -> Unit)

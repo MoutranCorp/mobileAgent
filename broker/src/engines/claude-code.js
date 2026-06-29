@@ -611,22 +611,34 @@ export class ClaudeCodeEngine extends EngineAdapter {
 
   async send(cmd) {
     if (cmd.type !== CommandType.USER_MESSAGE) return;
-    this._writeUser(cmd.text || '', cmd.images);
+    this._writeUser(cmd.text || '', cmd.attachments || cmd.images);
   }
 
-  _writeUser(text, images) {
+  _writeUser(text, attachments) {
     if (!this.proc || !this.proc.stdin || !this.proc.stdin.writable) {
       this.emitError('Engine not running; cannot send message.');
       return;
     }
-    // Multimodal: prepend base64 image blocks (Claude is vision-capable), then text.
+    // Multimodal: prepend attachment blocks, then text. Each attachment becomes the
+    // content-block kind Claude can actually read, keyed off its mime:
+    //   image/*          -> base64 `image` block (vision)
+    //   application/pdf  -> base64 `document` block
+    //   anything else    -> decoded inline as a `text` block (code/logs/csv/json/…),
+    //                       which is exactly how Claude reads source files and never
+    //                       depends on document-block support in the stream-json input.
     const content = [];
-    for (const img of images || []) {
-      if (!img || !img.dataBase64) continue;
-      content.push({
-        type: 'image',
-        source: { type: 'base64', media_type: img.mime || 'image/png', data: img.dataBase64 },
-      });
+    for (const att of attachments || []) {
+      if (!att || !att.dataBase64) continue;
+      const mime = att.mime || 'application/octet-stream';
+      const name = att.name || 'file';
+      if (/^image\//.test(mime)) {
+        content.push({ type: 'image', source: { type: 'base64', media_type: mime, data: att.dataBase64 } });
+      } else if (mime === 'application/pdf') {
+        content.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: att.dataBase64 }, title: name });
+      } else {
+        const decoded = Buffer.from(att.dataBase64, 'base64').toString('utf8');
+        content.push({ type: 'text', text: `Attached file \`${name}\`:\n\n\`\`\`\n${decoded}\n\`\`\`` });
+      }
     }
     // The API rejects empty text blocks; only include text when present (an
     // image-only message is valid). Fall back to a single space if somehow empty.

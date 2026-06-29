@@ -20,7 +20,7 @@ desktop:
 | Web UI feature | In a WebView | Native bridge |
 |---|---|---|
 | `confirm()` / `alert()` | suppressed → would silently cancel | `onJsConfirm`/`onJsAlert` → native `AlertDialog` |
-| Image attach (📎) | `<input type=file>` does nothing | `pickImage()` → system picker → base64 → `onPickedImage` |
+| File attach (📎) | `<input type=file>` does nothing | `pickFiles()` → multi-select system picker (any type) → JSON `[{name,mime,dataBase64}]` → `onPickedFiles` (legacy `pickImage()`/`onPickedImage` kept) |
 | Export to Markdown | `blob:` download doesn't fire | `saveFile()` → `FileProvider` share sheet |
 | Voice input (🎤) | Web Speech API unavailable | `startVoice()` → `SpeechRecognizer` → `onVoiceResult` |
 | Turn notifications | Web Notifications unavailable | `notify()` → Android notification |

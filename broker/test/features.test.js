@@ -164,8 +164,26 @@ test('files_list and checkpoint flow over WS', async () => {
   await server.stop();
 });
 
-// ---- e2e: image attachment acknowledged by mock ----
-test('user_message with images is accepted (mock acknowledges)', async () => {
+// ---- e2e: file attachments acknowledged by mock ----
+test('user_message with attachments (any file type) is accepted (mock acknowledges)', async () => {
+  const { server, port } = await bootBroker();
+  const { ws, events, ready, waitFor } = open(port);
+  await ready;
+  const onePixelPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const textB64 = Buffer.from('hello from a text file').toString('base64');
+  ws.send(JSON.stringify({ type: 'user_message', text: 'what are these?', attachments: [
+    { mime: 'image/png', dataBase64: onePixelPng, name: 'pixel.png' },
+    { mime: 'text/plain', dataBase64: textB64, name: 'notes.txt' },
+  ] }));
+  await waitFor((e) => e.type === 'result');
+  const text = events.filter((e) => e.type === 'assistant_text').map((e) => e.delta).join('');
+  assert.match(text, /files? you attached/i, 'mock should acknowledge the attachments');
+  ws.close();
+  await server.stop();
+});
+
+// ---- back-compat: the legacy `images` field still works ----
+test('user_message with legacy images field is still accepted', async () => {
   const { server, port } = await bootBroker();
   const { ws, events, ready, waitFor } = open(port);
   await ready;
@@ -173,7 +191,7 @@ test('user_message with images is accepted (mock acknowledges)', async () => {
   ws.send(JSON.stringify({ type: 'user_message', text: 'what is this?', images: [{ mime: 'image/png', dataBase64: onePixelPng }] }));
   await waitFor((e) => e.type === 'result');
   const text = events.filter((e) => e.type === 'assistant_text').map((e) => e.delta).join('');
-  assert.match(text, /image/i, 'mock should acknowledge the image');
+  assert.match(text, /you attached/i, 'mock should acknowledge the legacy image attachment');
   ws.close();
   await server.stop();
 });

@@ -95,7 +95,7 @@ export const EventType = Object.freeze({
 /** Command types accepted UI -> broker. */
 export const CommandType = Object.freeze({
   // Conversation
-  USER_MESSAGE: 'user_message', // { text, images?: [{ mime, dataBase64 }] }
+  USER_MESSAGE: 'user_message', // { text, attachments?: [{ mime, dataBase64, name }] } (legacy: images)
   SLASH_COMMAND: 'slash_command', // { name, args? } convenience for /cmd
   INTERRUPT: 'interrupt', // {}
   // Permissions

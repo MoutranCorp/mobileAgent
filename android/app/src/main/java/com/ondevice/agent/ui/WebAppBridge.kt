@@ -18,6 +18,11 @@ class WebAppBridge(private val host: MainActions, private val web: WebView) {
     }
 
     @JavascriptInterface
+    fun pickFiles() {
+        web.post { host.pickFiles { json -> js("onPickedFiles", json) } }
+    }
+
+    @JavascriptInterface
     fun saveFile(name: String, content: String) {
         web.post { host.saveFile(name, content) }
     }

@@ -64,7 +64,7 @@ export class MockEngine extends EngineAdapter {
   async send(cmd) {
     switch (cmd.type) {
       case CommandType.USER_MESSAGE:
-        await this._handleUserMessage(cmd.text || '', cmd.images);
+        await this._handleUserMessage(cmd.text || '', cmd.attachments || cmd.images);
         break;
       default:
         // Mock ignores other commands silently.
@@ -92,7 +92,7 @@ export class MockEngine extends EngineAdapter {
 
   // --- the simulated turn -----------------------------------------------------
 
-  async _handleUserMessage(text, images) {
+  async _handleUserMessage(text, attachments) {
     this._interrupted = false;
     this._turn += 1;
     this.emitEvent(EventType.USER_ECHO, { text });
@@ -106,8 +106,8 @@ export class MockEngine extends EngineAdapter {
       await delay(120);
     }
 
-    if (images && images.length) {
-      await this._streamText(`I can see the ${images.length === 1 ? 'image' : images.length + ' images'} you attached. `);
+    if (attachments && attachments.length) {
+      await this._streamText(`I can see the ${attachments.length === 1 ? 'file' : attachments.length + ' files'} you attached. `);
     }
 
     // A rich-markdown sample so the UI's markdown rendering can be exercised.

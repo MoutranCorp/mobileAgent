@@ -84,7 +84,12 @@ Android app: Android SDK + JDK 17. Full detail in [docs/development.md](docs/dev
   (re-spawn with `--resume`). See [docs/claude-cli-behaviors.md](docs/claude-cli-behaviors.md).
 - **This box can build+test the broker and compile the APK, but cannot run/install
   the app** (no emulator/system image, no adb device). On-device runtime testing
-  needs the user's phone. See [docs/development.md](docs/development.md#this-development-machine-windows).
+  needs the user's phone. Compiling the APK needs a **one-time toolchain setup**:
+  `sudo android/setup-build-tools.sh`, then `android/build-apk.sh` (refreshes
+  `dist/app-debug.apk`). On **arm64 Linux** the build runs Google's x86_64 `aapt2`
+  under `qemu-user` (Android ships no arm64 `aapt2`; Debian's is too old for AGP 8.5)
+  and swaps in the native arm64 `zipalign` — both wired by the scripts. See
+  [docs/development.md](docs/development.md).
 - **On-device runtime is full of device-specific gotchas** that are documented in
   [docs/on-device-runtime.md](docs/on-device-runtime.md), not just code comments —
   e.g. the WebView loads **loopback HTTP only** (https → blank `ERR_SSL_PROTOCOL_ERROR`)

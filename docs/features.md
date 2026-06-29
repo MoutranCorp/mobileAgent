@@ -223,8 +223,13 @@ are cache-busted with `?v=__VER__` rewritten to a mtime-derived version at serve
   action row (New/Undo/Test/Preview/Export/Terminal/access). Conversation scrolls
   UNDER it; `syncComposerInset()` reserves a dynamic bottom inset. Expand → fullscreen
   `#fullEditor`. Defaults: access=`bypassPermissions`, model=opus 4.8.
-- **Multimodal:** image attach; voice input; `@`-file mention; slash-command palette;
-  plan-mode approval card; prompt library; command palette (Ctrl-K / ⌘ touch button).
+- **Multimodal:** file attach (📎) — **multi-select, any file type Claude can read**
+  (images, PDF, text/code/CSV/JSON/…), via the desktop file input or the native
+  multi-picker on-device; images show a thumbnail chip, other files a labelled chip.
+  The broker maps each attachment to the content block Claude reads (image→`image`,
+  `application/pdf`→base64 `document`, everything else→inline `text`). Plus voice
+  input; `@`-file mention; slash-command palette; plan-mode approval card; prompt
+  library; command palette (Ctrl-K / ⌘ touch button).
 - **Interactive terminal:** the Terminal drawer runs project commands (`run`), and
   once a command is live the input routes to its **stdin** (`run_input`) with a Stop
   button (`run_stop`) — so interactive CLIs can be driven from the phone. This is the
@@ -240,7 +245,8 @@ are cache-busted with `?v=__VER__` rewritten to a mtime-derived version at serve
 Kotlin/Compose shell at `targetSdk 28` (keeps `exec()` from the data dir legal for
 Termux/proot). Owns the foreground service + wake lock + battery exemption +
 proot/broker launch + Keystore secret injection. **WebView↔native bridge**
-(`window.AndroidAgent`): confirm/alert→AlertDialog, image attach→system picker,
+(`window.AndroidAgent`): confirm/alert→AlertDialog, file attach→`pickFiles()` native
+multi-picker (any type; legacy `pickImage()` kept for older web-UI),
 export→FileProvider share, voice→SpeechRecognizer, notifications→native,
 `exp://` deep-link & PR links→openExternal. The web UI feature-detects the bridge
 and falls back to web APIs on desktop. **Lesson: desktop-browser-verified features

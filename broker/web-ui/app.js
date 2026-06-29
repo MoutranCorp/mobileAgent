@@ -62,6 +62,7 @@
   const native = {
     has: (m) => { const b = NB(); return !!(b && typeof b[m] === 'function'); },
     pickImage: () => NB().pickImage(),
+    pickFiles: () => NB().pickFiles(),
     saveFile: (name, content) => NB().saveFile(name, content),
     notify: (title, body) => NB().notify(title, body),
     startVoice: () => NB().startVoice(),
@@ -176,6 +177,16 @@
   window.onPickedImage = (base64, mime) => {
     if (!base64) return;
     state.attachments.push({ mime: mime || 'image/jpeg', dataBase64: base64, url: `data:${mime || 'image/jpeg'};base64,${base64}`, name: 'image' });
+    renderAttachments();
+  };
+  // Multi-select native picker: a JSON array of { name, mime, dataBase64 } (any file type).
+  window.onPickedFiles = (json) => {
+    let files; try { files = JSON.parse(json || '[]'); } catch { return; }
+    for (const f of files || []) {
+      if (!f || !f.dataBase64) continue;
+      const mime = f.mime || 'application/octet-stream';
+      state.attachments.push({ mime, dataBase64: f.dataBase64, url: `data:${mime};base64,${f.dataBase64}`, name: f.name || 'file' });
+    }
     renderAttachments();
   };
   window.onVoiceResult = (text) => {
@@ -2636,15 +2647,15 @@
     const j = document.getElementById('jumpBtn'); if (j) j.remove();
     const input = $('input');
     const text = input.value.trim();
-    const images = state.attachments.map((a) => ({ mime: a.mime, dataBase64: a.dataBase64 }));
-    if (!text && !images.length) return;
+    const attachments = state.attachments.map((a) => ({ mime: a.mime, dataBase64: a.dataBase64, name: a.name }));
+    if (!text && !attachments.length) return;
     // Tag this send so its server echo stamps THIS bubble, not whichever bubble
     // happens to be last (rapid double-send used to cross the wires).
     const pendingId = 'p' + (++state._sendSeq);
     if (text) state.pendingSent.push({ id: pendingId, text: text.trim() }); // only dedupe non-empty echoes
     // Paint the feedback FIRST — button -> Stop, typing dots — before serializing
     // and sending the (possibly large) payload, so big prompts still feel instant.
-    addUserMessage(text + (images.length ? `\n📎 ${images.length} image${images.length === 1 ? '' : 's'}` : ''), null, pendingId);
+    addUserMessage(text + (attachments.length ? `\n📎 ${attachments.length} attachment${attachments.length === 1 ? '' : 's'}` : ''), null, pendingId);
     input.value = '';
     clearAttachments();
     autoGrow();
@@ -2665,7 +2676,7 @@
     // the pill, which otherwise stays "idle" until the first engine status round-trips.
     { const pill = $('statusPill'); if (pill) { pill.className = 'status-pill working'; pill.textContent = 'working'; } }
     beginAwaiting(waking ? 8000 : 2000); // latch the indicator until the engine responds
-    const payload = { type: 'user_message', text, images: images.length ? images : undefined };
+    const payload = { type: 'user_message', text, attachments: attachments.length ? attachments : undefined };
     requestAnimationFrame(() => send(payload)); // send after the UI has painted
   }
 
@@ -2688,16 +2699,17 @@
     else $('input').focus();
   }
 
-  // ---- image attachments ----------------------------------------------------
+  // ---- attachments (any file Claude can read; images, pdf, text/code, …) ------
 
-  function addImageFile(file) {
-    if (!file || !/^image\//.test(file.type)) return;
+  function addAttachmentFile(file) {
+    if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = String(reader.result);
       const comma = dataUrl.indexOf(',');
-      const dataBase64 = dataUrl.slice(comma + 1);
-      state.attachments.push({ mime: file.type, dataBase64, url: dataUrl, name: file.name });
+      const dataBase64 = comma >= 0 ? dataUrl.slice(comma + 1) : '';
+      if (!dataBase64) return;
+      state.attachments.push({ mime: file.type || 'application/octet-stream', dataBase64, url: dataUrl, name: file.name || 'file' });
       renderAttachments();
     };
     reader.readAsDataURL(file);
@@ -2707,9 +2719,17 @@
     tray.innerHTML = '';
     tray.classList.toggle('hidden', !state.attachments.length);
     state.attachments.forEach((a, i) => {
-      const chip = el('div', 'attach-chip');
-      const img = document.createElement('img');
-      img.src = a.url; chip.appendChild(img);
+      const isImg = /^image\//.test(a.mime || '');
+      const chip = el('div', 'attach-chip' + (isImg ? '' : ' file'));
+      if (isImg) {
+        const img = document.createElement('img');
+        img.src = a.url; chip.appendChild(img);
+      } else {
+        // Non-image: show a labelled chip (filename) since there's no thumbnail.
+        const name = el('span', 'attach-name', a.name || 'file');
+        name.title = a.name || 'file';
+        chip.appendChild(name);
+      }
       const x = aria(el('button', 'attach-x', '✕'), 'Remove attachment');
       x.onclick = () => { state.attachments.splice(i, 1); renderAttachments(); };
       chip.appendChild(x);
@@ -2877,27 +2897,32 @@
     $('input').addEventListener('input', () => { autoGrow(); updateSlashPalette(); updateMentionPalette(); });
     // Keep the slash-command highlight backdrop aligned when the textarea scrolls.
     $('input').addEventListener('scroll', () => { const hl = $('inputHl'); if (hl) hl.scrollTop = $('input').scrollTop; });
-    // Paste an image straight into the composer (screenshots).
+    // Paste a file straight into the composer (screenshots, copied files).
     $('input').addEventListener('paste', (e) => {
       for (const item of e.clipboardData?.items || []) {
-        if (item.type && item.type.startsWith('image/')) addImageFile(item.getAsFile());
+        if (item.kind === 'file') { const f = item.getAsFile(); if (f) addAttachmentFile(f); }
       }
     });
 
-    // Attach image: native picker in the WebView, file input on desktop.
-    $('attachBtn').onclick = () => { if (native.has('pickImage')) native.pickImage(); else $('imageInput').click(); };
-    $('imageInput').addEventListener('change', (e) => {
-      for (const f of e.target.files || []) addImageFile(f);
+    // Attach files: native multi-picker in the WebView (falls back to the old
+    // single-image bridge on un-updated apps), or the file input on desktop.
+    $('attachBtn').onclick = () => {
+      if (native.has('pickFiles')) native.pickFiles();
+      else if (native.has('pickImage')) native.pickImage();
+      else $('fileInput').click();
+    };
+    $('fileInput').addEventListener('change', (e) => {
+      for (const f of e.target.files || []) addAttachmentFile(f);
       e.target.value = '';
     });
     $('voiceBtn').onclick = startVoice;
 
-    // Drag & drop images onto the conversation.
+    // Drag & drop files onto the conversation.
     const dz = document.getElementById('app');
     dz.addEventListener('dragover', (e) => { e.preventDefault(); });
     dz.addEventListener('drop', (e) => {
       e.preventDefault();
-      for (const f of e.dataTransfer?.files || []) addImageFile(f);
+      for (const f of e.dataTransfer?.files || []) addAttachmentFile(f);
     });
 
     // Delegated copy for code blocks (survives the per-frame markdown re-render).

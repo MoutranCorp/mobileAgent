@@ -535,7 +535,7 @@ export class BrokerServer {
         // records ABOVE the agent's response and replays in chronological order.
         this._turnSeq = (this._turnSeq || 0) + 1;
         this._pendingTurn.set(this.session.activeKey, { turnId: `t${this._turnSeq}`, checkpointId, text: cmd.text || '' });
-        return this.session.sendUserMessage(cmd.text || '', cmd.images);
+        return this.session.sendUserMessage(cmd.text || '', cmd.attachments || cmd.images);
       }
       case CommandType.SLASH_COMMAND: {
         // Validate the command name — it's interpolated into the prompt sent to the

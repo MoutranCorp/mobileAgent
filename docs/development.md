@@ -185,6 +185,25 @@ echo "sdk.dir=/path/to/Android/sdk" > local.properties      # gitignored
 ./gradlew :app:installDebug     # sideload to a connected adb device
 ```
 
+**One-command build on Linux (incl. arm64):** the repo ships two scripts that do
+all of the above (and the arm64 dance below):
+
+```bash
+sudo android/setup-build-tools.sh   # once: JDK 17 + SDK (+ qemu/amd64 libs on arm64)
+android/build-apk.sh                 # build → refresh dist/app-debug.apk
+```
+
+**aarch64 (arm64 Linux) gotcha — Android's `aapt2`/`zipalign` are x86_64-only.**
+Google does not publish an arm64 `aapt2`, and Debian's own `aapt2` is too old for
+AGP 8.5 (it lacks `aapt2 compile --source-path`). So on arm64 the build runs
+**Google's exact `aapt2` under `qemu-user`** (version-perfect for AGP) via a tiny
+wrapper passed as `-Pandroid.aapt2FromMavenOverride=<dir>/aapt2`, and swaps in the
+native **arm64 `zipalign`** (`android-sdk-build-tools` package) over the x86_64 one
+in `build-tools/34.0.0`. `build-apk.sh` wires both automatically; `setup-build-tools.sh`
+installs `qemu-user-static` + `libc6:amd64`/`libstdc++6:amd64`/`zlib1g:amd64`. (AGP
+validates the override path *ends in* `aapt2` and then exec's it, so a shell wrapper
+is accepted.) d8/r8/apksigner are JVM tools and need no emulation.
+
 Key build facts (from [`android/app/build.gradle.kts`](../android/app/build.gradle.kts)):
 
 - **`targetSdk = 28`** (intentional). API 29+ forbids `execve()` on files in the

@@ -123,6 +123,25 @@ conversation across the respawn with `--resume <sessionId>` to preserve context.
   [`broker/web-ui/managers.js`](../broker/web-ui/managers.js)), sending the
   `marketplace add` / `install` slash commands and a `reload-plugins` button.
 
+## User-message attachments → content blocks (stream-json input)
+
+The broker writes user turns as `{type:'user', message:{role:'user', content:[…]}}`
+to the CLI's stdin, and the CLI forwards those content blocks to the API. The
+composer can attach **any file Claude can read** (multi-select), so `engines/claude-code.js`
+`_writeUser()` maps each `{mime, dataBase64, name}` attachment to the block kind the
+model actually reads, keyed off its mime:
+
+- `image/*` → base64 `image` block (vision — the original, proven path).
+- `application/pdf` → base64 `document` block (`media_type:'application/pdf'`).
+- anything else → the base64 is decoded to UTF-8 and inlined as a `text` block
+  (```` ```Attached file `name`: … ``` ````). This is how Claude reads source/log/CSV
+  files anyway and — unlike `document` blocks — never depends on the CLI's input path
+  accepting non-image blocks, so text/code attachments always work.
+
+The wire field is `attachments` (legacy `images` is still accepted by `server.js`,
+`mock.js`, and the engine for an out-of-date open web-UI tab). The user-echo only
+carries the typed text, so inlined file bodies never bloat the displayed bubble.
+
 ## AskUserQuestion (agent → user question forms)
 
 The headless CLI does **not** expose the built-in `AskUserQuestion` tool, so the
