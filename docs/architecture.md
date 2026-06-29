@@ -79,6 +79,10 @@ here.
   `checkpoint_restore`, `git`, `run`, …).
 - Helpers: `event(type, fields)` stamps a `ts`; `StatusState` enumerates
   `idle|thinking|running|waiting|error`.
+- `CAPABILITIES` includes an engine `features` declaration (thinking,
+  permissions, questions, resume, slashCommands, models, effort, config). Treat
+  feature-specific fields as optional and gate callers on `features` rather than
+  assuming a Claude-shaped surface.
 
 ### Wire framing — read this carefully
 
@@ -185,11 +189,16 @@ sibling session.
 
 | File | Role |
 |---|---|
-| `base.js` | `EngineAdapter` (EventEmitter). The seam: subclasses do native↔canonical translation only. Implement `_spawn`/`send`/`respondPermission`/`interrupt`/`_teardown`; emit via `emitEvent`. |
+| `base.js` | `EngineAdapter` (EventEmitter). The seam: subclasses do native↔canonical translation only. Implement `_spawn`/`send`/`interrupt`/`_teardown`; override optional response hooks only for declared features; emit via `emitEvent`/`emitCapabilities`. |
 | `index.js` | `createEngine(profile, opts)` — `REGISTRY` maps a harness name to its class. Adding a harness = one entry + one file; the UI never changes. |
 | `claude-code.js` | Default adapter. Drives `claude --print --input-format stream-json --output-format stream-json --verbose --include-partial-messages --replay-user-messages …`. All stream-json parsing lives here. Stands up the permission bridge in gated modes. **Auth precedence:** when `~/.claude/.credentials.json` exists and on the default endpoint, drops `CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_API_KEY` from the spawn env so a stale token can't override the file (the 401 cause). |
 | `opencode.js` | `OpencodeEngine` — conformance adapter for a second harness. |
 | `mock.js` | `MockEngine` — fully self-contained fake harness; emits identical canonical events and really touches the filesystem. The zero-credential demo path. |
+
+Every adapter exposes a complete `features` object with safe base defaults.
+Optional response hooks such as `respondPermission` and `respondQuestion` resolve
+visibly through canonical events when unsupported, so callers do not need
+method-existence checks that silently drop work.
 
 ### `broker/src/controls/` (the control surface — glob for the live set)
 

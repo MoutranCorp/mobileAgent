@@ -349,7 +349,7 @@ export class SessionManager {
     // Route to the engine that RAISED the question (UI echoes its sessionKey), so a
     // question survives the user switching to another session while it's pending.
     const e = (key && this.engines.get(key)) || this.engine;
-    if (e && e.respondQuestion) e.respondQuestion(id, answers);
+    if (e) e.respondQuestion(id, answers);
   }
   interrupt() {
     // Stop ends the turn now — even if a hung cold-resume never emits a result — so the

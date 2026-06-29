@@ -34,6 +34,17 @@ const GATED_MODES = new Set(['default', 'gated']);
  * canonical events cross the boundary (protocol.js). See docs/claude-code-surface.md.
  */
 export class ClaudeCodeEngine extends EngineAdapter {
+  static features = {
+    thinking: true,
+    permissions: true,
+    questions: true,
+    resume: true,
+    slashCommands: true,
+    models: true,
+    effort: true,
+    config: true,
+  };
+
   constructor(opts) {
     super(opts);
     this.bin = opts.claudeBin || 'claude';
@@ -241,7 +252,7 @@ export class ClaudeCodeEngine extends EngineAdapter {
       for (const msg of msgs) {
         if (msg?.type === 'system' && msg.subtype === 'init') {
           if (!this._sawInit) {
-            this.emitEvent(EventType.CAPABILITIES, {
+            this.emitCapabilities({
               slashCommands: msg.slash_commands || [],
               agents: msg.agents || [],
               mcpServers: msg.mcp_servers || [],
@@ -328,7 +339,7 @@ export class ClaudeCodeEngine extends EngineAdapter {
       }
       // Forward the full capability surface so the UI can populate slash-command
       // palettes, agent/MCP lists, the tool inventory, output style, etc.
-      this.emitEvent(EventType.CAPABILITIES, {
+      this.emitCapabilities({
         slashCommands: msg.slash_commands || [],
         agents: msg.agents || [],
         mcpServers: msg.mcp_servers || [],

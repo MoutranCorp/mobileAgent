@@ -1,6 +1,17 @@
 import { EventEmitter } from 'node:events';
 import { EventType, StatusState, event } from '../protocol.js';
 
+export const DEFAULT_ENGINE_FEATURES = Object.freeze({
+  thinking: false,
+  permissions: false,
+  questions: false,
+  resume: false,
+  slashCommands: false,
+  models: false,
+  effort: false,
+  config: false,
+});
+
 /**
  * EngineAdapter — the seam that makes the brain pluggable.
  *
@@ -8,12 +19,18 @@ import { EventType, StatusState, event } from '../protocol.js';
  * job is native-protocol <-> canonical translation. The broker and UI never see
  * a harness-specific shape; they only ever see canonical events (protocol.js).
  *
- * Subclasses implement:
+ * Subclasses must implement:
  *   _spawn()                 -> start the underlying process / connection
  *   send(cmd)                -> handle a canonical command (user_message, etc.)
- *   respondPermission(id,d)  -> resolve a pending permission_request
  *   interrupt()              -> cancel the in-flight turn
  *   _teardown()              -> stop the underlying process / connection
+ *
+ * Subclasses may implement optional features declared by `features`:
+ *   respondPermission(id,d)  -> resolve a pending permission_request
+ *   respondQuestion(id,a)    -> resolve a pending question_request
+ *
+ * Unsupported optional responses must still be visible to the UI. The base
+ * defaults emit canonical resolved/log events instead of silently dropping them.
  *
  * Subclasses emit canonical events by calling this.emitEvent(type, fields).
  */
@@ -26,8 +43,9 @@ export class EngineAdapter extends EventEmitter {
    * @param {string} [opts.model]    requested model alias (overrides profile default)
    * @param {(msg:string)=>void} [opts.log]
    */
-  constructor({ profile, cwd, env, log, model }) {
+  constructor(opts) {
     super();
+    const { profile, cwd, env, log, model } = opts;
     this.profile = profile;
     this.cwd = cwd;
     this.env = env || {};
@@ -37,6 +55,11 @@ export class EngineAdapter extends EventEmitter {
     // relabeled the UI while the CLI kept spawning with the profile default.
     this.model = model || profile?.model || null;
     this.state = 'stopped'; // stopped | starting | ready | stopping
+    this.features = Object.freeze({
+      ...DEFAULT_ENGINE_FEATURES,
+      ...(this.constructor.features || {}),
+      ...(opts.features || {}),
+    });
   }
 
   /** Human-readable engine id (e.g. 'claude-code', 'opencode', 'mock'). */
@@ -97,6 +120,13 @@ export class EngineAdapter extends EventEmitter {
     this.emitStatus(StatusState.ERROR, message);
   }
 
+  emitCapabilities(fields = {}) {
+    this.emitEvent(EventType.CAPABILITIES, {
+      ...fields,
+      features: this.features,
+    });
+  }
+
   setSession(sessionId) {
     this.sessionId = sessionId;
     this.emitEvent(EventType.SESSION_META, {
@@ -123,9 +153,30 @@ export class EngineAdapter extends EventEmitter {
     throw new Error(`${this.constructor.name} must implement send()`);
   }
 
-  // eslint-disable-next-line no-unused-vars
   respondPermission(id, decision) {
-    throw new Error(`${this.constructor.name} must implement respondPermission()`);
+    this.emitEvent(EventType.PERMISSION_RESOLVED, {
+      id,
+      decision: 'deny',
+      requestedDecision: decision,
+      unsupported: true,
+      reason: `${this.harness} does not support broker-managed permissions`,
+    });
+    this.emitEvent(EventType.LOG, {
+      level: 'warn',
+      message: `${this.harness} ignored unsupported permission response ${id}`,
+    });
+  }
+
+  respondQuestion(id) {
+    this.emitEvent(EventType.QUESTION_RESOLVED, {
+      id,
+      unsupported: true,
+      cancelled: true,
+    });
+    this.emitEvent(EventType.LOG, {
+      level: 'warn',
+      message: `${this.harness} ignored unsupported question response ${id}`,
+    });
   }
 
   interrupt() {

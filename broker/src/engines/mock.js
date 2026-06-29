@@ -21,6 +21,15 @@ import { EventType, StatusState, CommandType } from '../protocol.js';
 let _mockSpawnSeq = 0;
 
 export class MockEngine extends EngineAdapter {
+  static features = {
+    thinking: true,
+    permissions: true,
+    questions: true,
+    resume: true,
+    slashCommands: true,
+    models: true,
+  };
+
   constructor(opts) {
     super(opts);
     this._pendingPermissions = new Map();
@@ -37,7 +46,7 @@ export class MockEngine extends EngineAdapter {
     // the real CLI assigns / re-uses a session id).
     this.setSession(this._resumeId || `mock-${this.profile?.id || 'session'}-${++_mockSpawnSeq}`);
     // Mirror the claude-code capability surface so the UI's managers/palettes work offline.
-    this.emitEvent(EventType.CAPABILITIES, {
+    this.emitCapabilities({
       slashCommands: ['/compact', '/clear', '/init', '/review', '/help'],
       agents: [
         { name: 'Explore', description: 'Read-only search agent' },

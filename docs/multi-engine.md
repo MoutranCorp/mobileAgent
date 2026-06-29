@@ -1,6 +1,6 @@
 # Multi-engine roadmap — making any engine a first-class citizen
 
-**Status: active prerequisite plan / not yet implemented.** This is the design for
+**Status: active prerequisite plan. Phase 1 is implemented; Phase 2+ remain.** This is the design for
 evolving the broker from "claude-code with a couple of stub adapters" to "any
 engine works perfectly, with a different engine runnable per tab simultaneously."
 It is the required foundation before a production Codex adapter or an
@@ -74,6 +74,12 @@ rewrite, because the per-session map already exists.
 ## The plan (phased, ordered by leverage)
 
 ### Phase 1 — Formalize the contract + a capability declaration
+**Implemented.** `EngineAdapter` now exposes a complete `features` object with
+safe false defaults, adapters override the features they actually support, and
+`CAPABILITIES` events include `features`. Unsupported permission/question
+responses resolve visibly through canonical events instead of being silently
+dropped.
+
 *Low risk, unlocks everything below.*
 
 - Write the `EngineAdapter` contract down (currently all implied): required methods

@@ -18,6 +18,11 @@ import { EventType, StatusState, CommandType } from '../protocol.js';
  * is the contract; this file is the only place that knows opencode exists.
  */
 export class OpencodeEngine extends EngineAdapter {
+  static features = {
+    thinking: true,
+    models: true,
+  };
+
   constructor(opts) {
     super(opts);
     this.bin = opts.opencodeBin || 'opencode';
@@ -82,6 +87,10 @@ export class OpencodeEngine extends EngineAdapter {
     const data = await safeJson(r);
     this.opencodeSessionId = data?.id || data?.sessionID || data?.session?.id || 'opencode';
     this.setSession(this.opencodeSessionId);
+    this.emitCapabilities({
+      tools: [],
+      model: this.model,
+    });
     this.emitStatus(StatusState.IDLE);
   }
 
@@ -209,12 +218,6 @@ export class OpencodeEngine extends EngineAdapter {
       () => {}
     );
     this.emitStatus(StatusState.IDLE, 'interrupted');
-  }
-
-  respondPermission(id, decision) {
-    // opencode handles permissions via its own policy; if it surfaces a
-    // permission event in future, POST the decision here. For now, no-op.
-    this.emitEvent(EventType.PERMISSION_RESOLVED, { id, decision });
   }
 
   async _teardown() {
