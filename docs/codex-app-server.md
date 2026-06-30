@@ -221,7 +221,10 @@ Current adapter coverage:
   records for another cwd are ignored before `thread/resume`.
 - Broker-known Codex sessions are included in `LIST_SESSIONS` / the folder sheet
   history list with `projectId` and `sessionKey`, so the UI opens them via
-  `switch_session` instead of the Claude-only `resume` path.
+  `switch_session { key, projectId }` instead of the Claude-only `resume` path.
+  Unknown/stale restored tab keys, including resume-only keys from another
+  harness, must be rejected instead of treated as permission to start a new Codex
+  thread during app startup.
 
 Approvals/questions:
 

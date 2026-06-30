@@ -300,6 +300,60 @@ test('SWITCH_SESSION keeps projects.activeId synced to the focused session proje
   } finally { ws.close(); await server.stop(); }
 });
 
+test('SWITCH_SESSION ignores stale restored tab keys instead of creating sessions', async () => {
+  const { server, ws, send, waitNext, open } = await boot(['projA']);
+  try {
+    await open('projA');
+    const staleKey = 'projA-deadbeef';
+    const beforeKeys = [...server.session.meta.keys()];
+    const ackP = waitNext((e) => e.type === 'ack' && e.ofType === 'switch_session' && e.ok === false);
+    send({ type: 'switch_session', key: staleKey, projectId: 'projA' });
+    const ack = await ackP;
+    assert.equal(ack.code, 'stale_session_key');
+    assert.equal(ack.key, staleKey);
+    assert.equal(server.session.meta.has(staleKey), false, 'unknown restored tab key did not mint meta');
+    assert.equal(server.session.engines.has(staleKey), false, 'unknown restored tab key did not start an engine');
+    assert.deepEqual([...server.session.meta.keys()], beforeKeys, 'known sessions unchanged');
+    assert.equal(server.session.activeKey, 'projA', 'active session unchanged');
+  } finally { ws.close(); await server.stop(); }
+});
+
+test('SWITCH_SESSION reopens a persisted sleeping key in its project folder', async () => {
+  const { server, ws, send, waitNext, open, projectsDir } = await boot(['projA', 'projB']);
+  try {
+    const key = 'projA-deadbeef';
+    const cwd = path.join(projectsDir, 'projA');
+    server.session._storeResume(key, 'mock-persisted-session', 'mock', cwd);
+    await open('projB');
+    assert.equal(server.projects.activeId, 'projB');
+    const sessionsP = waitNext((e) => e.type === 'sessions' && e.activeKey === key);
+    send({ type: 'switch_session', key, projectId: 'projA' });
+    await sessionsP;
+    const m = server.session.meta.get(key);
+    assert.equal(server.projects.activeId, 'projA', 'project focus follows the restored session');
+    assert.equal(m?.projectId, 'projA');
+    assert.equal(m?.sessionId, 'mock-persisted-session');
+    assert.ok(String(server.session.engines.get(key)?.cwd).includes('projA'));
+  } finally { ws.close(); await server.stop(); }
+});
+
+test('SWITCH_SESSION rejects resume-only keys from another harness instead of creating active-engine sessions', async () => {
+  const { server, ws, send, waitNext, open, projectsDir } = await boot(['projA']);
+  try {
+    await open('projA');
+    const key = 'projA-old-claude';
+    server.session._storeResume(key, 'claude-session-id', 'claude-code', path.join(projectsDir, 'projA'));
+    const beforeKeys = [...server.session.meta.keys()];
+    const ackP = waitNext((e) => e.type === 'ack' && e.ofType === 'switch_session' && e.ok === false);
+    send({ type: 'switch_session', key, projectId: 'projA' });
+    const ack = await ackP;
+    assert.equal(ack.code, 'stale_session_key');
+    assert.equal(server.session.meta.has(key), false, 'cross-harness resume-only key did not mint active-engine meta');
+    assert.equal(server.session.engines.has(key), false, 'cross-harness resume-only key did not start an active-engine process');
+    assert.deepEqual([...server.session.meta.keys()], beforeKeys, 'known sessions unchanged');
+  } finally { ws.close(); await server.stop(); }
+});
+
 // Regression: two concurrent sessions in the SAME folder must each get their OWN
 // Claude session id. The bug: a fresh tab fell back to _sessionByProject[projectId]
 // and RESUMED the folder's first session, so every tab wrote into one .jsonl and

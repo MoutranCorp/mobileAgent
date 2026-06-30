@@ -169,7 +169,11 @@ viewing). Background sessions keep generating while you look at another. Read
 - **Session history list.** `LIST_SESSIONS` returns a merged history surface:
   Claude on-disk `.jsonl` sessions plus broker-known live/sleeping sessions from
   other engines. Non-Claude rows include `sessionKey`, so the Web UI opens them
-  with `SWITCH_SESSION`; Claude-only historical rows still use `RESUME`.
+  with `SWITCH_SESSION { key, projectId }`; Claude-only historical rows still use
+  `RESUME`. `SWITCH_SESSION` is not a creation fallback: the broker rejects stale
+  restored tab keys that are neither live/sleeping meta nor active-harness-compatible
+  persisted resume records, which prevents startup workspace hydration from minting
+  fresh sessions.
 - **Back-compat.** `get engine()` returns the active engine, so older code that
   said `session.engine` (the "singular active engine" mental model) still works —
   but that getter is a convenience over the Map, not the real ownership.

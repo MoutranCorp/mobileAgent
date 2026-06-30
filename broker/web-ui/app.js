@@ -354,10 +354,34 @@
       case 'user_settings': onUserSettings(ev); break;
       case 'app_version': if (window.Managers) window.Managers.onAppVersion(ev); break;
       case 'app_update': onAppUpdate(ev); if (window.Managers) window.Managers.onAppUpdate(ev); break;
-      case 'ack': if (!ev.ok && ev.message) toast(ev.message, 'error'); break;
+      case 'ack': onAck(ev); break;
       case 'pong': break;
       default: break;
     }
+  }
+
+  function onAck(ev) {
+    if (ev && ev.ofType === 'switch_session' && !ev.ok && ev.code === 'stale_session_key') {
+      const key = ev.key || null;
+      state._pendingActiveKey = null;
+      if (key) {
+        const wasActive = state.activeTabId === key;
+        state.tabs = state.tabs.filter((t) => !(t.kind !== 'file' && t.key === key));
+        if (wasActive) {
+          const live = state.sessions.find((s) => s.key === state.activeKey);
+          if (live) ensureTab({ key: live.key, projectId: live.projectId, title: live.title });
+          state.activeTabId = state.activeKey || (state.tabs[0] && state.tabs[0].id) || null;
+        }
+        saveTabs();
+      } else if (state.activeKey) {
+        state.activeTabId = state.activeKey;
+      }
+      applyViewMode();
+      renderTabs();
+      updateFolderPill();
+      return;
+    }
+    if (!ev.ok && ev.message) toast(ev.message, 'error');
   }
 
   function onSessionMeta(ev) {
@@ -535,7 +559,7 @@
       // active, onSessions must not yank activeTabId back to the old session (which
       // flashed the wrong tab).
       state._pendingActiveKey = t.key;
-      send({ type: 'switch_session', key: t.key });
+      send({ type: 'switch_session', key: t.key, projectId: t.projectId || undefined });
     } else renderTabs();
   }
   function closeTab(id) {

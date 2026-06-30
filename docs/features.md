@@ -425,7 +425,11 @@ back to transcript mtime for legacy rows), NOT `lastTurnTs` or process-open time
 Folder recency is likewise by newest-message time.
 Broker-known non-Claude rows are the exception to the older Claude-only resume
 path: they carry `sessionKey` in the history item, so the folder sheet and
-Manage > Sessions open them with `switch_session` instead of Claude `RESUME`.
+Manage > Sessions open them with `switch_session { key, projectId }` instead of
+Claude `RESUME`. `switch_session` is only for known live/sleeping/resumable keys;
+resume-only keys must match the active harness, and stale restored tab keys are
+rejected and removed from the local tab cache instead of creating new engine
+sessions during startup hydration.
 Ambiguous-encoding sessions bucket under "Folder unknown". Resume is **project-aware**
 (`claude-config` re-encodes each known project dir to map a session folder →
 projectId), so it resumes in the right cwd and seeds from the right `.jsonl` without

@@ -621,8 +621,8 @@ export class BrokerServer {
       return this._send(ws, event(EventType.ERROR, { message: 'Malformed command JSON' }));
     }
     try {
-      await this._dispatch(ws, cmd);
-      this._send(ws, event(EventType.ACK, { ofType: cmd.type, ok: true }));
+      const handled = await this._dispatch(ws, cmd);
+      if (handled !== false) this._send(ws, event(EventType.ACK, { ofType: cmd.type, ok: true }));
     } catch (e) {
       this._log(`command '${cmd.type}' failed: ${e.message}`);
       this._send(ws, event(EventType.ACK, { ofType: cmd.type, ok: false, message: e.message }));
@@ -732,12 +732,18 @@ export class BrokerServer {
         return;
       }
       case CommandType.SESSION_STOP:
-        if (!cmd.key || !this.session.meta.has(cmd.key)) return this._send(ws, event(EventType.ACK, { ok: false, message: 'Unknown session key' }));
+        if (!cmd.key || !this.session.meta.has(cmd.key)) {
+          this._send(ws, event(EventType.ACK, { ofType: cmd.type, ok: false, message: 'Unknown session key' }));
+          return false;
+        }
         await this.session.stopEngineKeepTranscript(cmd.key);
         delete this._turnCheckpoints[cmd.key]; // drop the stale per-turn baseline
         return this.broadcast(event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
       case CommandType.SESSION_PIN:
-        if (!cmd.key || !this.session.meta.has(cmd.key)) return this._send(ws, event(EventType.ACK, { ok: false, message: 'Unknown session key' }));
+        if (!cmd.key || !this.session.meta.has(cmd.key)) {
+          this._send(ws, event(EventType.ACK, { ofType: cmd.type, ok: false, message: 'Unknown session key' }));
+          return false;
+        }
         this.session.setPinned(cmd.key, cmd.pinned);
         return this.broadcast(event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
       case CommandType.RESUME: {
@@ -824,12 +830,27 @@ export class BrokerServer {
       case CommandType.SWITCH_SESSION: {
         // A session key may be suffixed (projA-<token>), so resolve its folder via meta;
         // keep projects.activeId synced to the focused session's project.
-        const pid = this.session.meta.get(cmd.key)?.projectId || (cmd.key && cmd.key !== '__main__' ? cmd.key : null);
+        const key = cmd.key || null;
+        const meta = key ? this.session.meta.get(key) : null;
+        const resume = key ? this.session._resumeRecord(key) : null;
+        const activeProfile = this.profiles.get(this.session.activeProfileId);
+        const resumeCompatible = !!resume && (!resume.harness || !activeProfile?.harness || resume.harness === activeProfile.harness);
+        if (!key || (!meta && !resumeCompatible)) {
+          this._log(`ignoring stale switch_session for unknown key: ${key || '<missing>'}`);
+          this._send(ws, event(EventType.ACK, { ofType: cmd.type, ok: false, code: 'stale_session_key', key }));
+          this.broadcast(event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
+          return false;
+        }
+        const explicitProject = cmd.projectId ? this.projects.get(cmd.projectId) : null;
+        const resumeProject = resume?.cwd
+          ? this.projects.list().find((p) => sameFilesystemPath(p.dir, resume.cwd))
+          : null;
+        const pid = meta?.projectId || explicitProject?.id || resumeProject?.id || (key !== MAIN_KEY ? key : null);
         if (pid && this.projects.get(pid) && pid !== this.projects.activeId) {
           this.projects.setActive(pid);
           this.broadcast(event(EventType.PROJECTS, this.projects.snapshot()));
         }
-        await this._switchView(cmd.key);
+        await this._switchView(key);
         this._emitActiveMetro();
         return;
       }
@@ -1418,6 +1439,19 @@ export class BrokerServer {
 
 function safeSessionKey(key) {
   return String(key).replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+function sameFilesystemPath(a, b) {
+  if (!a || !b) return false;
+  try {
+    const left = path.resolve(String(a));
+    const right = path.resolve(String(b));
+    return process.platform === 'win32'
+      ? left.toLowerCase() === right.toLowerCase()
+      : left === right;
+  } catch {
+    return String(a) === String(b);
+  }
 }
 
 function sessionHistoryLabel(session) {

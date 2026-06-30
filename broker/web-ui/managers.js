@@ -716,7 +716,7 @@
         } else {
           const open = el('button', 'ghost small', isLive ? 'Open' : 'Resume');
           open.onclick = () => {
-            if (sessionKey) send({ type: 'switch_session', key: sessionKey });
+            if (sessionKey) send({ type: 'switch_session', key: sessionKey, projectId: s.projectId || undefined });
             else send({ type: 'resume', sessionId: s.id, projectId: s.projectId || undefined, projectDir: s.projectDir });
             close();
           };

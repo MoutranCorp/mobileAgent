@@ -121,7 +121,7 @@ export const CommandType = Object.freeze({
   SET_SERVICE_TIER: 'set_service_tier', // { serviceTier } engine speed/service tier; null = standard/default
   LIST_SESSIONS: 'list_sessions', // { scope?: 'all' } on-disk session list
   LIST_LIVE_SESSIONS: 'list_live_sessions', // {} currently-running engines
-  SWITCH_SESSION: 'switch_session', // { key } bring a live session to the foreground (no engine stop)
+  SWITCH_SESSION: 'switch_session', // { key, projectId? } bring a known live/sleeping session to foreground (no engine stop)
   SESSION_DELETE: 'session_delete', // { id, projectId?, projectDir? } delete a session transcript
   SESSION_RENAME: 'session_rename', // { id, title } set a custom title (sidecar override)
   SESSION_STOP: 'session_stop', // { key } tear down a live engine (idle/manual eviction), keep its transcript
