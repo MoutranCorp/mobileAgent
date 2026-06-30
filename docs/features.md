@@ -326,15 +326,19 @@ child process. Switching model/effort/permission/profile replaces ONLY the activ
 key's engine; opening another project just `setActiveKey`s (siblings keep
 generating in the background).
 `ensureEngine` **cold-resumes a previously idle-evicted session in its OWN folder**
-via stored `meta.cwd` (never the globally-active project — a HIGH bug that was fixed).
+via the live project dir when available, falling back to stored `meta.cwd` only
+when the project folder is gone (never the globally-active project - a HIGH bug
+that was fixed).
 Every engine event is stamped `ev.sessionKey` so the server records it to the right
 transcript and only broadcasts the active session's full stream (others → a
 lightweight `SESSIONS` busy overlay).
 
 Resume hints persist in `<stateDir>/sessions.json` keyed by `sessionKey` as
-`{ resumeId, harness }`, so a Claude resume id is never handed to an opencode/Codex
-profile (and vice versa). Legacy string values are treated as Claude-only until
-rewritten by the next session metadata event.
+`{ resumeId, harness, cwd? }`, so a Claude resume id is never handed to an
+opencode/Codex profile (and vice versa). Legacy string values are treated as
+Claude-only until rewritten by the next session metadata event. Codex resume
+hints require a matching cwd; legacy Codex records without cwd and Codex records
+for another folder are ignored and overwritten by the next fresh thread.
 
 ### The tab strip (sessions + files)
 

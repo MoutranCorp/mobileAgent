@@ -301,7 +301,7 @@ test('SWITCH_SESSION keeps projects.activeId synced to the focused session proje
 // and RESUMED the folder's first session, so every tab wrote into one .jsonl and
 // only one session showed up in "All sessions".
 test('concurrent sessions in the same folder get DISTINCT session ids (no resume collision)', async () => {
-  const { server, ws, send, open } = await boot(['projA']);
+  const { server, ws, send, open, projectsDir } = await boot(['projA']);
   const waitState = async (fn, ms = 9000) => {
     const t0 = Date.now();
     while (Date.now() - t0 < ms) { if (fn()) return; await new Promise((r) => setTimeout(r, 25)); }
@@ -331,9 +331,15 @@ test('concurrent sessions in the same folder get DISTINCT session ids (no resume
 
     // The persisted resume map is keyed by session KEY, not the folder, so each
     // tab's id is recoverable independently.
-    assert.deepEqual(server.session._sessionByProject['projA'], { resumeId: id1, harness: 'mock' });
-    assert.deepEqual(server.session._sessionByProject[key2], { resumeId: id2, harness: 'mock' });
-    assert.deepEqual(server.session._sessionByProject[key3], { resumeId: id3, harness: 'mock' });
+    const expectResume = (key, id) => {
+      const rec = server.session._sessionByProject[key];
+      assert.equal(rec.resumeId, id);
+      assert.equal(rec.harness, 'mock');
+      assert.equal(path.resolve(rec.cwd), path.resolve(path.join(projectsDir, 'projA')));
+    };
+    expectResume('projA', id1);
+    expectResume(key2, id2);
+    expectResume(key3, id3);
   } finally { ws.close(); await server.stop(); }
 });
 
@@ -385,8 +391,8 @@ test('sessions retain independent profile/model/effort/permission/status/capabil
   } finally { ws.close(); await server.stop(); }
 });
 
-test('sessions.json persists resume ids with harness and refuses cross-harness resume lookup', async () => {
-  const { server, ws, open, state } = await boot(['projA']);
+test('sessions.json persists resume ids with harness/cwd and refuses cross-harness resume lookup', async () => {
+  const { server, ws, open, state, projectsDir } = await boot(['projA']);
   try {
     await open('projA');
     const waitState = async (fn, ms = 9000) => {
@@ -398,7 +404,9 @@ test('sessions.json persists resume ids with harness and refuses cross-harness r
     server.session.flushSessionsFile();
     const id = server.session.meta.get('projA').sessionId;
     const stored = JSON.parse(fssync.readFileSync(path.join(state, 'sessions.json'), 'utf8'));
-    assert.deepEqual(stored.projA, { resumeId: id, harness: 'mock' });
+    assert.equal(stored.projA.resumeId, id);
+    assert.equal(stored.projA.harness, 'mock');
+    assert.equal(path.resolve(stored.projA.cwd), path.resolve(path.join(projectsDir, 'projA')));
     assert.equal(server.session._resumeIdFor('projA', 'mock'), id);
     assert.equal(server.session._resumeIdFor('projA', 'claude-code'), null);
     assert.equal(server.session._resumeIdFor('projA', 'opencode'), null);

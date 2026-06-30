@@ -351,7 +351,7 @@ export class CodexAppServerEngine extends EngineAdapter {
         break;
       case 'configWarning':
         this.emitEvent(EventType.LOG, {
-          level: 'warn',
+          level: 'debug',
           message: `Codex config warning: ${params.message || params.warning || method}`,
         });
         break;

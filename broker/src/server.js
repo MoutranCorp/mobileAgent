@@ -482,6 +482,14 @@ export class BrokerServer {
     }));
   }
 
+  _profileIdForHarness(harness) {
+    const profiles = this.profiles.list().filter((p) => p?.harness === harness);
+    if (!profiles.length) return null;
+    const active = profiles.find((p) => p.id === this.session.activeProfileId);
+    if (active) return active.id;
+    return (profiles.find((p) => this.secrets.isReady(p)) || profiles[0]).id;
+  }
+
   /** Resolve any unknown model aliases (free init-probe) then broadcast MODELS. */
   async _sendModels(ws, refresh) {
     const profile = this.profiles.get(this.session.activeProfileId);
@@ -648,8 +656,20 @@ export class BrokerServer {
         const past = this.claudeConfig.readSessionTranscript(cmd.sessionId, { dir });
         const seeded = this.transcript.replace(past);
         this.broadcast(event(EventType.TRANSCRIPT, { events: seeded, reset: true }));
+        // On-disk sessions listed here are Claude Code sessions. Resume them with
+        // a Claude profile even if the active engine is currently Codex/opencode.
+        const profileId = this._profileIdForHarness('claude-code');
+        if (!profileId) {
+          this.broadcast(event(EventType.ERROR, { message: 'No Claude profile is available to resume this session.' }));
+          return;
+        }
         // resume() restarts ONLY the active project's engine (siblings untouched).
-        await this.session.resume(cmd.sessionId, { harness: 'claude-code' });
+        await this.session.resume(cmd.sessionId, { harness: 'claude-code', profileId });
+        this.broadcast(event(EventType.PROFILES, {
+          profiles: this.profiles.list().map((p) => ({ ...p, ready: this.secrets.isReady(p) })),
+          activeProfileId: this.session.activeProfileId,
+        }));
+        this.broadcast(this._modelsEvent());
         const p = this.projects.getActive();
         if (p) this.broadcast(event(EventType.CHECKPOINTS, this.checkpoints.list(p.id, p.dir)));
         return;

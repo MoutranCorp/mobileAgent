@@ -117,6 +117,12 @@ child, and starts a fresh Codex thread for the same UI tab. The old transcript
 remains visible locally, but the new Codex process does not have the unavailable
 thread's server-side context.
 
+Codex resume hints are cwd-qualified. New `sessions.json` records include
+`{ resumeId, harness, cwd }`; legacy Codex records without cwd, or records whose
+cwd differs from the session cwd, are skipped before `thread/resume` and replaced
+by the next fresh `thread/start`. Claude legacy string records remain
+Claude-only for compatibility.
+
 Generated schema fields observed in `codex-cli 0.142.4`:
 
 - `ThreadStartParams`: `model`, `cwd`, `approvalPolicy`, `approvalsReviewer`,
@@ -137,10 +143,11 @@ Generated schema fields observed in `codex-cli 0.142.4`:
 Session:
 
 - Broker `sessionId` = Codex `thread.id`.
-- Persist the harness with the session id. `sessions.json` must be able to
-  distinguish Claude resume ids from Codex thread ids.
-- If `resume` is unavailable or fails, surface a clear `ERROR`/toast and start a
-  new thread only when the user requested a new session.
+- Persist the harness and cwd with the session id. `sessions.json` must be able
+  to distinguish Claude resume ids from Codex thread ids, and Codex thread ids
+  must not resume across workspaces.
+- If a Codex stored thread is missing server-side (`No rollout found...`), clear
+  that session key's resume hint and start a fresh thread for the same UI tab.
 
 User message:
 
@@ -167,8 +174,9 @@ Events:
 - `turn/completed` -> `RESULT` and `ENGINE_STATE idle`
 - `error` -> `ERROR`
 - `warning` and `deprecationNotice` -> bounded `TOAST`
-- `configWarning` -> `LOG` only, because Codex can emit long diagnostic text
-  such as model-resume warnings that should not dominate the phone UI
+- `configWarning` -> debug `LOG` only, because Codex can emit long diagnostic
+  text such as model-resume warnings that should not dominate the phone UI or
+  render as a chat note
 
 Current adapter coverage:
 
@@ -198,6 +206,8 @@ Current adapter coverage:
 - Stale persisted Codex thread ids are recoverable. A missing-thread resume
   failure clears only that session key's resume hint and falls back to
   `thread/start`, with a warning toast instead of a stuck engine.
+- Codex persisted thread ids are workspace-scoped. Missing-cwd legacy records and
+  records for another cwd are ignored before `thread/resume`.
 
 Approvals/questions:
 

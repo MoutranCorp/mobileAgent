@@ -147,6 +147,9 @@ viewing). Background sessions keep generating while you look at another. Read
   For Codex, a stale server-side thread id, such as app-server reporting
   `No rollout found for thread id`, is cleared and replaced with a fresh
   `thread/start` for that session key instead of leaving the engine stuck.
+  Codex resume hints are also cwd-qualified: a saved Codex thread id is ignored
+  if its stored cwd is missing or does not match the session cwd, which prevents
+  an old app/broker-folder thread from resuming inside a project tab.
 - **Eviction policy (`evictionCandidates` in `controls/resources.js`).** Only
   *idle, unpinned, non-active* engines are evictable, LRU-first. Two guards keep a
   just-used session warm so flipping between a few tabs doesn't instantly 💤 the one
@@ -169,14 +172,16 @@ viewing). Background sessions keep generating while you look at another. Read
 
 `startEngine` is serialized behind a `_startLock` so closely-timed restarts can't
 orphan a child `claude` process. Resume ids persist to `<stateDir>/sessions.json`
-keyed by **`sessionKey`** as `{ resumeId, harness }` (the first session's key ===
+keyed by **`sessionKey`** as `{ resumeId, harness, cwd? }` (the first session's key ===
 its `projectId`, so the file stays back-compatible; legacy string values are
 treated as Claude-only until rewritten). Keying by `projectId` let a 2nd
 concurrent session in the same folder clobber the 1st's resume id and resume
 *into* it on the next restart (the "sessions merged" bug); storing the harness
 also prevents a Claude session id from being passed to opencode/Codex or vice
-versa. `setActiveKey` also rebinds `_activeKeyByProject` to the focused key so a
-later `newSession()`/restart-in-place can't route a turn into a sibling session.
+versa. New records also store cwd; Codex uses that cwd as part of the resume
+contract and treats missing/mismatched cwd as stale. `setActiveKey` also rebinds
+`_activeKeyByProject` to the focused key so a later `newSession()`/restart-in-place
+can't route a turn into a sibling session.
 
 ## Code map
 

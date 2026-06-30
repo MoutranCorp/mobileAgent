@@ -8,6 +8,16 @@ export const MAIN_KEY = '__main__'; // session key when no project is open
 // Mirror of TranscriptStore's filename sanitizer, so we can tell whether a candidate
 // key would collide with an existing transcript on disk.
 const safeKey = (s) => String(s).replace(/[^a-zA-Z0-9_-]/g, '_');
+const normCwd = (cwd) => {
+  if (!cwd) return null;
+  const resolved = path.resolve(String(cwd));
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+};
+const sameCwd = (a, b) => {
+  const left = normCwd(a);
+  const right = normCwd(b);
+  return !!left && !!right && left === right;
+};
 
 /**
  * SessionManager — owns one engine PER PROJECT (the session key) so background
@@ -131,19 +141,34 @@ export class SessionManager {
     const rec = this._sessionByProject[key];
     if (!rec) return null;
     if (typeof rec === 'string') return { resumeId: rec, harness: 'claude-code', legacy: true };
-    if (rec && typeof rec === 'object' && rec.resumeId) return { resumeId: rec.resumeId, harness: rec.harness || null };
+    if (rec && typeof rec === 'object' && rec.resumeId) {
+      return { resumeId: rec.resumeId, harness: rec.harness || null, cwd: rec.cwd || null };
+    }
     return null;
   }
 
-  _resumeIdFor(key, harness) {
+  _resumeIdFor(key, harness, cwd = null) {
     const rec = this._resumeRecord(key);
     if (!rec?.resumeId) return null;
-    return rec.harness && rec.harness === harness ? rec.resumeId : null;
+    if (!rec.harness || rec.harness !== harness) return null;
+    // Codex thread ids are not safe to reuse across workspaces. Legacy Codex
+    // records have no cwd, so treat them as stale and start a fresh thread.
+    if (harness === 'codex-app-server' && !sameCwd(rec.cwd, cwd)) return null;
+    return rec.resumeId;
   }
 
-  _storeResume(key, resumeId, harness) {
+  _metaResumeIdFor(meta, harness, cwd) {
+    if (!meta?.sessionId) return null;
+    if (meta.harness && meta.harness !== harness) return null;
+    if (harness === 'codex-app-server' && !sameCwd(meta.cwd, cwd)) return null;
+    return meta.sessionId;
+  }
+
+  _storeResume(key, resumeId, harness, cwd = null) {
     if (!key || !resumeId) return;
-    this._sessionByProject[key] = { resumeId, harness: harness || null };
+    const rec = { resumeId, harness: harness || null };
+    if (cwd) rec.cwd = cwd;
+    this._sessionByProject[key] = rec;
     this._saveSessions();
   }
 
@@ -172,10 +197,12 @@ export class SessionManager {
       const project = this._projectById(m.projectId);
       const profileId = m.profileId || this.activeProfileId;
       const profile = this.profiles.get(profileId);
-      const resumeId = m.sessionId || this._resumeIdFor(key, profile?.harness) || null;
-      // Pass the stored cwd so a session whose project folder was deleted resumes in
-      // its OWN (now-missing) folder and fails loudly, never silently in another one.
-      return this.startEngine(profileId, { key, project, cwd: m.cwd, resumeId, focus: key === this.activeKey });
+      const cwd = project?.dir || m.cwd;
+      const resumeId = this._resumeIdFor(key, profile?.harness, cwd) || null;
+      // Pass the session's own cwd. If the project still exists, use its current
+      // dir; if it was deleted, fall back to meta.cwd and fail in that folder
+      // instead of silently resuming in another project.
+      return this.startEngine(profileId, { key, project, cwd, resumeId, focus: key === this.activeKey });
     }
     return this.startEngine(this.activeProfileId, { key, focus: key === this.activeKey });
   }
@@ -267,10 +294,11 @@ export class SessionManager {
     // first session's key === projectId, so cold-resume of a project still works.
     const sameHarness = !prevMeta?.harness || prevMeta.harness === profile.harness;
     const explicitResume = resumeId && (!opts.resumeHarness || opts.resumeHarness === profile.harness) ? resumeId : null;
-    const storedResume = key ? this._resumeIdFor(key, profile.harness) : null;
+    const storedResume = key ? this._resumeIdFor(key, profile.harness, cwd) : null;
+    const metaResume = sameHarness ? this._metaResumeIdFor(prevMeta, profile.harness, cwd) : null;
     const resolvedResume = opts.fresh
       ? (explicitResume ?? null)
-      : (explicitResume ?? (sameHarness ? prevMeta?.sessionId : null) ?? storedResume ?? null);
+      : (explicitResume ?? metaResume ?? storedResume ?? null);
 
     // Keep the chosen model across non-model restarts, but never carry a model
     // alias from one engine family into another. Existing phone installs can have
@@ -517,7 +545,7 @@ export class SessionManager {
     const m = this._activeMeta;
     this.defaultPermissionMode = mode;
     if (m) m.permissionMode = mode;
-    const resumeId = this.engine?.sessionId || this._resumeIdFor(this.activeKey, m?.harness || this.engine?.harness) || null;
+    const resumeId = this.engine?.sessionId || this._resumeIdFor(this.activeKey, m?.harness || this.engine?.harness, m?.cwd || this.engine?.cwd) || null;
     this._log(`set permission mode -> ${mode} (resume ${resumeId || 'none'})`);
     return this.startEngine(this.activeProfileId, { resumeId });
   }
@@ -526,7 +554,7 @@ export class SessionManager {
     const m = this._activeMeta;
     this.defaultEffort = level;
     if (m) m.effort = level;
-    const resumeId = this.engine?.sessionId || this._resumeIdFor(this.activeKey, m?.harness || this.engine?.harness) || null;
+    const resumeId = this.engine?.sessionId || this._resumeIdFor(this.activeKey, m?.harness || this.engine?.harness, m?.cwd || this.engine?.cwd) || null;
     this._log(`set effort -> ${level} (resume ${resumeId || 'none'})`);
     return this.startEngine(this.activeProfileId, { resumeId });
   }
@@ -535,7 +563,7 @@ export class SessionManager {
     if (!this.engine || this.engine.state === 'stopped') return null;
     const status = this._activeMeta?.lastStatus || StatusState.IDLE;
     if (status && status !== StatusState.IDLE && status !== StatusState.ERROR) return null;
-    const resumeId = this.engine?.sessionId || this._resumeIdFor(this.activeKey, this._activeMeta?.harness || this.engine?.harness) || null;
+    const resumeId = this.engine?.sessionId || this._resumeIdFor(this.activeKey, this._activeMeta?.harness || this.engine?.harness, this._activeMeta?.cwd || this.engine?.cwd) || null;
     this._log(`refreshing capabilities (resume ${resumeId || 'none'})`);
     return this.startEngine(this.activeProfileId, { resumeId });
   }
@@ -546,7 +574,12 @@ export class SessionManager {
     return this.startEngine(this.activeProfileId, { project: this.getActiveProject(), fresh: true, resumeId: null });
   }
 
-  async resume(sessionId, opts = {}) { return this.startEngine(this.activeProfileId, { resumeId: sessionId, resumeHarness: opts.harness }); }
+  async resume(sessionId, opts = {}) {
+    return this.startEngine(opts.profileId || this.activeProfileId, {
+      resumeId: sessionId,
+      resumeHarness: opts.harness,
+    });
+  }
 
   /**
    * Start an engine for a background task (a cron job) WITHOUT changing which
@@ -641,8 +674,9 @@ export class SessionManager {
       // resume INTO it on the next restart (the "prompts merged into another
       // session" bug). Cold-resume/eviction also reads meta.sessionId directly.
       const harness = ev.engine || m?.harness || this.engines.get(key)?.harness || null;
-      this._storeResume(key, ev.sessionId, harness);
-      if (m) { m.sessionId = ev.sessionId; m.harness = harness; }
+      const cwd = ev.cwd || m?.cwd || this.engines.get(key)?.cwd || null;
+      this._storeResume(key, ev.sessionId, harness, cwd);
+      if (m) { m.sessionId = ev.sessionId; m.harness = harness; if (cwd) m.cwd = cwd; }
     }
     if (ev.type === EventType.STATUS && ev.state) {
       const busy = ev.state !== StatusState.IDLE && ev.state !== StatusState.ERROR;

@@ -32,8 +32,24 @@ const errors = [];
 page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
 const shot = async (n) => { await page.screenshot({ path: `${OUT}/${PREFIX}-${n}.png` }); console.log('shot', n); };
+const ensureDemoProject = async () => {
+  await page.waitForFunction(() => window.Agent?.state?.connected, null, { timeout: 10000 });
+  const hasDemo = await page.evaluate(() => window.Agent.state.projects.some((p) => p.id === 'demo'));
+  if (!hasDemo) {
+    await page.evaluate(() => window.Agent.send({ type: 'create_project', name: 'demo', template: 'blank' }));
+    await page.waitForFunction(() => window.Agent.state.projects.some((p) => p.id === 'demo'), null, { timeout: 10000 });
+  }
+  await page.evaluate(() => window.Agent.send({ type: 'open_project', projectId: 'demo' }));
+  await page.waitForFunction(
+    () => window.Agent.state.activeProjectId === 'demo' && window.Agent.state.activeKey === 'demo',
+    null,
+    { timeout: 10000 }
+  );
+};
 
 await page.goto(URL, { waitUntil: 'networkidle' });
+await sleep(900);
+await ensureDemoProject();
 await sleep(900);
 await shot('01-empty');
 
@@ -47,8 +63,12 @@ try {
   await page.click('#folderPill'); await sleep(400);
   console.log('CHECK folder sheet opens:', await page.evaluate(() => !document.getElementById('folderSheet').classList.contains('hidden')));
   await shot('01b-folder-sheet');
-  await page.click('#folderSheetScrim'); await sleep(250);
-} catch (e) { console.log('folder-sheet err', e.message); }
+  await page.evaluate(() => document.getElementById('folderSheet')?.classList.add('hidden'));
+  await sleep(250);
+} catch (e) {
+  console.log('folder-sheet err', e.message);
+  await page.evaluate(() => document.getElementById('folderSheet')?.classList.add('hidden'));
+}
 // System tab (RESOURCES panel).
 try {
   await page.click('#menuBtn'); await sleep(400);
@@ -161,7 +181,7 @@ catch (e) { console.log('term err', e.message); }
 
 // HTML microapp widget (needs an active project so /preview can serve the file)
 try {
-  await page.evaluate(() => window.Agent.send({ type: 'open_project', projectId: 'demo' }));
+  await ensureDemoProject();
   await sleep(1000);
   await page.fill('#input', 'build me an html microapp');
   await page.dispatchEvent('#input', 'input');

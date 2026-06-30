@@ -81,6 +81,7 @@ rl.on('line', async (line) => {
       notify('item/agentMessage/delta', { delta: 'Hello from Codex' });
       if (mode === 'inputEcho') {
         notify('item/agentMessage/delta', { delta: ` ${summarizeInput(msg.params.input)}` });
+        if (msg.params.cwd) notify('item/agentMessage/delta', { delta: ` cwd:${msg.params.cwd}` });
         notify('turn/completed', { usage: { inputTokens: 5, outputTokens: 5 } });
         break;
       }

@@ -49,7 +49,7 @@ capability**:
 |---|---|---|
 | Broker core | `controls/model-resolver.js` spawns the `claude` CLI; labels hardcode `opus\|sonnet\|haiku\|fable` | grok/opencode/langgraph have no `claude --model` aliasing |
 | Broker core | `claudeConfig.readSessionTranscript()` parses `~/.claude/**/*.jsonl` for resume/replay (`server.js` RESUME) | other engines don't write that format |
-| Broker core | `resumeId` + `sessions.json` assume a claude-style resumable sessionId | langgraph/grok may have no resume concept |
+| Broker core | resume/history is still engine-specific: `sessions.json` now stores `{resumeId,harness,cwd?}` and guards Codex cwd, but `server.js RESUME` still replays Claude `.jsonl` history | langgraph/grok may have no resume concept or a different transcript source |
 | Broker core | `RESCAN_KINDS = {skills,commands,agents,output-styles,mcp}` (`server.js`) | claude `.claude/` concepts |
 | Broker core | `secrets.claudeEnv()` / `.claude/.credentials.json` drop (`session.js`, `claude-code.js`) | other engines auth via API key / env |
 | Controls | `controls/claude-config.js` (whole module) reads `.claude/` skills/commands/agents/memory/MCP + session `.jsonl` | 100% claude-only |

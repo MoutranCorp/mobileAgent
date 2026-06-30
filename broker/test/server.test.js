@@ -140,3 +140,48 @@ test('ping/pong and hello snapshot', async () => {
   ws.close();
   await server.stop();
 });
+
+test('Claude session resume uses a Claude profile even when Codex is active', async () => {
+  const projects = await tmpDir('resume-proj-');
+  const state = await tmpDir('resume-state-');
+  await fs.mkdir(path.join(projects, 'demo'), { recursive: true });
+  await fs.writeFile(path.join(state, 'profiles.json'), JSON.stringify([
+    {
+      id: 'codex-app-server',
+      label: 'Codex',
+      harness: 'codex-app-server',
+      model: 'gpt-5.5',
+      models: ['gpt-5.5'],
+      billing: 'none',
+    },
+    {
+      id: 'claude-max',
+      label: 'Claude',
+      harness: 'claude-code',
+      model: 'opus',
+      models: ['opus'],
+      billing: 'flat',
+      permissionMode: 'default',
+    },
+  ], null, 2));
+  const config = loadConfig(['--profile', 'codex-app-server', '--port', '0', '--projects', projects, '--state', state]);
+  const server = new BrokerServer(config);
+  let captured = null;
+  server.session.resume = async (sessionId, opts) => {
+    captured = { sessionId, opts };
+    return null;
+  };
+
+  try {
+    await server.start();
+    await server._dispatch(null, { type: 'resume', sessionId: 'claude-session-1', projectId: 'demo' });
+
+    assert.deepEqual(captured, {
+      sessionId: 'claude-session-1',
+      opts: { harness: 'claude-code', profileId: 'claude-max' },
+    });
+    assert.equal(server.projects.activeId, 'demo');
+  } finally {
+    await server.stop();
+  }
+});

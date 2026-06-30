@@ -204,7 +204,7 @@ test('codex app-server interrupts with turn/interrupt and the active turn id', a
   await engine.stop();
 });
 
-test('codex config warnings are logged instead of shown as toasts', async () => {
+test('codex config warnings stay out of user-facing chat/toasts', async () => {
   const cwd = await tmpProject();
   const engine = makeEngine(cwd);
   const events = collect(engine);
@@ -213,7 +213,7 @@ test('codex config warnings are logged instead of shown as toasts', async () => 
 
   assert.equal(events.some((e) => e.type === EventType.TOAST), false);
   const log = events.find((e) => e.type === EventType.LOG);
-  assert.equal(log.level, 'warn');
+  assert.equal(log.level, 'debug');
   assert.match(log.message, /Codex config warning/);
 });
 
