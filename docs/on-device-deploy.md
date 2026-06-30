@@ -52,6 +52,9 @@ existing bundled install to a clone without re-downloading the rootfs or re-runn
 For migrations where the APK bundle is newer than the default remote, the clone
 is validated before use; an older clone falls back to the bundled broker and is
 removed from the broker launch path.
+The selected broker source is also validated for installed Node dependencies
+(`ws` must resolve from the broker directory), so a checkout whose `npm install`
+failed is not treated as runnable.
 
 **Manual recovery if the clone is corrupt** ("`fatal: bad object …`" / "did not send
 all necessary objects" from a `git pull` interrupted mid-fetch) — in the in-app

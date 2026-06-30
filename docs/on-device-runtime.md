@@ -87,11 +87,13 @@ re-clone on corruption) works. Falls back
 to extracting the bundled `broker.tar.gz` at `/root/agent-broker` when a clone
 isn't possible (offline / private repo / no token). `brokerArgv()` runs from
 whichever exists. During the Codex profile migration the clone is also validated
-for the profile backfill code; if the remote checkout is older than the APK
-bundle, the bundled broker is used and the stale `/root/mobileAgent` checkout is
-removed from the launch path. A `GITHUB_TOKEN`/`GIT_TOKEN` secret (injected into
-the guest env) is stored as a git credential for private-repo clone+pull;
-`BROKER_REPO_URL` overrides the repo.
+for the profile backfill code and for installed runtime dependencies (`ws` must
+resolve from the broker directory); if the remote checkout is older than the APK
+bundle or `npm install --omit=dev` does not produce a runnable broker, the bundled
+broker is used and the stale `/root/mobileAgent` checkout is removed from the
+launch path. A `GITHUB_TOKEN`/`GIT_TOKEN` secret (injected into the guest env) is
+stored as a git credential for private-repo clone+pull; `BROKER_REPO_URL`
+overrides the repo.
 
 ## Native Claude sign-in (`ClaudeLogin.kt`)
 

@@ -263,6 +263,12 @@ class ProotRuntime(private val ctx: Context) {
 
     private fun brokerSourceScript(): String = """
         set -e
+        broker_ok() {
+          DIR="${'$'}1"
+          [ -f "${'$'}DIR/src/index.js" ] || return 1
+          [ -f "${'$'}DIR/package.json" ] || return 1
+          ( cd "${'$'}DIR" && node -e 'require("ws")' >/dev/null 2>&1 )
+        }
         git config --global --add safe.directory '*' || true
         REPO_URL="${'$'}{BROKER_REPO_URL:-https://github.com/MoutranCorp/mobileAgent.git}"
         TOKEN="${'$'}{GITHUB_TOKEN:-${'$'}{GIT_TOKEN:-}}"
@@ -277,7 +283,12 @@ class ProotRuntime(private val ctx: Context) {
           if grep -q 'mergeBuiltInProfiles' /root/mobileAgent.new/broker/src/profiles.js 2>/dev/null &&
              grep -q 'codex-app-server' /root/mobileAgent.new/broker/src/profiles.js 2>/dev/null; then
             rm -rf /root/mobileAgent; mv /root/mobileAgent.new /root/mobileAgent
-            ( cd /root/mobileAgent/broker && npm install --omit=dev ) && CLONE_OK=1
+            if ( cd /root/mobileAgent/broker && npm install --omit=dev ) && broker_ok /root/mobileAgent/broker; then
+              CLONE_OK=1
+            else
+              echo "cloned broker dependency install failed - using bundled broker"
+              rm -rf /root/mobileAgent
+            fi
           else
             echo "cloned broker is older than the APK bundle - using bundled broker"
           fi
@@ -298,6 +309,11 @@ class ProotRuntime(private val ctx: Context) {
             rm -rf /root/mobileAgent
           fi
         fi
+        if broker_ok /root/mobileAgent/broker || broker_ok /root/agent-broker; then
+          exit 0
+        fi
+        echo "ERROR: broker source is not runnable - missing Node dependencies such as ws"
+        exit 1
     """.trimIndent()
 
     /** Start an interactive command inside the guest in its OWN proot process,
@@ -322,7 +338,10 @@ class ProotRuntime(private val ctx: Context) {
 
     /** Where the broker runs from: the git checkout if present, else the bundled copy. */
     private fun brokerGuestDir(): String =
-        if (File(rootfs, "root/mobileAgent/broker/src/index.js").exists()) "/root/mobileAgent/broker" else "/root/agent-broker"
+        if (
+            File(rootfs, "root/mobileAgent/broker/src/index.js").exists() &&
+            File(rootfs, "root/mobileAgent/broker/node_modules/ws/package.json").exists()
+        ) "/root/mobileAgent/broker" else "/root/agent-broker"
 
     /** Argv to start the broker under proot. */
     fun brokerArgv(): List<String> = prootGuest(
@@ -455,6 +474,6 @@ class ProotRuntime(private val ctx: Context) {
         private const val ROOTFS_VERSION = "2-symlink-extract"
         // Bump to re-run broker-source delivery (e.g. to migrate an existing bundled
         // install to a git clone) without re-running the toolchain/rootfs steps.
-        private const val BROKER_SOURCE_VERSION = "3-profile-defaults-merge"
+        private const val BROKER_SOURCE_VERSION = "4-broker-deps-verified"
     }
 }
