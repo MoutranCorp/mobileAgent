@@ -29,6 +29,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.ondevice.agent.service.ClaudeLogin
 import com.ondevice.agent.service.ClaudeUpdate
+import com.ondevice.agent.service.CodexLogin
+import com.ondevice.agent.service.CodexUpdate
 import com.ondevice.agent.service.GitHubAuth
 import com.ondevice.agent.service.RuntimeController
 import com.ondevice.agent.service.RuntimeState
@@ -159,9 +161,13 @@ private fun RuntimeTab(state: RuntimeState, detail: String, actions: MainActions
 
         ClaudeSignInSection()
 
+        CodexSignInSection()
+
         GitHubSection()
 
         ClaudeUpdateSection(state)
+
+        CodexUpdateSection(state)
 
         FileAccessSection(actions)
 
@@ -183,7 +189,7 @@ private fun RuntimeTab(state: RuntimeState, detail: String, actions: MainActions
         }
 
         Section("Default engine profile") {
-            val profiles = listOf("claude-max", "glm-zai", "opencode", "mock")
+            val profiles = listOf("claude-max", "codex-app-server", "glm-zai", "opencode", "mock")
             var sel by remember { mutableStateOf(actions.defaultProfile()) }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 profiles.forEach { p ->
@@ -300,6 +306,77 @@ private fun ClaudeSignInSection() {
                 Text(st.message, color = Green, fontSize = 13.sp)
                 Spacer(Modifier.height(8.dp))
                 OutlineButton("Sign in again") { ClaudeLogin.reset() }
+            }
+        }
+    }
+}
+
+/** Native on-device Codex sign-in: drives `codex login` inside the guest so
+ *  app-server uses the same /root/.codex credentials as the CLI. */
+@Composable
+private fun CodexSignInSection() {
+    val ctx = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val st by CodexLogin.state.collectAsState()
+    var apiKey by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) { CodexLogin.refresh(ctx) }
+
+    Section("Sign in to Codex") {
+        when (st.phase) {
+            CodexLogin.Phase.DONE -> {
+                Text(st.message.ifEmpty { "Signed in to Codex." }, color = Green, fontSize = 13.sp)
+                Spacer(Modifier.height(8.dp))
+                OutlineButton("Sign in again") { CodexLogin.reset() }
+            }
+            CodexLogin.Phase.STARTING, CodexLogin.Phase.CHECKING, CodexLogin.Phase.VERIFYING -> {
+                Text(st.message.ifEmpty { "Working..." }, color = TextDim, fontSize = 13.sp)
+                Spacer(Modifier.height(8.dp))
+                OutlineButton("Cancel") { CodexLogin.cancel() }
+            }
+            CodexLogin.Phase.AWAITING_BROWSER -> {
+                Text(st.message, color = TextMain, fontSize = 13.sp)
+                st.userCode?.let { code ->
+                    Spacer(Modifier.height(8.dp))
+                    Text(code, color = Accent, fontSize = 24.sp, fontFamily = FontFamily.Monospace)
+                    Spacer(Modifier.height(6.dp))
+                    OutlineButton("Copy code") { clipboard.setText(AnnotatedString(code)) }
+                }
+                Spacer(Modifier.height(8.dp))
+                st.url?.let { url ->
+                    FilledButton("Open sign-in page") {
+                        runCatching {
+                            ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                }
+                OutlineButton("Cancel") { CodexLogin.cancel() }
+            }
+            CodexLogin.Phase.IDLE, CodexLogin.Phase.ERROR -> {
+                Text(
+                    if (st.phase == CodexLogin.Phase.ERROR) st.message
+                    else "Authorize Codex in the guest, or save an OpenAI API key through the Codex CLI.",
+                    color = if (st.phase == CodexLogin.Phase.ERROR) Red else TextDim,
+                    fontSize = 13.sp,
+                )
+                Spacer(Modifier.height(8.dp))
+                FilledButton(if (st.phase == CodexLogin.Phase.ERROR) "Try device sign-in" else "Sign in with browser") {
+                    CodexLogin.startDeviceAuth(ctx)
+                }
+                Spacer(Modifier.height(12.dp))
+                Text("API key fallback", color = TextMain, fontSize = 13.sp)
+                Spacer(Modifier.height(4.dp))
+                DarkField(apiKey, { apiKey = it }, "sk-...", secret = true)
+                Spacer(Modifier.height(6.dp))
+                FilledButton("Save API key") {
+                    if (apiKey.isNotBlank()) {
+                        CodexLogin.signInWithApiKey(ctx, apiKey)
+                        apiKey = ""
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                Text("Both paths write to /root/.codex inside the Debian guest.", color = TextDim, fontSize = 11.sp)
             }
         }
     }
@@ -422,6 +499,43 @@ private fun ClaudeUpdateSection(runtime: RuntimeState) {
         Spacer(Modifier.height(8.dp))
         FilledButton(if (busy) "Updating…" else "Update Claude Code") {
             if (!busy) ClaudeUpdate.update(ctx)
+        }
+    }
+}
+
+/** Update the Codex CLI in the guest via `codex update`. */
+@Composable
+private fun CodexUpdateSection(runtime: RuntimeState) {
+    val ctx = LocalContext.current
+    val st by CodexUpdate.state.collectAsState()
+    LaunchedEffect(runtime, st.phase) {
+        if (runtime == RuntimeState.RUNNING && st.phase != CodexUpdate.Phase.UPDATING) {
+            CodexUpdate.refresh(ctx)
+        }
+    }
+    val busy = st.phase == CodexUpdate.Phase.UPDATING
+    Section("Codex CLI") {
+        Text(
+            if (st.version.isNotEmpty()) "Installed: ${st.version}"
+            else if (runtime == RuntimeState.RUNNING) "Checking version..."
+            else "Start the runtime to check / update.",
+            color = TextMain, fontSize = 13.sp,
+        )
+        if (st.message.isNotEmpty()) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                st.message,
+                color = when (st.phase) {
+                    CodexUpdate.Phase.ERROR -> Red
+                    CodexUpdate.Phase.DONE -> Green
+                    else -> TextDim
+                },
+                fontSize = 12.sp,
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        FilledButton(if (busy) "Updating..." else "Update Codex CLI") {
+            if (!busy) CodexUpdate.update(ctx)
         }
     }
 }

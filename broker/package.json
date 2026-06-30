@@ -18,7 +18,7 @@
   "dependencies": {
     "ws": "^8.18.0"
   },
-  "license": "GPL-3.0-or-later",
+  "license": "SEE LICENSE IN ../LICENSE",
   "devDependencies": {
     "playwright": "^1.61.1"
   }

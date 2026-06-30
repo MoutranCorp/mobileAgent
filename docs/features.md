@@ -23,7 +23,8 @@ A sideloaded Android app hosts a WebView that loads a web UI served by a Node
 **broker** running on-device (in Termux → proot Debian). The broker speaks a
 single **canonical event protocol** over a localhost WebSocket and drives a
 pluggable engine — `claude-code` (default, the real CLI on a Max plan = no
-metered billing), `opencode` (conformance), or `mock` (offline tests/UI shots).
+metered billing), `codex-app-server` (Codex CLI via app-server), `opencode`
+(conformance), or `mock` (offline tests/UI shots).
 Components: [`broker/`](../broker) (heart + tests), [`broker/web-ui/`](../broker/web-ui)
 (the client), [`android/`](../android) (Kotlin/Compose shell, `targetSdk 28`),
 [`provisioning/`](../provisioning) (Termux→proot→toolchain→broker scripts).
@@ -39,8 +40,12 @@ run natively on Windows.
   so the `claude-code` adapter maps ~1:1; raw harness shapes must never leak to the
   UI. Wire format is one JSON object per WS message, `{ type, ts, ...fields }` (NOT
   newline-delimited).
-- **Engine adapters** (`src/engines/`): `claude-code`, `opencode`, `mock`
-  (registry in `engines/index.js`). `base.js` honors `opts.model`/effort/permission.
+- **Engine adapters** (`src/engines/`): `claude-code`, `codex-app-server`,
+  `opencode`, `mock` (registry in `engines/index.js`). `base.js` honors
+  `opts.model`/effort/permission. The Codex adapter drives
+  `codex app-server --stdio`, maps generated app-server approvals/questions to
+  the canonical protocol, supports `turn/interrupt`, and has a real-Codex smoke
+  path on Windows.
 - **Full Claude Code stream coverage:** token-by-token `assistant_text` deltas,
   `assistant_thinking` (with signature), server/MCP tools, **subagent nesting** via
   `parentToolUseId`, `compact` boundaries, `permission_denials`, `usage`/`context`
@@ -260,6 +265,11 @@ secrets, and **GitHub sign-in** (`GitHubAuth.kt` — device flow or a pasted PAT
 wires the on-device git to push/pull/merge your repos. See
 [on-device-runtime.md](on-device-runtime.md#native-github-sign-in-githubauthkt).
 
+Codex has matching native runtime controls: `codex login --device-auth`,
+`codex login --with-api-key`, `codex login status`, and `codex update` run inside
+the same Debian guest as the broker, so `codex-app-server` uses `/root/.codex`
+credentials.
+
 ## Provisioning (`provisioning/`)
 
 The **default** path is the self-contained APK: it auto-provisions on first launch
@@ -268,6 +278,9 @@ broker as a git clone) and signs in to Claude natively from the Runtime tab. See
 [on-device-deploy.md](on-device-deploy.md) for the flow and
 [on-device-runtime.md](on-device-runtime.md) for the internals. `make-runtime.sh`
 stages the proot binaries into `android/.../assets/proot-<arch>/`.
+
+The provisioned toolchain now includes both `@anthropic-ai/claude-code` and
+`@openai/codex`; native Runtime-tab sign-in/update flows cover both CLIs.
 
 The `phase0-*.sh` / `provision-debian.sh` / `run-broker.sh` / `lib.sh` scripts are the
 **degraded manual fallback** (run the broker in a real Termux + proot-distro Debian);
@@ -437,7 +450,8 @@ in the active folder), `LIST_LIVE_SESSIONS`, `LIST_SESSIONS { scope:'all' }`,
 - **On-device deploy path is now WORKING end-to-end** on a real Pixel (verified
   through many device rounds): self-contained APK auto-provisions (proot + downloaded
   Debian + toolchain + git-clone broker), renders the UI in the WebView, the in-app
-  Update (`git pull`) works, and native Claude sign-in authenticates. The abandoned
+  Update (`git pull`) works, native Claude sign-in authenticates, and Codex has
+  matching native sign-in/update controls. The abandoned
   bundled-Termux-bootstrap approach and its gaps (`setup-guest.sh`, `make-bootstrap.sh`)
   were removed. Remaining nicety: a smoother sign-out/credential-clear UX. See
   [`docs/on-device-deploy.md`](on-device-deploy.md) (flow) and

@@ -9,7 +9,7 @@
 `mobile-agent` is a phone-first coding-agent runtime: a sideloaded Android app
 hosts a local broker and web UI, builds Expo/React-Native apps, and tests them
 live on the same phone. The current production engine is Claude Code; the broker
-is being evolved toward multiple engines, with Codex CLI planned next. The daily
+also has a Codex CLI app-server adapter behind the multi-engine seam. The daily
 phone loop runs 100% on-device; only native binary compiles normally go to EAS.
 The original background plan is [`ondevice-claude-code-plan.md`](../ondevice-claude-code-plan.md);
 the active sequencing is [`docs/current-plan.md`](current-plan.md).
@@ -52,7 +52,7 @@ Android WebView (broker/web-ui)
    broker (BrokerServer, src/server.js)
         │  routes commands → SessionManager → active engine; events back out
         ▼
-   engine adapter (src/engines/claude-code.js | opencode.js | mock.js)
+   engine adapter (src/engines/claude-code.js | codex-app-server.js | opencode.js | mock.js)
         │  spawns `claude --print --input-format stream-json --output-format stream-json …`
         ▼
    Claude CLI  ──HTTPS──▶  model API (default: Claude on your Max plan, OAuth, no metered billing)
@@ -188,7 +188,7 @@ later `newSession()`/restart-in-place can't route a turn into a sibling session.
 | `protocol.js` | Canonical `EventType` / `CommandType` / `StatusState` + `event()`. The contract. |
 | `jsonl.js` | `JsonLineBuffer` — reassembles stream-json across chunked stdout reads. |
 | `config.js` | CLI-arg + env config loader (port, host, projectsDir, stateDir, claudeBin, …). |
-| `profiles.js` | `ProfileStore` + `DEFAULT_PROFILES` — engine/model profiles (claude-max, glm-zai, opencode, mock) and their billing/auth. |
+| `profiles.js` | `ProfileStore` + `DEFAULT_PROFILES` — engine/model profiles (claude-max, codex-app-server, glm-zai, opencode, mock) and their billing/auth. |
 | `secrets.js` | `SecretStore` — auth tokens / env for a profile (`<stateDir>/secrets.json`, Keystore-injected on phone). `claudeEnv()`/`hasClaudeAuth()` back the in-app Claude sign-in (`SET_SECRET` command stores `CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_API_KEY`, `CLAUDE_AUTH` event reports status), injected into default-endpoint claude-code engines. |
 
 ### `broker/src/engines/` (adapters — the pluggable brain)
@@ -198,6 +198,7 @@ later `newSession()`/restart-in-place can't route a turn into a sibling session.
 | `base.js` | `EngineAdapter` (EventEmitter). The seam: subclasses do native↔canonical translation only. Implement `_spawn`/`send`/`interrupt`/`_teardown`; override optional response hooks only for declared features; emit via `emitEvent`/`emitCapabilities`. |
 | `index.js` | `createEngine(profile, opts)` — `REGISTRY` maps a harness name to its class. Adding a harness = one entry + one file; the UI never changes. |
 | `claude-code.js` | Default adapter. Drives `claude --print --input-format stream-json --output-format stream-json --verbose --include-partial-messages --replay-user-messages …`. All stream-json parsing lives here. Stands up the permission bridge in gated modes. **Auth precedence:** when `~/.claude/.credentials.json` exists and on the default endpoint, drops `CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_API_KEY` from the spawn env so a stale token can't override the file (the 401 cause). |
+| `codex-app-server.js` | Codex CLI adapter. Spawns `codex app-server --stdio` (with Windows npm-shim resolution), starts/resumes Codex threads, maps generated app-server notifications/approvals/questions to the canonical protocol, and converts broker attachments into Codex `UserInput`. |
 | `opencode.js` | `OpencodeEngine` — conformance adapter for a second harness. |
 | `mock.js` | `MockEngine` — fully self-contained fake harness; emits identical canonical events and really touches the filesystem. The zero-credential demo path. |
 

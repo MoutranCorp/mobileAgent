@@ -66,6 +66,10 @@ export function loadConfig(argv = process.argv.slice(2)) {
     memCriticalPct: Number(process.env.BROKER_MEM_CRITICAL_PCT || 95),
     // Path to the claude binary (overridable for odd installs).
     claudeBin: process.env.CLAUDE_BIN || 'claude',
+    // Path to the Codex CLI binary (or npm-installed shim). The Codex adapter has
+    // Windows-specific resolution for npm shims, but this gives users an escape
+    // hatch for unusual installs.
+    codexBin: process.env.CODEX_BIN || 'codex',
     // Default permission mode for the claude-code engine. Bypass-all by default
     // (on-device the whole proot IS the sandbox; IS_SANDBOX=1 lifts the root guard).
     permissionMode: process.env.PERMISSION_MODE || 'bypassPermissions',

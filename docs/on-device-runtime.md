@@ -11,6 +11,11 @@ ground truth — this explains the *why*. Key files:
 - [`service/ClaudeUpdate.kt`](../android/app/src/main/java/com/ondevice/agent/service/ClaudeUpdate.kt) — native `claude update` (Runtime-screen widget).
 - [`ui/AgentWebView.kt`](../android/app/src/main/java/com/ondevice/agent/ui/AgentWebView.kt) + [`RuntimeConfig.kt`](../android/app/src/main/java/com/ondevice/agent/RuntimeConfig.kt) — the WebView host.
 
+Additional key files for Codex runtime support:
+
+- [`service/CodexLogin.kt`](../android/app/src/main/java/com/ondevice/agent/service/CodexLogin.kt) - native `codex login` sign-in.
+- [`service/CodexUpdate.kt`](../android/app/src/main/java/com/ondevice/agent/service/CodexUpdate.kt) - native `codex update` (Runtime-screen widget).
+
 > See also [on-device-deploy.md](on-device-deploy.md) for the install/provision/update
 > *flow*; this doc is the *internals*.
 
@@ -21,8 +26,11 @@ ground truth — this explains the *why*. Key files:
 
 1. **stage proot** out of `assets/proot-<arch>/` (`isProotStaged`).
 2. **download + extract** the Debian rootfs (`.rootfs_ok`).
-3. **provision** the toolchain — apt + Node 22 + Claude CLI (`.provisioned`).
+3. **provision** the toolchain — apt + Node 22 + Claude CLI + Codex CLI (`.provisioned`).
 4. **deliver the broker source** (`.broker_source`).
+
+The provision step installs both `@anthropic-ai/claude-code` and `@openai/codex`
+so the runtime can launch either the Claude or Codex engine profile.
 
 Two of these markers are **version-stamped** (companion `const`s in ProotRuntime):
 `ROOTFS_VERSION` and `BROKER_SOURCE_VERSION`. `isRootfsReady()`/`isBrokerSourceReady()`
@@ -108,6 +116,23 @@ UI, on purpose: it's a runtime action (available before the broker is up) that
 updates the very binary the broker spawns. A refreshed CLI takes effect on **new**
 agent sessions; live engines keep the binary they launched with, so Stop & Start the
 runtime to move every session onto it. Output streams to the runtime log.
+
+## Native Codex sign-in/update (`CodexLogin.kt`, `CodexUpdate.kt`)
+
+Codex auth is separate from Claude auth and lives under `/root/.codex` inside the
+guest. The Runtime screen drives the CLI directly:
+
+- `codex login --device-auth` runs in a PTY (`script -qec`) so browser-device
+  auth output is visible and the user can open the sign-in URL in a real browser.
+- `codex login --with-api-key` is the API-key fallback; the key is written to the
+  process stdin and then discarded by the app. Codex persists its own auth file
+  in the guest.
+- `codex login status` powers the signed-in display.
+- `codex update` and `codex --version` mirror the Claude updater flow.
+
+The broker's `codex-app-server` profile spawns `codex app-server --stdio` from
+that same guest home, so new Codex sessions use the credentials/update written
+by these native controls.
 
 ## Native GitHub sign-in (`GitHubAuth.kt`)
 

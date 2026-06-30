@@ -1,11 +1,13 @@
 # Codex App Server Integration Plan
 
-Status: scaffolding implemented; real-Codex smoke pending.
+Status: broker adapter implemented and smoke-tested against real Codex app-server
+on Windows; Android/proot provisioning and native Codex auth/update controls are
+implemented but still need phone runtime verification.
 
 This is the delegation spec for adding Codex CLI as a first-class engine. The
 repo now includes a `codex-app-server` profile/harness and a testable JSON-RPC
-stdio adapter scaffold. The current tests use a fake app-server child process, so
-they do not require Codex to be installed or logged in.
+stdio adapter. The focused tests use a fake app-server child process, so they do
+not require Codex to be installed or logged in.
 
 ## Sources
 
@@ -13,8 +15,10 @@ they do not require Codex to be installed or logged in.
 - Official non-interactive mode docs: <https://developers.openai.com/codex/noninteractive>
 - Official CLI reference: <https://developers.openai.com/codex/cli/reference>
 - Official approvals/security docs: <https://developers.openai.com/codex/agent-approvals-security>
-- Local probe on 2026-06-29: `codex-cli 0.142.4`
+- Local probe on 2026-06-30: `codex-cli 0.142.4`
 - Local schema command: `codex app-server generate-ts --out <tmp-dir>`
+- Local real smoke on 2026-06-30: adapter start + one prompt returned
+  `mobile-agent codex smoke`.
 
 Regenerate schemas whenever the Codex CLI version changes. Do not hand-copy
 generated schema files into the repo unless a test fixture explicitly needs a
@@ -52,7 +56,12 @@ The adapter must work in both supported shared-code runtimes:
 
 Implementation rules:
 
-- Spawn Codex with `child_process.spawn(codexBin, ['app-server', '--stdio'], ...)`.
+- Spawn Codex with `child_process.spawn(...)` argument arrays, never interpolated
+  shell strings. Native Windows npm shims are special: the adapter resolves the
+  npm-installed `@openai/codex/bin/codex.js` and spawns it with the current Node
+  process because `spawn('codex')` can hit extensionless/WindowsApps shims that
+  fail with `EPERM`/`EINVAL`.
+- `CODEX_BIN` or profile `codexBin` can override the binary for unusual installs.
 - Do not use shell interpolation.
 - Pass `cwd` as an absolute path supplied by `ProjectManager`/session metadata.
 - Use `path` and `os.tmpdir()` for any local files. Never hardcode `/tmp` in
@@ -94,7 +103,8 @@ On adapter start:
    launch `broker/test/fixtures/fake-codex-app-server.mjs`; the production
    default remains `codex app-server --stdio`.
 2. Read stdout line-by-line as JSON-RPC messages.
-3. Send `initialize` with client info, then `initialized`.
+3. Send `initialize` with client info and app-server capabilities, then
+   `initialized`.
 4. Start or resume a Codex thread:
    - New: `thread/start`
    - Resume: `thread/resume`
@@ -111,6 +121,9 @@ Generated schema fields observed in `codex-cli 0.142.4`:
   `approvalsReviewer`, `sandboxPolicy`, `model`, `effort`, `summary`,
   `personality`, `outputSchema`.
 - `UserInput`: text, image URL, local image path, skill, and mention.
+- `ServerRequest`: command/file/permissions approvals, tool user input, MCP
+  elicitation, legacy exec/apply-patch approvals, dynamic tool calls, token
+  refresh, and attestation.
 
 ## Broker Mapping
 
@@ -128,6 +141,10 @@ User message:
 - Text maps to `UserInput { type: 'text', text, text_elements: [] }`.
 - Images should map to `localImage` when the broker has a local file path, or
   `image` when only a URL is available. Do not silently drop attachments.
+- Broker `{ mime, dataBase64, name }` attachments are written to `os.tmpdir()`:
+  images become `localImage`; text-like files become extra text inputs with the
+  decoded content; binary files become a text note with the saved temp path.
+  Temp files are cleaned up after turn completion or engine teardown.
 
 Events:
 
@@ -144,7 +161,7 @@ Events:
 - `error`, `warning`, `configWarning`, `deprecationNotice` -> `ERROR` or `TOAST`
   depending on severity
 
-Current scaffold coverage:
+Current adapter coverage:
 
 - JSONL JSON-RPC request/response/notification plumbing over stdio.
 - `initialize` / `initialized`, `thread/start`, `thread/resume`, and `turn/start`.
@@ -153,6 +170,9 @@ Current scaffold coverage:
 - `turn/completed` -> `RESULT`, `USAGE`, and idle status.
 - command/process output deltas and simple item start/completion mapping to
   canonical tool events.
+- `item/commandExecution/outputDelta`, `item/fileChange/outputDelta`, and
+  `item/fileChange/patchUpdated` mapping.
+- `turn/interrupt` with the active Codex `turnId`.
 
 Approvals/questions:
 
@@ -166,11 +186,16 @@ Approvals/questions:
 - Always answer the exact JSON-RPC request id. On interrupt/teardown, resolve or
   reject pending requests so the app-server child cannot hang forever.
 
-The scaffold maps approval/permission/exec-like server requests to
-`PERMISSION_REQUEST` and answers the exact JSON-RPC request id from
-`respondPermission`. Question-like requests currently surface through
-`QUESTION_REQUEST` and are immediately cancelled/resolved until the real schema is
-validated against Codex.
+The adapter maps app-server approval requests by exact generated method names,
+not case-sensitive substring guesses. Responses use the generated shapes:
+`{decision:'accept'|'decline'}` for command/file approvals, legacy
+`{decision:'approved'|'denied'}` for old exec/apply-patch approvals, and
+`{permissions, scope}` for permissions requests.
+
+Tool user-input requests now stay pending until the UI sends
+`QUESTION_RESPONSE`; responses are mapped to
+`{ answers: { [questionId]: { answers: [...] } } }`. MCP elicitations are mapped
+to the same question card where possible, with Accept/Decline/Cancel options.
 
 ## Permissions And Sandbox Mapping
 
@@ -194,8 +219,10 @@ Codex app-server should reuse normal Codex CLI auth where possible.
 
 - On Android/proot-Debian, auth lives inside the guest environment.
 - On Windows, auth lives in the user's Windows Codex config/auth location.
-- `CODEX_API_KEY` is documented for `codex exec`; do not assume it is the right
-  app-server auth path.
+- The Android Runtime tab now drives `codex login --device-auth`,
+  `codex login --with-api-key`, `codex login status`, and `codex update` inside
+  the guest, so credentials live under `/root/.codex` for the broker-spawned
+  app-server.
 - Never write tokens into project files or broker transcripts.
 
 ## MVP Task List
@@ -206,12 +233,12 @@ Codex app-server should reuse normal Codex CLI auth where possible.
    dispatch. **Scaffold done.**
 4. Implement thread start/resume and turn start. **Scaffold done.**
 5. Map agent/reasoning/command/file/tool deltas to the canonical protocol.
-   **Partial scaffold done.**
-6. Map approval and user-input requests. **Approval scaffold done; user-input
-   schema still needs real-Codex validation.**
+   **Core mapping done.**
+6. Map approval and user-input requests. **Done for command/file/permissions
+   approvals and tool user input; MCP elicitation has a best-effort form bridge.**
 7. Add focused tests with a fake app-server process fixture. **Done.**
-8. Add one optional smoke path using `codex exec --json` only as a fixture/source
-   sanity check, not as the adapter implementation.
+8. Add one optional real-Codex smoke path. **Done manually on Windows; keep it
+   manual because it needs credentials and may consume quota.**
 
 ## Acceptance Gates
 

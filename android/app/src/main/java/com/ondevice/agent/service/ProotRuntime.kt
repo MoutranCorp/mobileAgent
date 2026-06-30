@@ -212,7 +212,7 @@ class ProotRuntime(private val ctx: Context) {
 
     // ---- provisioning + run ----------------------------------------------
 
-    /** Install the toolchain (apt + Node + Claude CLI) into the guest. One-time.
+    /** Install the toolchain (apt + Node + Claude CLI + Codex CLI) into the guest. One-time.
      *  Broker SOURCE delivery is separate — see ensureBrokerSource(). */
     fun provision(log: (String) -> Unit): Boolean {
         // Idempotent — ensures the apt-no-sandbox + resolv.conf config is present even
@@ -232,6 +232,7 @@ class ProotRuntime(private val ctx: Context) {
             ${'$'}APT install -y nodejs || ${'$'}APT install -y nodejs npm
             mkdir -p /root/projects
             npm install -g @anthropic-ai/claude-code || echo "warn: claude CLI install failed — install later for the real engine"
+            npm install -g @openai/codex || echo "warn: codex CLI install failed - install later for the Codex engine"
             node --version && npm --version
         """.trimIndent()
         val ok = runProcess(prootGuest(script), log)

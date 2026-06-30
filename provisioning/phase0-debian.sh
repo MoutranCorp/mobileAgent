@@ -27,6 +27,10 @@ step "Installing Claude Code CLI"
 if have claude; then ok "claude already installed: $(claude --version 2>/dev/null || echo '?')"
 else npm install -g @anthropic-ai/claude-code; fi
 
+step "Installing Codex CLI (optional next engine)"
+if have codex; then ok "codex already installed: $(codex --version 2>/dev/null || echo '?')"
+else npm install -g @openai/codex || warn "codex CLI install failed; Claude gate can still continue"; fi
+
 cat <<EOF
 
 ${c_yellow}ACTION REQUIRED — authenticate Claude Code on your Max subscription:${c_reset}

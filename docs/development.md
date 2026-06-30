@@ -30,9 +30,13 @@ You do **not** need everything for every task. Pick by component:
   ([`broker/src/controls/checkpoints.js`](../broker/src/controls/checkpoints.js))
   shells out to `git` for non-destructive snapshots and restores, so `git` must
   be on `PATH` whenever the broker runs.
-- **Claude Code CLI, logged in on a Max plan** — only for the **real** engine
-  (`--profile claude-max` / the default `claude-code` adapter). Not needed for
-  the mock engine, the tests, or UI screenshots.
+- **Claude Code CLI, logged in on a Max plan** — for the default real engine
+  (`--profile claude-max` / the `claude-code` adapter). Not needed for the mock
+  engine, tests, or UI screenshots.
+- **Codex CLI, logged in** — for the `codex-app-server` profile. The adapter
+  uses `codex app-server --stdio`; tests use a fake app-server and do not need
+  Codex credentials. On Windows, use `CODEX_BIN` only for unusual installs; the
+  adapter already resolves npm-installed Codex shims.
 - **Chromium for Playwright** — only for UI screenshots / the `uishot` smoke
   test. Install once with `npx playwright install chromium` (Playwright itself
   is already a broker devDependency).
@@ -57,12 +61,15 @@ npm run dev            # == node src/index.js --engine mock
 
 # Real engine (needs the Claude Code CLI logged in on a Max plan):
 node src/index.js --profile claude-max
+
+# Codex engine (needs Codex CLI login):
+node src/index.js --profile codex-app-server
 ```
 
 Default bind is `127.0.0.1:8765`. Flags: `--port` `--host` `--profile <id>`
 `--engine <id>` `--projects <dir>` `--state <dir>` `--verbose`. Env equivalents:
 `BROKER_PORT`, `BROKER_HOST`, `BROKER_PROFILE`, `PROJECTS_DIR`, `STATE_DIR`,
-`CLAUDE_BIN`, `PERMISSION_MODE` (engine selection is CLI-only via `--engine`). See
+`CLAUDE_BIN`, `CODEX_BIN`, `PERMISSION_MODE` (engine selection is CLI-only via `--engine`). See
 [`broker/README.md`](../broker/README.md) for the full protocol surface and
 engine table.
 
@@ -257,6 +264,8 @@ it.
 - **Gradle is not on `PATH`.** A standalone **Gradle 8.9** lives at
   `C:/src/gradle-dist/gradle-8.9` (matching the committed wrapper). You can use
   either `./gradlew` or that `gradle` directly.
+- **Codex CLI:** `codex-cli 0.142.4`; real adapter smoke verified by starting
+  `codex-app-server` and sending one prompt.
 - **`android/local.properties`** (gitignored) contains exactly:
   ```
   sdk.dir=C:/src/androidsdk

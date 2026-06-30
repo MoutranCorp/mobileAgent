@@ -42,7 +42,8 @@ A native Compose shell with two tabs:
   blessed fast path.)
 - **Runtime** — start/stop the service, request the battery exemption, set the
   broker URL, pick the default engine profile, manage Keystore-encrypted provider
-  secrets, and watch live runtime logs.
+  secrets, sign in/update Claude Code and Codex CLI inside the guest, and watch
+  live runtime logs.
 
 ## Build
 
@@ -89,6 +90,9 @@ app/src/main/
       RuntimeLauncher.kt                   launches proot + broker, streams logs, health poll
       ProotRuntime.kt                      proot staging, rootfs download/extract, provision, broker delivery
       ClaudeLogin.kt                       native on-device `claude setup-token` sign-in flow
+      ClaudeUpdate.kt                      native `claude update`
+      CodexLogin.kt                        native `codex login` sign-in flow
+      CodexUpdate.kt                       native `codex update`
       RuntimeController.kt                 observable runtime state for the UI
     net/BrokerHealth.kt                    HTTP health probe
     secrets/KeystoreSecrets.kt             AES/GCM in AndroidKeyStore → env injection

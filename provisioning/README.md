@@ -28,9 +28,9 @@ full UI.
 | Script | Where | What it does |
 |---|---|---|
 | `phase0-termux.sh` | Termux | Installs `proot-distro` + Debian, stages these scripts into the guest. |
-| `phase0-debian.sh` | Debian | **The gate.** Installs node/npm/git + Claude Code, walks you through `/login`, then runs three smoke tests (Claude headless stream-json, Expo scaffold, Metro on localhost). |
-| `provision-debian.sh` | Debian | Installs the toolchain + copies/clones the **broker** into `~/agent-broker`, `npm install`, creates `~/projects`, and verifies the broker boots with the mock engine. |
-| `run-broker.sh` | Debian | Starts the broker. `PROFILE=mock` for offline; `PROFILE=claude-max` for the real engine. |
+| `phase0-debian.sh` | Debian | **The gate.** Installs node/npm/git + Claude Code and best-effort Codex CLI, walks you through Claude `/login`, then runs three smoke tests (Claude headless stream-json, Expo scaffold, Metro on localhost). |
+| `provision-debian.sh` | Debian | Installs the toolchain (Claude Code + Codex CLI) + copies/clones the **broker** into `~/agent-broker`, `npm install`, creates `~/projects`, and verifies the broker boots with the mock engine. |
+| `run-broker.sh` | Debian | Starts the broker. `PROFILE=mock` for offline; `PROFILE=claude-max` for Claude; `PROFILE=codex-app-server` for Codex after `codex login`. |
 | `lib.sh` | both | Shared logging helpers. |
 
 ## The one manual step
@@ -44,6 +44,12 @@ claude          # then type:  /login
 
 Open the printed URL on the phone, authorize, paste the code back. After that the
 `claude-max` profile uses your flat subscription — no metered API billing.
+
+Codex uses its own CLI auth. In the Android self-contained runtime, prefer the
+Runtime tab's **Sign in to Codex** flow (`codex login --device-auth` or
+`codex login --with-api-key` inside the guest). In the manual Debian flow, run
+`codex login` or `codex login --device-auth` before using
+`PROFILE=codex-app-server`.
 
 ## Snags & fixes (from the plan)
 

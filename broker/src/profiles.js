@@ -13,6 +13,7 @@ import path from 'node:path';
  * @property {'flat'|'metered'|'self-hosted'|'none'} billing
  * @property {string} [permissionMode] default permission mode for this profile
  * @property {number} [serverPort]  for server-based harnesses (opencode)
+ * @property {string} [codexBin]    optional Codex CLI binary override
  */
 
 /** The built-in profiles from Section 3 of the plan. */

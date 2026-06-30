@@ -36,7 +36,8 @@ each step gated by its own marker so it runs once:
 
 1. **stage proot** out of `assets/proot-<arch>/`,
 2. **download + extract** the Debian rootfs (`.rootfs_ok`, version `ROOTFS_VERSION`),
-3. **provision the toolchain** — apt + Node 22 + Claude CLI (`.provisioned`),
+3. **provision the toolchain** — apt + Node 22 + Claude CLI + Codex CLI
+   (`.provisioned`),
 4. **deliver the broker source** (`.broker_source`, version `BROKER_SOURCE_VERSION`).
 
 **Updating the broker / UI = the in-app Update.** Step 4 delivers the broker as a real
@@ -136,7 +137,8 @@ bash ~/provisioning/phase0-debian.sh
 
 This is the **viability gate** ([`phase0-debian.sh`](../provisioning/phase0-debian.sh)).
 It installs `nodejs npm git curl` + the Claude Code CLI
-(`@anthropic-ai/claude-code`), then **pauses for the one manual step**:
+(`@anthropic-ai/claude-code`) and, best-effort, the Codex CLI (`@openai/codex`),
+then **pauses for the one manual step**:
 
 ```bash
 claude        # then type:  /login
@@ -158,8 +160,8 @@ bash ~/provisioning/provision-debian.sh
 ```
 
 What it does ([`provision-debian.sh`](../provisioning/provision-debian.sh)):
-- Re-ensures the toolchain + Claude CLI; installs `gh` (optional, for the "Create PR"
-  feature — push works without it).
+- Re-ensures the toolchain + Claude CLI + Codex CLI; installs `gh` (optional,
+  for the "Create PR" feature — push works without it).
 - **Installs the broker** into `~/agent-broker`: copies from `$BROKER_SRC`
   (default `~/mobile-agent-src/broker`), else clones `$BROKER_REPO`, else uses an
   existing `~/agent-broker`, else `die`s.
@@ -254,7 +256,10 @@ at the top. In short:
 2. `cd android && ./gradlew :app:assembleDebug` → `app/build/outputs/apk/debug/app-debug.apk`.
 3. Install + open → **Start runtime**. First launch downloads the Debian rootfs and
    installs the toolchain + broker (minutes, one-time); later launches just start it.
-4. Sign in via the **Runtime tab → Sign in to Claude** (native `claude setup-token`).
+4. Sign in via the **Runtime tab → Sign in to Claude** (native
+   `claude setup-token`) and/or **Sign in to Codex** (native
+   `codex login --device-auth` or `codex login --with-api-key`). The same Runtime
+   tab can update both CLIs.
 
 3. **The phase-0 gate hard-fails on the Claude auth/stream-json check.**
    [`phase0-debian.sh`](../provisioning/phase0-debian.sh) smoke-test 1/3 (the riskiest

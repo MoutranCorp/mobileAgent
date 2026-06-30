@@ -246,6 +246,7 @@ export class SessionManager {
       cwd, env, model: chosen,
       resumeId: resolvedResume,
       claudeBin: this.config.claudeBin,
+      codexBin: this.config.codexBin,
       permissionMode,
       effort: isUltra ? 'xhigh' : effortPref,
       ultracode: isUltra,

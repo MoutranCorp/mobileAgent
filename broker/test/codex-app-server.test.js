@@ -4,17 +4,17 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CodexAppServerEngine } from '../src/engines/codex-app-server.js';
+import { CodexAppServerEngine, resolveCodexLaunch } from '../src/engines/codex-app-server.js';
 import { EventType, StatusState } from '../src/protocol.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixture = path.join(__dirname, 'fixtures', 'fake-codex-app-server.mjs');
 
-function collect(engine) {
+function collect(engine, { autoApprove = true } = {}) {
   const events = [];
   engine.on('event', (e) => {
     events.push(e);
-    if (e.type === EventType.PERMISSION_REQUEST) {
+    if (autoApprove && e.type === EventType.PERMISSION_REQUEST) {
       engine.respondPermission(e.id, 'allow');
     }
   });
@@ -91,7 +91,7 @@ test('codex app-server resumes an existing thread id', async () => {
   await engine.stop();
 });
 
-test('codex app-server maps one turn, streamed deltas, approval request, and completion', async () => {
+test('codex app-server maps real approval request names and response shapes', async () => {
   const cwd = await tmpProject();
   const engine = makeEngine(cwd);
   const events = collect(engine);
@@ -105,7 +105,7 @@ test('codex app-server maps one turn, streamed deltas, approval request, and com
     .filter((e) => e.type === EventType.ASSISTANT_TEXT)
     .map((e) => e.delta)
     .join('');
-  assert.equal(text, 'Hello from Codex approved');
+  assert.equal(text, 'Hello from Codex accepted');
 
   const thinking = events
     .filter((e) => e.type === EventType.ASSISTANT_THINKING)
@@ -114,9 +114,9 @@ test('codex app-server maps one turn, streamed deltas, approval request, and com
   assert.equal(thinking, 'Thinking. ');
 
   const permission = events.find((e) => e.type === EventType.PERMISSION_REQUEST);
-  assert.equal(permission.action, 'exec');
-  assert.equal(permission.toolName, 'Bash');
-  assert.deepEqual(permission.input, { command: 'npm test' });
+  assert.equal(permission.action, 'command');
+  assert.equal(permission.toolName, 'Shell');
+  assert.equal(permission.input.command, 'npm test');
 
   const resolved = events.find((e) => e.type === EventType.PERMISSION_RESOLVED);
   assert.equal(resolved.id, 'fake-approval-1');
@@ -134,4 +134,85 @@ test('codex app-server maps one turn, streamed deltas, approval request, and com
   assert.equal(idle.state, StatusState.IDLE);
 
   await engine.stop();
+});
+
+test('codex app-server maps tool user input through the question flow', async () => {
+  const cwd = await tmpProject();
+  const engine = makeEngine(cwd, { env: { FAKE_CODEX_MODE: 'toolInput' } });
+  const events = collect(engine, { autoApprove: false });
+
+  await engine.start();
+  const question = waitForEvent(engine, (e) => e.type === EventType.QUESTION_REQUEST);
+  const done = waitForEvent(engine, (e) => e.type === EventType.RESULT);
+  await engine.send({ type: 'user_message', text: 'ask me' });
+  const q = await question;
+  assert.equal(q.id, 'tool-input-1');
+  assert.equal(q.questions[0].question, 'Pick a color');
+
+  engine.respondQuestion(q.id, [{ header: 'Color', question: 'Pick a color', selected: ['Blue'], custom: 'teal' }]);
+  await done;
+
+  const resolved = events.find((e) => e.type === EventType.QUESTION_RESOLVED);
+  assert.equal(resolved.id, 'tool-input-1');
+  const text = events.filter((e) => e.type === EventType.ASSISTANT_TEXT).map((e) => e.delta).join('');
+  assert.match(text, /q-color/);
+  assert.match(text, /Blue/);
+  assert.match(text, /teal/);
+
+  await engine.stop();
+});
+
+test('codex app-server converts broker attachments instead of dropping them', async () => {
+  const cwd = await tmpProject();
+  const engine = makeEngine(cwd, { env: { FAKE_CODEX_MODE: 'inputEcho' } });
+  const events = collect(engine);
+
+  await engine.start();
+  const done = waitForEvent(engine, (e) => e.type === EventType.RESULT);
+  await engine.send({
+    type: 'user_message',
+    text: 'see attachments',
+    attachments: [
+      { name: 'pixel.png', mime: 'image/png', dataBase64: 'iVBORw0KGgo=' },
+      { name: 'notes.txt', mime: 'text/plain', dataBase64: Buffer.from('hello notes').toString('base64') },
+    ],
+  });
+  await done;
+
+  const text = events.filter((e) => e.type === EventType.ASSISTANT_TEXT).map((e) => e.delta).join('');
+  assert.match(text, /localImage:path/);
+  assert.match(text, /Attached file notes\.txt/);
+  assert.match(text, /hello notes/);
+
+  await engine.stop();
+});
+
+test('codex app-server interrupts with turn/interrupt and the active turn id', async () => {
+  const cwd = await tmpProject();
+  const engine = makeEngine(cwd, { env: { FAKE_CODEX_MODE: 'interrupt' } });
+  const events = collect(engine);
+
+  await engine.start();
+  await engine.send({ type: 'user_message', text: 'stop me' });
+  const done = waitForEvent(engine, (e) => e.type === EventType.RESULT);
+  engine.interrupt();
+  await done;
+
+  const result = events.find((e) => e.type === EventType.RESULT);
+  assert.equal(result.subtype, 'interrupted');
+
+  await engine.stop();
+});
+
+test('codex launch resolver uses the npm package JS on Windows', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-launch-'));
+  const js = path.join(root, 'npm', 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+  await fs.mkdir(path.dirname(js), { recursive: true });
+  await fs.writeFile(js, '#!/usr/bin/env node\n');
+
+  const launch = resolveCodexLaunch('codex', ['app-server', '--stdio'], { APPDATA: root }, 'win32');
+
+  assert.equal(launch.command, process.execPath);
+  assert.equal(launch.args[0], js);
+  assert.deepEqual(launch.args.slice(1), ['app-server', '--stdio']);
 });

@@ -11,9 +11,10 @@ memory. If you change the project, **you are expected to keep these docs current
 `mobile-agent` puts a full coding-agent workflow on a phone: a sideloaded
 Android app runs a Node "broker" inside a proot-Debian environment on the
 device; the broker serves a custom web UI that the app hosts in a WebView. The
-current production engine is **Claude Code**; the next planned engine is
-**Codex CLI** through the multi-engine work. You build/test Expo apps live on
-the same phone; only native binary compiles go to EAS cloud.
+current production engine is **Claude Code**; **Codex CLI** is available through
+the `codex-app-server` profile/harness and is the next engine being hardened.
+You build/test Expo apps live on the same phone; only native binary compiles go
+to EAS cloud.
 
 **Project principle:** the goal is the *fully on-device* loop (broker in
 proot-Debian on the phone). Lead with that path for Android runtime work. The
@@ -40,7 +41,7 @@ Linux-only assumptions into shared Node/web code. A PC-hosted broker over
 - [docs/development.md](docs/development.md) — prerequisites + how to build/run/test/verify each component (incl. the UI screenshot harness and this machine's toolchain).
 - [docs/features.md](docs/features.md) — the current implemented surface, including the **tabbed-workspace / multi-session** subsystem, plus roadmap/deferred.
 - [docs/multi-engine.md](docs/multi-engine.md) — the required seam before Codex and engine-neutral agents.
-- [docs/codex-app-server.md](docs/codex-app-server.md) — planned Codex CLI integration via `codex app-server`.
+- [docs/codex-app-server.md](docs/codex-app-server.md) — Codex CLI integration via `codex app-server`.
 - [docs/claude-cli-behaviors.md](docs/claude-cli-behaviors.md) — non-obvious Claude Code CLI behaviors the current adapter depends on.
 - [docs/claude-code-surface.md](docs/claude-code-surface.md) — authoritative notes on the current Claude stream/surface.
 - [docs/agent-management/](docs/agent-management/) — persona/agent planning; deferred until the multi-engine seam is in place unless explicitly scoped to Claude.
@@ -59,8 +60,8 @@ Open http://127.0.0.1:8765/ and drive the full UI against the mock engine.
 
 **Prerequisites:** Node **≥ 21** (the test script relies on `node --test` glob
 expansion, which is 21+), npm, git. For the current real engine: the Claude Code
-CLI logged in on a Max plan. For the planned Codex engine: Codex CLI auth, plus
-the adapter work in [docs/codex-app-server.md](docs/codex-app-server.md). For UI
+CLI logged in on a Max plan. For the Codex engine: Codex CLI auth and the
+`codex-app-server` profile. For UI
 screenshots: `npx playwright install chromium`. For the Android app: Android SDK
 + JDK 17. Full detail in [docs/development.md](docs/development.md).
 

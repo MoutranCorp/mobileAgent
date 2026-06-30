@@ -32,6 +32,7 @@ else
   apt-get install -y npm
 fi
 have claude || npm install -g @anthropic-ai/claude-code
+have codex || npm install -g @openai/codex || warn "codex CLI install failed; install @openai/codex later for the Codex engine"
 ok "node $(node --version), npm $(npm --version)"
 
 step "Installing GitHub CLI (gh) for the 'Create PR' feature (optional)"

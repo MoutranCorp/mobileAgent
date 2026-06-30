@@ -12,6 +12,14 @@ For current implementation order, read [`docs/current-plan.md`](docs/current-pla
 The phone runtime is primary, but the shared broker/web/test surface is expected
 to run on Windows too.
 
+## License
+
+This project is source-available for transparency, educational review, and non-commercial personal use only. It is not open source.
+
+Commercial use is prohibited without prior written permission from MoutranCorp. This includes using the code to build, launch, host, sell, operate, or offer a paid product or service.
+
+See the [LICENSE](./LICENSE) file for details.
+
 Conceptual runtime diagram below. The current default Android install is the
 self-contained APK flow: the app stages proot, downloads the Debian rootfs, and
 starts the broker. Manual Termux provisioning is a fallback/debug path.
@@ -192,8 +200,3 @@ subscription** instead of metered API billing, a foreground service to survive
 Doze, and an engine-pluggable broker) are explained in
 [`ondevice-claude-code-plan.md`](ondevice-claude-code-plan.md). The code follows
 them.
-
-## License
-
-GPL-3.0-or-later (the Termux bootstrap + `termux-exec` it builds on are GPLv3).
-Fine for personal use; revisit if you distribute.
