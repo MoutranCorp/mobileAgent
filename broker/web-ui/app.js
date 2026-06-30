@@ -2455,7 +2455,9 @@
     const aliases = (active && active.models) || (active && active.model ? [active.model] : []);
     // Prefer the broker's resolved list ([{alias,id,label}]); fall back to raw aliases.
     const resolved = new Map(state.models.map((m) => [m.alias, m]));
-    const selected = state.selectedModel || (active && active.model) || aliases[0];
+    let selected = state.selectedModel || (active && active.model) || aliases[0];
+    if (aliases.length && !aliases.includes(selected)) selected = (active && active.model) || aliases[0];
+    state.selectedModel = selected || null;
     sel.innerHTML = '';
     if (!aliases.length) {
       state.selectedModel = null;
@@ -2533,7 +2535,11 @@
     const m = String(id || '').match(/(opus|sonnet|haiku|fable)-(\d+)-(\d+)/i);
     return m ? `${cap(m[1])} ${m[2]}.${m[3]}` : null;
   }
-  function labelFromAlias(a) { return cap(String(a || '')); }
+  function labelFromAlias(a) {
+    const s = String(a || '');
+    if (/^gpt-/i.test(s)) return s.toUpperCase();
+    return cap(s);
+  }
   function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
   function familyOf(s) { const m = String(s || '').match(/opus|sonnet|haiku|fable/i); return m ? m[0].toLowerCase() : null; }
   // A known-family alias must match the id's family; family-less aliases (glm) pass.

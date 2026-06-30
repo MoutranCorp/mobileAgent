@@ -38,6 +38,7 @@ export class SessionManager {
     this.defaultPermissionMode = config.permissionMode || 'default';
     this.defaultEffort = config.effort || 'high'; // low|medium|high|xhigh|max|ultracode
     this.defaultModel = null;
+    this.defaultModelsByProfile = new Map();
     this.sessionsFile = path.join(config.stateDir, 'sessions.json');
     this._sessionByProject = this._loadSessions();
     this.capabilitiesByKey = new Map(); // sessionKey -> last capabilities event
@@ -62,11 +63,18 @@ export class SessionManager {
     const m = this._activeMeta;
     if (m) m.effort = level;
   }
-  get currentModel() { return this._activeMeta?.model || this.defaultModel; }
+  get currentModel() {
+    const profile = this.profiles.get(this.activeProfileId);
+    return this._activeMeta?.model || this._preferredModelForProfile(this.activeProfileId, profile);
+  }
   set currentModel(model) {
-    this.defaultModel = model;
+    const profileId = this.activeProfileId;
+    const profile = this.profiles.get(profileId);
+    const clean = this._sanitizeModelForProfile(profile, model, { allowCustom: true });
+    this.defaultModel = clean;
+    this._rememberModelForProfile(profileId, clean);
     const m = this._activeMeta;
-    if (m) m.model = model;
+    if (m) m.model = clean;
   }
   get lastCapabilities() { return this.capabilitiesByKey.get(this.activeKey) || null; }
   set lastCapabilities(caps) {
@@ -264,10 +272,17 @@ export class SessionManager {
       ? (explicitResume ?? null)
       : (explicitResume ?? (sameHarness ? prevMeta?.sessionId : null) ?? storedResume ?? null);
 
-    // Keep the chosen model across non-model restarts; drop it on a profile change.
-    const profileChanged = profileId !== prevMeta?.profileId;
-    const activeModel = shouldFocus ? this.currentModel : this.defaultModel;
-    const chosen = model || (profileChanged ? null : prevMeta?.model) || (profileChanged ? null : activeModel) || profile.model;
+    // Keep the chosen model across non-model restarts, but never carry a model
+    // alias from one engine family into another. Existing phone installs can have
+    // a global saved Claude alias such as "haiku"; Codex must not resume with it.
+    const profileChanged = !!prevMeta?.profileId && profileId !== prevMeta.profileId;
+    const activeModel = shouldFocus ? this.currentModel : this._preferredModelForProfile(profileId, profile);
+    const chosen =
+      this._sanitizeModelForProfile(profile, model, { allowCustom: true }) ||
+      (profileChanged ? null : this._sanitizeModelForProfile(profile, prevMeta?.model, { allowCustom: true })) ||
+      (profileChanged ? null : this._sanitizeModelForProfile(profile, activeModel, { allowCustom: true })) ||
+      this._sanitizeModelForProfile(profile, profile.model);
+    this._rememberModelForProfile(profileId, chosen);
     const permissionMode = opts.permissionMode || prevMeta?.permissionMode || this.defaultPermissionMode;
     // Effort: a per-call override (cron jobs) wins over the global pref; never mutate
     // the default effort from a detached run.
@@ -470,10 +485,16 @@ export class SessionManager {
   }
 
   async switchModel(model) {
-    this._log(`switching model -> ${model} (fresh session)`);
-    this.defaultModel = model;
+    const profileId = this.activeProfileId;
+    const profile = this.profiles.get(profileId);
+    const clean =
+      this._sanitizeModelForProfile(profile, model, { allowCustom: true }) ||
+      this._sanitizeModelForProfile(profile, profile?.model);
+    this._log(`switching model -> ${clean || 'default'} (fresh session)`);
+    this.defaultModel = clean;
+    this._rememberModelForProfile(profileId, clean);
     this._deleteResume(this.activeKey); // a fresh session for THIS key only
-    return this.startEngine(this.activeProfileId, { model, resumeId: null });
+    return this.startEngine(profileId, { model: clean, resumeId: null });
   }
 
   async setPermissionMode(mode) {
@@ -635,6 +656,41 @@ export class SessionManager {
   _log(message) {
     if (this.config.verbose) process.stderr.write(`[session] ${message}\n`);
     this.emit(event(EventType.LOG, { level: 'debug', message }));
+  }
+  _profileModelAliases(profile) {
+    const aliases = [];
+    if (Array.isArray(profile?.models)) aliases.push(...profile.models);
+    if (profile?.model) aliases.push(profile.model);
+    return [...new Set(aliases.filter(Boolean).map(String))];
+  }
+  _sanitizeModelForProfile(profile, model, { allowCustom = false } = {}) {
+    if (!model) return null;
+    const wanted = String(model);
+    const aliases = this._profileModelAliases(profile);
+    if (aliases.includes(wanted)) return wanted;
+    if (allowCustom && !this._looksIncompatibleWithProfile(profile, wanted)) return wanted;
+    if (!aliases.length) return wanted;
+    return null;
+  }
+  _looksIncompatibleWithProfile(profile, model) {
+    const value = String(model || '').toLowerCase();
+    if (profile?.harness === 'codex-app-server') {
+      return value === 'opus' || value === 'sonnet' || value === 'haiku' || value.startsWith('claude-');
+    }
+    if (profile?.harness === 'claude-code') {
+      return value.startsWith('gpt-') || value.startsWith('o1') || value.startsWith('o3') || value.startsWith('o4');
+    }
+    return false;
+  }
+  _rememberModelForProfile(profileId, model) {
+    if (!profileId) return;
+    if (model) this.defaultModelsByProfile.set(profileId, model);
+    else this.defaultModelsByProfile.delete(profileId);
+  }
+  _preferredModelForProfile(profileId, profile) {
+    return this._sanitizeModelForProfile(profile, this.defaultModelsByProfile.get(profileId), { allowCustom: true }) ||
+      this._sanitizeModelForProfile(profile, this.defaultModel, { allowCustom: true }) ||
+      this._sanitizeModelForProfile(profile, profile?.model);
   }
   _loadSessions() {
     try { if (fs.existsSync(this.sessionsFile)) return JSON.parse(fs.readFileSync(this.sessionsFile, 'utf8')); } catch { /* ignore */ }

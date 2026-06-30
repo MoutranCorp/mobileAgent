@@ -91,3 +91,35 @@ test('prompt waits for a Codex engine that is still starting after switch_engine
     else process.env.FAKE_CODEX_MODE = oldMode;
   }
 });
+
+test('Codex profile ignores stale Claude model preference on startup', async () => {
+  const projects = await tmpDir('codex-model-proj-');
+  const state = await tmpDir('codex-model-state-');
+  await fs.writeFile(path.join(state, 'profiles.json'), JSON.stringify([
+    {
+      id: 'codex-app-server',
+      label: 'Codex Stale',
+      harness: 'codex-app-server',
+      codexBin: process.execPath,
+      codexArgs: [fixture],
+      model: null,
+      billing: 'none',
+    },
+  ], null, 2));
+  await fs.writeFile(path.join(state, 'user-settings.json'), JSON.stringify({
+    engine: { model: 'haiku', effort: 'xhigh', permissionMode: 'default' },
+  }, null, 2));
+
+  const config = loadConfig(['--profile', 'codex-app-server', '--port', '0', '--projects', projects, '--state', state]);
+  const server = new BrokerServer(config);
+  try {
+    await server.start();
+    const engine = await server.session.ensureEngine();
+
+    assert.ok(engine, 'engine started');
+    assert.equal(engine.model, 'gpt-5.5');
+    assert.equal(server.session.currentModel, 'gpt-5.5');
+  } finally {
+    await server.stop();
+  }
+});

@@ -118,3 +118,22 @@ test('e2e: set_effort persists into user settings (survives restart)', async () 
   ws.close();
   await server.stop();
 });
+
+test('saved compatible custom model is honored on first engine start', async () => {
+  const projects = await tmpDir('use3-proj-');
+  const state = await tmpDir('use3-state-');
+  await fs.writeFile(path.join(state, 'user-settings.json'), JSON.stringify({
+    engine: { model: 'mock-special', effort: 'high', permissionMode: 'default' },
+  }, null, 2));
+
+  const config = loadConfig(['--profile', 'mock', '--port', '0', '--projects', projects, '--state', state]);
+  const server = new BrokerServer(config);
+  try {
+    await server.start();
+    const engine = await server.session.ensureEngine();
+    assert.equal(engine.model, 'mock-special');
+    assert.equal(server.session.currentModel, 'mock-special');
+  } finally {
+    await server.stop();
+  }
+});

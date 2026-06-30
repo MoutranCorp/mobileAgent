@@ -46,7 +46,8 @@ export const DEFAULT_PROFILES = [
     harness: 'codex-app-server',
     baseUrl: null,
     authRef: null,
-    model: null,
+    model: 'gpt-5.5',
+    models: ['gpt-5.5'],
     billing: 'metered',
     permissionMode: 'default',
   },
@@ -135,10 +136,22 @@ function mergeBuiltInProfiles(saved) {
     if (!profile?.id) return profile;
     seen.add(profile.id);
     const builtIn = byId.get(profile.id);
-    return builtIn ? { ...builtIn, ...profile } : profile;
+    return builtIn ? mergeBuiltInProfile(builtIn, profile) : profile;
   });
   for (const profile of DEFAULT_PROFILES) {
     if (!seen.has(profile.id)) merged.push(profile);
+  }
+  return merged;
+}
+
+function mergeBuiltInProfile(builtIn, saved) {
+  const merged = { ...builtIn, ...saved };
+  // Existing phone installs may have profiles.json entries from older broker
+  // builds where a built-in field was missing or explicitly null. Preserve real
+  // user edits, but backfill newly-required built-in defaults.
+  if (builtIn.model && !saved.model) merged.model = builtIn.model;
+  if (Array.isArray(builtIn.models) && builtIn.models.length) {
+    if (!Array.isArray(saved.models) || !saved.models.length) merged.models = builtIn.models;
   }
   return merged;
 }

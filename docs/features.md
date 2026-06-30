@@ -58,7 +58,10 @@ run natively on Windows.
   `system/init` id (never hardcoded; cross-family resolved ids rejected so
   `opus`→sonnet-id can't mislabel). Effort picker `low|medium|high|xhigh|max`
   plus an `ultracode` level that maps to `xhigh` + the ultracode setting. Chosen
-  model persists across effort/permission/resume restarts.
+  model persists across effort/permission/resume restarts. The Codex profile
+  advertises `gpt-5.5` in the same composer picker and the session manager drops
+  obviously incompatible saved aliases (for example `haiku` into Codex) while
+  preserving deliberate custom model overrides.
 - **Controls** (`src/controls/`): `transcript` (per-session persistence + replay),
   `checkpoints` (git snapshot per turn + restore + diff), `files` (list/read/grep/
   find&replace/diff/write incl. `.env`), `projects`, `prompts`, `usage-ledger`

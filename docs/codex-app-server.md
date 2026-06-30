@@ -158,8 +158,10 @@ Events:
   -> `TOOL_DELTA` or control-output style cards
 - `thread/tokenUsage/updated` or turn completion usage -> `USAGE`
 - `turn/completed` -> `RESULT` and `ENGINE_STATE idle`
-- `error`, `warning`, `configWarning`, `deprecationNotice` -> `ERROR` or `TOAST`
-  depending on severity
+- `error` -> `ERROR`
+- `warning` and `deprecationNotice` -> bounded `TOAST`
+- `configWarning` -> `LOG` only, because Codex can emit long diagnostic text
+  such as model-resume warnings that should not dominate the phone UI
 
 Current adapter coverage:
 
@@ -180,6 +182,12 @@ Current adapter coverage:
   must wait for a `starting` Codex engine to become `ready` before calling
   `send()`, or the prompt can hit the adapter before `thread/start` returns a
   session id.
+- The built-in `codex-app-server` profile advertises `gpt-5.5` as its default
+  selectable model. Existing installs with a stale Codex profile that has no
+  model/model list are backfilled by `ProfileStore`.
+- The session manager must not carry Claude aliases such as `haiku` into Codex
+  restarts/resumes. Explicit custom model overrides still work when they are not
+  obviously incompatible with the target harness.
 
 Approvals/questions:
 
@@ -233,7 +241,8 @@ Codex app-server should reuse normal Codex CLI auth where possible.
   can add Codex without wiping the Debian environment.
 - Existing broker state may have a stale `<stateDir>/profiles.json` created
   before Codex existed. `ProfileStore` merges missing built-in defaults on load,
-  including `codex-app-server`, while preserving custom profile edits.
+  including `codex-app-server` and newly-added built-in model fields, while
+  preserving custom profile edits.
 - Never write tokens into project files or broker transcripts.
 
 ## MVP Task List

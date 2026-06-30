@@ -134,7 +134,10 @@ viewing). Background sessions keep generating while you look at another. Read
 - **Restart-in-place semantics.** Changing the active model/effort/permission/
   profile (`switchModel`, `setEffort`, `setPermissionMode`, `switchEngine`,
   `refreshCapabilities`) replaces **only the active key's** engine with a
-  fresh/resumed `claude` process. Opening another project just moves `activeKey`.
+  fresh/resumed engine process. Opening another project just moves `activeKey`.
+  Model preferences are validated against the target profile/harness so a saved
+  Claude alias such as `haiku` is not passed to Codex, while explicit compatible
+  custom overrides remain possible.
 - **Lifecycle eviction & cold-resume.** `stopEngineKeepTranscript(key)`
   idle-evicts a live engine but keeps its `meta` (incl. `sessionId`) and
   transcript, so `ensureEngine(key)` later **cold-resumes** it in *its own* folder
@@ -188,7 +191,7 @@ later `newSession()`/restart-in-place can't route a turn into a sibling session.
 | `protocol.js` | Canonical `EventType` / `CommandType` / `StatusState` + `event()`. The contract. |
 | `jsonl.js` | `JsonLineBuffer` — reassembles stream-json across chunked stdout reads. |
 | `config.js` | CLI-arg + env config loader (port, host, projectsDir, stateDir, claudeBin, …). |
-| `profiles.js` | `ProfileStore` + `DEFAULT_PROFILES` — engine/model profiles (claude-max, codex-app-server, glm-zai, opencode, mock) and their billing/auth. Existing `<stateDir>/profiles.json` files are merged with new built-in defaults on load, so already-provisioned devices pick up new built-in profiles without losing custom/user-edited profiles. |
+| `profiles.js` | `ProfileStore` + `DEFAULT_PROFILES` — engine/model profiles (claude-max, codex-app-server, glm-zai, opencode, mock) and their billing/auth. Existing `<stateDir>/profiles.json` files are merged with new built-in defaults on load, including newly-added built-in model/model-list fields, so already-provisioned devices pick up new built-in profiles without losing custom/user-edited profiles. |
 | `secrets.js` | `SecretStore` — auth tokens / env for a profile (`<stateDir>/secrets.json`, Keystore-injected on phone). `claudeEnv()`/`hasClaudeAuth()` back the in-app Claude sign-in (`SET_SECRET` command stores `CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_API_KEY`, `CLAUDE_AUTH` event reports status), injected into default-endpoint claude-code engines. |
 
 ### `broker/src/engines/` (adapters — the pluggable brain)

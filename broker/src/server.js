@@ -704,13 +704,15 @@ export class BrokerServer {
       }
       case CommandType.SWITCH_ENGINE:
         await this.session.switchEngine(cmd.profileId);
-        return this.broadcast(event(EventType.PROFILES, {
+        this.broadcast(event(EventType.PROFILES, {
           profiles: this.profiles.list().map((p) => ({ ...p, ready: this.secrets.isReady(p) })),
           activeProfileId: this.session.activeProfileId,
         }));
+        return this.broadcast(this._modelsEvent());
       case CommandType.SWITCH_MODEL:
-        this.userSettings.patch({ engine: { model: cmd.model } }); // remember the model across restarts
-        return this.session.switchModel(cmd.model);
+        await this.session.switchModel(cmd.model);
+        this.userSettings.patch({ engine: { model: this.session.currentModel || null } }); // remember the validated model across restarts
+        return this.broadcast(this._modelsEvent());
       case CommandType.MODELS_LIST:
         return this._sendModels(ws, !!cmd.refresh);
       case CommandType.SET_EFFORT:

@@ -204,6 +204,19 @@ test('codex app-server interrupts with turn/interrupt and the active turn id', a
   await engine.stop();
 });
 
+test('codex config warnings are logged instead of shown as toasts', async () => {
+  const cwd = await tmpProject();
+  const engine = makeEngine(cwd);
+  const events = collect(engine);
+
+  engine._mapNotification('configWarning', { message: 'This session was recorded with another model.' });
+
+  assert.equal(events.some((e) => e.type === EventType.TOAST), false);
+  const log = events.find((e) => e.type === EventType.LOG);
+  assert.equal(log.level, 'warn');
+  assert.match(log.message, /Codex config warning/);
+});
+
 test('codex launch resolver uses the npm package JS on Windows', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-launch-'));
   const js = path.join(root, 'npm', 'node_modules', '@openai', 'codex', 'bin', 'codex.js');

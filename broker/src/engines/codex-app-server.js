@@ -349,12 +349,17 @@ export class CodexAppServerEngine extends EngineAdapter {
       case 'error':
         this.emitError(params.message || params.error || 'codex app-server error');
         break;
-      case 'warning':
       case 'configWarning':
+        this.emitEvent(EventType.LOG, {
+          level: 'warn',
+          message: `Codex config warning: ${params.message || params.warning || method}`,
+        });
+        break;
+      case 'warning':
       case 'deprecationNotice':
         this.emitEvent(EventType.TOAST, {
           level: 'warn',
-          message: params.message || params.warning || method,
+          message: truncateNotice(params.message || params.warning || method),
         });
         break;
       default:
@@ -664,6 +669,12 @@ function isTextLike(mime, name) {
 function truncateText(text, limit = 200_000) {
   if (text.length <= limit) return text;
   return `${text.slice(0, limit)}\n\n[truncated ${text.length - limit} chars]`;
+}
+
+function truncateNotice(message, limit = 180) {
+  const text = String(message || '');
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit - 3)}...`;
 }
 
 function safeName(name) {

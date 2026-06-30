@@ -41,3 +41,30 @@ test('ProfileStore backfills new built-in profiles into existing profiles.json',
   assert.ok(saved.some((p) => p.id === 'codex-app-server'));
   assert.ok(saved.some((p) => p.id === 'custom-local'));
 });
+
+test('ProfileStore backfills missing built-in model fields on existing profiles', async () => {
+  const state = await tmpDir('profiles-state-');
+  const file = path.join(state, 'profiles.json');
+  const stale = [
+    {
+      id: 'codex-app-server',
+      label: 'Codex (app-server)',
+      harness: 'codex-app-server',
+      model: null,
+      billing: 'metered',
+      permissionMode: 'default',
+    },
+  ];
+  await fs.writeFile(file, JSON.stringify(stale, null, 2));
+
+  const store = new ProfileStore(state);
+  const codex = store.get('codex-app-server');
+
+  assert.equal(codex.model, 'gpt-5.5');
+  assert.deepEqual(codex.models, ['gpt-5.5']);
+
+  const saved = JSON.parse(await fs.readFile(file, 'utf8'));
+  const savedCodex = saved.find((p) => p.id === 'codex-app-server');
+  assert.equal(savedCodex.model, 'gpt-5.5');
+  assert.deepEqual(savedCodex.models, ['gpt-5.5']);
+});
