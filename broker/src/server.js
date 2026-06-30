@@ -331,11 +331,77 @@ export class BrokerServer {
 
   /** (Re)send the cross-project sessions list with live-busy overlay. */
   _sendSessionsList(ws) {
-    const items = this.claudeConfig.listAllSessions();
+    const items = this._sessionHistoryItems('all');
     const liveBusy = {};
     for (const s of this.session.liveSessions()) if (s.sessionId) liveBusy[s.sessionId] = s.busy;
     const ev = event(EventType.CONFIG, { kind: 'sessions', scope: 'all', items, liveBusy, activeSessionId: this.session.engine?.sessionId || null });
     if (ws) this._send(ws, ev); else this.broadcast(ev);
+  }
+
+  _sessionHistoryItems(scope = 'all') {
+    const claudeItems = scope === 'all' ? this.claudeConfig.listAllSessions() : this.claudeConfig.list('sessions');
+    const byId = new Map(claudeItems.map((s) => [s.id, { ...s }]));
+    for (const s of this._brokerSessionHistoryItems(scope)) {
+      const prev = byId.get(s.id);
+      byId.set(s.id, prev ? {
+        ...s,
+        ...prev,
+        key: s.key,
+        sessionKey: s.sessionKey,
+        harness: s.harness,
+        profileId: s.profileId,
+        model: s.model,
+        live: s.live,
+        sleeping: s.sleeping,
+      } : s);
+    }
+    return [...byId.values()].sort((a, b) => ((b.lastTs || b.mtime) || 0) - ((a.lastTs || a.mtime) || 0));
+  }
+
+  _brokerSessionHistoryItems(scope = 'all') {
+    const projects = new Map(this.projects.list().map((p) => [p.id, p]));
+    const activeId = this.projects.activeId || null;
+    const out = [];
+    for (const s of this.session.uiSessions()) {
+      if (!s.sessionId) continue;
+      const projectId = s.projectId || null;
+      if (scope !== 'all' && projectId !== activeId) continue;
+      const project = projectId ? projects.get(projectId) : null;
+      const ts = s.lastTurnTs || Date.now();
+      out.push({
+        id: s.sessionId,
+        key: s.key,
+        sessionKey: s.key,
+        summary: s.title || this._transcriptSummaryForKey(s.key) || sessionHistoryLabel(s),
+        titled: !!s.title,
+        mtime: ts,
+        lastTs: ts,
+        size: 0,
+        project: project?.name || projectId || 'Main',
+        projectId,
+        projectDir: project?.dir || null,
+        harness: s.harness || null,
+        profileId: s.profileId || null,
+        model: s.model || null,
+        live: !s.sleeping,
+        sleeping: !!s.sleeping,
+      });
+    }
+    return out;
+  }
+
+  _transcriptSummaryForKey(key) {
+    if (!key) return '';
+    const file = path.join(this.config.stateDir, 'transcripts', `${safeSessionKey(key)}.jsonl`);
+    let lines;
+    try { lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean); } catch { return ''; }
+    for (const line of lines) {
+      try {
+        const rec = JSON.parse(line);
+        if (rec?.type === EventType.USER_ECHO && rec.text) return String(rec.text).replace(/\s+/g, ' ').trim().slice(0, 80);
+      } catch { /* skip corrupt line */ }
+    }
+    return '';
   }
 
   /** Bring a session to the foreground WITHOUT stopping the previous one (it keeps
@@ -700,11 +766,12 @@ export class BrokerServer {
         return;
       }
       case CommandType.LIST_SESSIONS: {
-        const items = cmd.scope === 'all' ? this.claudeConfig.listAllSessions() : this.claudeConfig.list('sessions');
+        const scope = cmd.scope || 'project';
+        const items = this._sessionHistoryItems(scope);
         const liveBusy = {};
         for (const s of this.session.liveSessions()) if (s.sessionId) liveBusy[s.sessionId] = s.busy;
         return this._send(ws, event(EventType.CONFIG, {
-          kind: 'sessions', scope: cmd.scope || 'project', items, liveBusy,
+          kind: 'sessions', scope, items, liveBusy,
           activeSessionId: this.session.engine?.sessionId || null,
         }));
       }
@@ -1288,6 +1355,17 @@ export class BrokerServer {
       process.stderr.write(`@@NATIVE_NOTIFY@@ ${payload}\n`);
     } catch { /* never let a notification break the stream */ }
   }
+}
+
+function safeSessionKey(key) {
+  return String(key).replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+function sessionHistoryLabel(session) {
+  const engine = session?.harness === 'codex-app-server' ? 'Codex'
+    : session?.harness === 'claude-code' ? 'Claude'
+      : session?.harness || 'Agent';
+  return session?.model ? `${engine} ${session.model}` : `${engine} session`;
 }
 
 function contentType(file) {

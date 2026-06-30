@@ -166,6 +166,10 @@ viewing). Background sessions keep generating while you look at another. Read
   `sessionKey` before re-emitting, so the server records it to the right
   transcript and only surfaces the active session's full stream (plus a busy
   badge for the rest).
+- **Session history list.** `LIST_SESSIONS` returns a merged history surface:
+  Claude on-disk `.jsonl` sessions plus broker-known live/sleeping sessions from
+  other engines. Non-Claude rows include `sessionKey`, so the Web UI opens them
+  with `SWITCH_SESSION`; Claude-only historical rows still use `RESUME`.
 - **Back-compat.** `get engine()` returns the active engine, so older code that
   said `session.engine` (the "singular active engine" mental model) still works —
   but that getter is a convenience over the Map, not the real ownership.

@@ -208,6 +208,9 @@ Current adapter coverage:
   `thread/start`, with a warning toast instead of a stuck engine.
 - Codex persisted thread ids are workspace-scoped. Missing-cwd legacy records and
   records for another cwd are ignored before `thread/resume`.
+- Broker-known Codex sessions are included in `LIST_SESSIONS` / the folder sheet
+  history list with `projectId` and `sessionKey`, so the UI opens them via
+  `switch_session` instead of the Claude-only `resume` path.
 
 Approvals/questions:
 

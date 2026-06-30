@@ -333,3 +333,100 @@ test('Codex fresh session opened from a project starts in that project cwd', asy
     else process.env.FAKE_CODEX_MODE = oldMode;
   }
 });
+
+test('Codex sessions appear in the session history list under their project', async () => {
+  const projects = await tmpDir('codex-history-proj-');
+  const state = await tmpDir('codex-history-state-');
+  const appDir = path.join(projects, 'demo');
+  await fs.mkdir(appDir, { recursive: true });
+  await fs.writeFile(path.join(appDir, 'package.json'), JSON.stringify({ name: 'demo' }));
+  await fs.writeFile(path.join(state, 'profiles.json'), JSON.stringify([
+    {
+      id: 'codex-app-server',
+      label: 'Codex History',
+      harness: 'codex-app-server',
+      codexBin: process.execPath,
+      codexArgs: [fixture],
+      model: 'gpt-5.5',
+      models: ['gpt-5.5'],
+      billing: 'none',
+    },
+  ], null, 2));
+
+  const oldMode = process.env.FAKE_CODEX_MODE;
+  process.env.FAKE_CODEX_MODE = 'inputEcho';
+  const config = loadConfig(['--profile', 'codex-app-server', '--port', '0', '--projects', projects, '--state', state]);
+  const server = new BrokerServer(config);
+  await server.start();
+  const port = server.httpServer.address().port;
+  const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+  const events = [];
+  const listeners = new Set();
+  ws.on('message', (raw) => {
+    const ev = JSON.parse(raw.toString());
+    events.push(ev);
+    for (const l of [...listeners]) l(ev);
+  });
+  const waitFor = (pred, ms = 9000) => new Promise((resolve, reject) => {
+    const existing = events.find(pred);
+    if (existing) return resolve(existing);
+    const listener = (ev) => {
+      if (!pred(ev)) return;
+      clearTimeout(timer);
+      listeners.delete(listener);
+      resolve(ev);
+    };
+    const timer = setTimeout(() => {
+      listeners.delete(listener);
+      reject(new Error('timeout'));
+    }, ms);
+    listeners.add(listener);
+  });
+  const waitNext = (pred, ms = 9000) => new Promise((resolve, reject) => {
+    const listener = (ev) => {
+      if (!pred(ev)) return;
+      clearTimeout(timer);
+      listeners.delete(listener);
+      resolve(ev);
+    };
+    const timer = setTimeout(() => {
+      listeners.delete(listener);
+      reject(new Error('timeout'));
+    }, ms);
+    listeners.add(listener);
+  });
+
+  try {
+    await new Promise((resolve, reject) => { ws.on('open', resolve); ws.on('error', reject); });
+    await waitFor((e) => e.type === 'profiles' && e.profiles?.some((p) => p.id === 'codex-app-server'));
+
+    const active = waitNext((e) => e.type === 'sessions' && e.activeKey === 'demo');
+    ws.send(JSON.stringify({ type: 'open_project', projectId: 'demo' }));
+    await active;
+
+    ws.send(JSON.stringify({ type: 'user_message', text: 'codex session history smoke' }));
+    await waitFor((e) => e.type === 'result');
+    const sessionId = server.session.engine.sessionId;
+    assert.ok(sessionId, 'Codex engine has a session id');
+
+    const allHistory = waitNext((e) => e.type === 'config' && e.kind === 'sessions' && e.scope === 'all' && e.items?.some((s) => s.id === sessionId));
+    ws.send(JSON.stringify({ type: 'list_sessions', scope: 'all' }));
+    const all = await allHistory;
+    const row = all.items.find((s) => s.id === sessionId);
+    assert.equal(row.projectId, 'demo');
+    assert.equal(row.project, 'demo');
+    assert.equal(row.harness, 'codex-app-server');
+    assert.equal(row.sessionKey, 'demo');
+    assert.match(row.summary, /codex session history smoke/);
+
+    const projectHistory = waitNext((e) => e.type === 'config' && e.kind === 'sessions' && e.scope === 'project');
+    ws.send(JSON.stringify({ type: 'list_sessions' }));
+    const scoped = await projectHistory;
+    assert.ok(scoped.items.some((s) => s.id === sessionId && s.projectId === 'demo'));
+  } finally {
+    ws.close();
+    await server.stop();
+    if (oldMode === undefined) delete process.env.FAKE_CODEX_MODE;
+    else process.env.FAKE_CODEX_MODE = oldMode;
+  }
+});

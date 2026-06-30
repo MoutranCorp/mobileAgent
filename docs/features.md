@@ -410,7 +410,9 @@ the critical threshold the grace is bypassed (OOM risk wins). All tunable via
 
 The folder pill is a button → a **folder switcher sheet**: folders are ordered
 **most-recently-active first** and each header carries a compact **"+ New"** pill
-(no separate row). It lists the **latest 3 on-disk sessions per folder**
+(no separate row). It lists the **latest 3 sessions per folder** from the broker's
+merged history list: Claude on-disk `.jsonl` sessions plus broker-known
+live/sleeping sessions from other engines such as Codex.
 (`list_sessions scope:all` → grouped by `projectId`, top-3 by mtime →
 `state.recentSessionsByProject`). Live ones are flagged, tap=`switchTab`, and their
 dot takes the **folder's colour** when open as a tab; historical tap=`RESUME
@@ -418,6 +420,9 @@ dot takes the **folder's colour** when open as a tab; historical tap=`RESUME
 session's **transcript mtime** (time of the latest message), NOT `lastTurnTs` — which
 the engine bumps on any status change, so opening/spawning a session made a fresh tab
 read "just now". Folder recency is likewise by newest-message mtime.
+Broker-known non-Claude rows are the exception to the older Claude-only resume
+path: they carry `sessionKey` in the history item, so the folder sheet and
+Manage > Sessions open them with `switch_session` instead of Claude `RESUME`.
 Ambiguous-encoding sessions bucket under "Folder unknown". Resume is **project-aware**
 (`claude-config` re-encodes each known project dir to map a session folder →
 projectId), so it resumes in the right cwd and seeds from the right `.jsonl` without

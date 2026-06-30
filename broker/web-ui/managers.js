@@ -694,7 +694,8 @@
       for (const s of sess) {
         const busy = !!busyById.get(s.id);
         const isActive = s.id === activeId;
-        const isLive = busyById.has(s.id); // a running engine owns this session
+        const sessionKey = s.sessionKey || s.key || keyById.get(s.id);
+        const isLive = !!sessionKey || busyById.has(s.id); // a broker engine owns this session
         const row = el('div', 'mgr-row' + (isActive ? ' active' : ''));
         const info = el('div', 'mgr-row-info');
         const name = el('div', 'mgr-row-name');
@@ -715,7 +716,7 @@
         } else {
           const open = el('button', 'ghost small', isLive ? 'Open' : 'Resume');
           open.onclick = () => {
-            if (isLive && keyById.has(s.id)) send({ type: 'switch_session', key: keyById.get(s.id) });
+            if (sessionKey) send({ type: 'switch_session', key: sessionKey });
             else send({ type: 'resume', sessionId: s.id, projectId: s.projectId || undefined, projectDir: s.projectDir });
             close();
           };

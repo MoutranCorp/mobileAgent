@@ -848,7 +848,7 @@
     for (const s of state.sessions) if (s.sessionId) keyBySid.set(s.sessionId, s.key);
     // One recent-session row: live → switch to its tab, historical → resume from disk.
     const sessionRow = (s, projectId) => {
-      const liveKey = keyBySid.get(s.id);
+      const liveKey = s.sessionKey || s.key || keyBySid.get(s.id);
       const live = liveKey ? state.sessions.find((x) => x.key === liveKey) : null;
       const openAsTab = !!liveKey; // this session has a tab in the strip (live or sleeping)
       const row = el('div', 'fs-session' + (s.id === state.activeSessionId ? ' active' : ''));
