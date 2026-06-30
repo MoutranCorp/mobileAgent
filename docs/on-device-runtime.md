@@ -14,7 +14,7 @@ ground truth — this explains the *why*. Key files:
 Additional key files for Codex runtime support:
 
 - [`service/CodexLogin.kt`](../android/app/src/main/java/com/ondevice/agent/service/CodexLogin.kt) - native `codex login` sign-in.
-- [`service/CodexUpdate.kt`](../android/app/src/main/java/com/ondevice/agent/service/CodexUpdate.kt) - native `codex update` (Runtime-screen widget).
+- [`service/CodexUpdate.kt`](../android/app/src/main/java/com/ondevice/agent/service/CodexUpdate.kt) - native Codex CLI install/update (Runtime-screen widget).
 
 > See also [on-device-deploy.md](on-device-deploy.md) for the install/provision/update
 > *flow*; this doc is the *internals*.
@@ -30,7 +30,9 @@ Additional key files for Codex runtime support:
 4. **deliver the broker source** (`.broker_source`).
 
 The provision step installs both `@anthropic-ai/claude-code` and `@openai/codex`
-so the runtime can launch either the Claude or Codex engine profile.
+for fresh environments. Existing already-provisioned environments skip this
+one-time marker-gated step; use the Runtime screen's Codex install/update action
+to backfill Codex into those guests.
 
 Two of these markers are **version-stamped** (companion `const`s in ProotRuntime):
 `ROOTFS_VERSION` and `BROKER_SOURCE_VERSION`. `isRootfsReady()`/`isBrokerSourceReady()`
@@ -128,7 +130,10 @@ guest. The Runtime screen drives the CLI directly:
   process stdin and then discarded by the app. Codex persists its own auth file
   in the guest.
 - `codex login status` powers the signed-in display.
-- `codex update` and `codex --version` mirror the Claude updater flow.
+- `npm install -g @openai/codex` installs or updates the CLI. This is deliberate:
+  it also migrates existing already-provisioned installs whose original
+  `.provisioned` step ran before Codex was added.
+- `codex --version` powers the installed-version display.
 
 The broker's `codex-app-server` profile spawns `codex app-server --stdio` from
 that same guest home, so new Codex sessions use the credentials/update written

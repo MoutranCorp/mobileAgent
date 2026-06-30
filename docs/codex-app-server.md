@@ -220,9 +220,10 @@ Codex app-server should reuse normal Codex CLI auth where possible.
 - On Android/proot-Debian, auth lives inside the guest environment.
 - On Windows, auth lives in the user's Windows Codex config/auth location.
 - The Android Runtime tab now drives `codex login --device-auth`,
-  `codex login --with-api-key`, `codex login status`, and `codex update` inside
-  the guest, so credentials live under `/root/.codex` for the broker-spawned
-  app-server.
+  `codex login --with-api-key`, `codex login status`, and a backfill-safe
+  `npm install -g @openai/codex` install/update action inside the guest, so
+  credentials live under `/root/.codex` and existing already-provisioned phones
+  can add Codex without wiping the Debian environment.
 - Never write tokens into project files or broker transcripts.
 
 ## MVP Task List

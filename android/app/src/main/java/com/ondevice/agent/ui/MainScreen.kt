@@ -503,7 +503,7 @@ private fun ClaudeUpdateSection(runtime: RuntimeState) {
     }
 }
 
-/** Update the Codex CLI in the guest via `codex update`. */
+/** Install or update the Codex CLI in the guest via npm. */
 @Composable
 private fun CodexUpdateSection(runtime: RuntimeState) {
     val ctx = LocalContext.current
@@ -534,7 +534,7 @@ private fun CodexUpdateSection(runtime: RuntimeState) {
             )
         }
         Spacer(Modifier.height(8.dp))
-        FilledButton(if (busy) "Updating..." else "Update Codex CLI") {
+        FilledButton(if (busy) "Installing..." else "Install / Update Codex CLI") {
             if (!busy) CodexUpdate.update(ctx)
         }
     }

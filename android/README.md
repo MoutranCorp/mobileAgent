@@ -92,7 +92,7 @@ app/src/main/
       ClaudeLogin.kt                       native on-device `claude setup-token` sign-in flow
       ClaudeUpdate.kt                      native `claude update`
       CodexLogin.kt                        native `codex login` sign-in flow
-      CodexUpdate.kt                       native `codex update`
+      CodexUpdate.kt                       native Codex CLI install/update
       RuntimeController.kt                 observable runtime state for the UI
     net/BrokerHealth.kt                    HTTP health probe
     secrets/KeystoreSecrets.kt             AES/GCM in AndroidKeyStore → env injection

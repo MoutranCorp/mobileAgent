@@ -266,9 +266,10 @@ wires the on-device git to push/pull/merge your repos. See
 [on-device-runtime.md](on-device-runtime.md#native-github-sign-in-githubauthkt).
 
 Codex has matching native runtime controls: `codex login --device-auth`,
-`codex login --with-api-key`, `codex login status`, and `codex update` run inside
-the same Debian guest as the broker, so `codex-app-server` uses `/root/.codex`
-credentials.
+`codex login --with-api-key`, `codex login status`, and a backfill-safe
+`npm install -g @openai/codex` install/update action run inside the same Debian
+guest as the broker, so `codex-app-server` uses `/root/.codex` credentials and
+existing already-provisioned phones can add Codex without wiping the rootfs.
 
 ## Provisioning (`provisioning/`)
 
@@ -280,7 +281,8 @@ broker as a git clone) and signs in to Claude natively from the Runtime tab. See
 stages the proot binaries into `android/.../assets/proot-<arch>/`.
 
 The provisioned toolchain now includes both `@anthropic-ai/claude-code` and
-`@openai/codex`; native Runtime-tab sign-in/update flows cover both CLIs.
+`@openai/codex`; native Runtime-tab sign-in/update/install flows cover both CLIs
+and can backfill Codex on existing provisioned installs.
 
 The `phase0-*.sh` / `provision-debian.sh` / `run-broker.sh` / `lib.sh` scripts are the
 **degraded manual fallback** (run the broker in a real Termux + proot-distro Debian);
