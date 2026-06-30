@@ -321,6 +321,22 @@ export class SessionManager {
     try {
       await engine.start();
     } catch (e) {
+      if (this._canStartFreshAfterResumeFailure(profile, resolvedResume, e, opts)) {
+        this._log(`resume failed for ${profile.harness} (${e.message}); starting a fresh thread`);
+        this._deleteResume(key);
+        const m = this.meta.get(key);
+        if (m) m.sessionId = null;
+        this.emit(event(EventType.TOAST, {
+          level: 'warn',
+          message: 'Saved Codex thread was unavailable; started a fresh thread for this tab.',
+        }));
+        return this._startEngineInner(profileId, {
+          ...opts,
+          resumeId: null,
+          resumeHarness: null,
+          _freshAfterResumeFailure: true,
+        });
+      }
       if (!shouldFocus) this.activeKey = prevActiveKey;
       this._emitError(`Failed to start engine: ${e.message}`);
       return null;
@@ -691,6 +707,13 @@ export class SessionManager {
     return this._sanitizeModelForProfile(profile, this.defaultModelsByProfile.get(profileId), { allowCustom: true }) ||
       this._sanitizeModelForProfile(profile, this.defaultModel, { allowCustom: true }) ||
       this._sanitizeModelForProfile(profile, profile?.model);
+  }
+  _canStartFreshAfterResumeFailure(profile, resumeId, error, opts = {}) {
+    if (opts._freshAfterResumeFailure || !resumeId) return false;
+    if (profile?.harness !== 'codex-app-server') return false;
+    const msg = String(error?.message || error || '').toLowerCase();
+    return msg.includes('no rollout found') ||
+      (msg.includes('thread') && (msg.includes('not found') || msg.includes('missing') || msg.includes('unknown')));
   }
   _loadSessions() {
     try { if (fs.existsSync(this.sessionsFile)) return JSON.parse(fs.readFileSync(this.sessionsFile, 'utf8')); } catch { /* ignore */ }

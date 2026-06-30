@@ -110,6 +110,13 @@ On adapter start:
    - Resume: `thread/resume`
 5. Store the returned Codex `thread.id` as the engine session id.
 
+If Codex rejects `thread/resume` because the stored thread is unavailable (for
+example `No rollout found for thread id: ...`), the broker treats the saved
+thread id as stale, deletes that resume hint, tears down the failed app-server
+child, and starts a fresh Codex thread for the same UI tab. The old transcript
+remains visible locally, but the new Codex process does not have the unavailable
+thread's server-side context.
+
 Generated schema fields observed in `codex-cli 0.142.4`:
 
 - `ThreadStartParams`: `model`, `cwd`, `approvalPolicy`, `approvalsReviewer`,
@@ -188,6 +195,9 @@ Current adapter coverage:
 - The session manager must not carry Claude aliases such as `haiku` into Codex
   restarts/resumes. Explicit custom model overrides still work when they are not
   obviously incompatible with the target harness.
+- Stale persisted Codex thread ids are recoverable. A missing-thread resume
+  failure clears only that session key's resume hint and falls back to
+  `thread/start`, with a warning toast instead of a stuck engine.
 
 Approvals/questions:
 

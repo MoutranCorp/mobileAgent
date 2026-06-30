@@ -77,6 +77,7 @@ export class EngineAdapter extends EventEmitter {
     try {
       await this._spawn();
     } catch (e) {
+      try { await this._teardown(); } catch { /* ignore cleanup errors after a failed spawn */ }
       // Leave a clean 'stopped' state so stop()/a retry behaves (was stuck 'starting').
       this.state = 'stopped';
       this.emit('engine_state', 'stopped');

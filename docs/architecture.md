@@ -144,6 +144,9 @@ viewing). Background sessions keep generating while you look at another. Read
   via `--resume`. `setPinned(key, …)` exempts a session from the memory backstop.
   `forgetSession(key)` is called when a `.jsonl` is deleted: it drops the resume
   hint, tears down the engine, and rebinds the project to a surviving sibling.
+  For Codex, a stale server-side thread id, such as app-server reporting
+  `No rollout found for thread id`, is cleared and replaced with a fresh
+  `thread/start` for that session key instead of leaving the engine stuck.
 - **Eviction policy (`evictionCandidates` in `controls/resources.js`).** Only
   *idle, unpinned, non-active* engines are evictable, LRU-first. Two guards keep a
   just-used session warm so flipping between a few tabs doesn't instantly 💤 the one
@@ -198,7 +201,7 @@ later `newSession()`/restart-in-place can't route a turn into a sibling session.
 
 | File | Role |
 |---|---|
-| `base.js` | `EngineAdapter` (EventEmitter). The seam: subclasses do native↔canonical translation only. Implement `_spawn`/`send`/`interrupt`/`_teardown`; override optional response hooks only for declared features; emit via `emitEvent`/`emitCapabilities`. |
+| `base.js` | `EngineAdapter` (EventEmitter). The seam: subclasses do native↔canonical translation only. Implement `_spawn`/`send`/`interrupt`/`_teardown`; override optional response hooks only for declared features; emit via `emitEvent`/`emitCapabilities`. If `_spawn` fails after partially launching a child process, the base class calls `_teardown()` before reporting `stopped`. |
 | `index.js` | `createEngine(profile, opts)` — `REGISTRY` maps a harness name to its class. Adding a harness = one entry + one file; the UI never changes. |
 | `claude-code.js` | Default adapter. Drives `claude --print --input-format stream-json --output-format stream-json --verbose --include-partial-messages --replay-user-messages …`. All stream-json parsing lives here. Stands up the permission bridge in gated modes. **Auth precedence:** when `~/.claude/.credentials.json` exists and on the default endpoint, drops `CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_API_KEY` from the spawn env so a stale token can't override the file (the 401 cause). |
 | `codex-app-server.js` | Codex CLI adapter. Spawns `codex app-server --stdio` (with Windows npm-shim resolution), starts/resumes Codex threads, maps generated app-server notifications/approvals/questions to the canonical protocol, and converts broker attachments into Codex `UserInput`. |

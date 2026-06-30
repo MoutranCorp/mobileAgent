@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 import { loadConfig } from '../src/config.js';
 import { BrokerServer } from '../src/server.js';
+import { MAIN_KEY } from '../src/session.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixture = path.join(__dirname, 'fixtures', 'fake-codex-app-server.mjs');
@@ -121,5 +122,50 @@ test('Codex profile ignores stale Claude model preference on startup', async () 
     assert.equal(server.session.currentModel, 'gpt-5.5');
   } finally {
     await server.stop();
+  }
+});
+
+test('Codex stale stored thread id is cleared and replaced with a fresh thread', async () => {
+  const projects = await tmpDir('codex-stale-proj-');
+  const state = await tmpDir('codex-stale-state-');
+  await fs.writeFile(path.join(state, 'profiles.json'), JSON.stringify([
+    {
+      id: 'codex-app-server',
+      label: 'Codex Stale Resume',
+      harness: 'codex-app-server',
+      codexBin: process.execPath,
+      codexArgs: [fixture],
+      model: 'gpt-5.5',
+      models: ['gpt-5.5'],
+      billing: 'none',
+    },
+  ], null, 2));
+  await fs.writeFile(path.join(state, 'sessions.json'), JSON.stringify({
+    [MAIN_KEY]: { resumeId: 'missing-thread-123', harness: 'codex-app-server' },
+  }, null, 2));
+
+  const oldMode = process.env.FAKE_CODEX_MODE;
+  process.env.FAKE_CODEX_MODE = 'resumeMissing';
+  const config = loadConfig(['--profile', 'codex-app-server', '--port', '0', '--projects', projects, '--state', state]);
+  const server = new BrokerServer(config);
+  const events = [];
+  const originalEmit = server._emitEvent.bind(server);
+  server._emitEvent = (ev) => { events.push(ev); return originalEmit(ev); };
+  try {
+    await server.start();
+    const engine = await server.session.ensureEngine();
+
+    assert.ok(engine, 'engine started after stale resume fallback');
+    assert.equal(engine.sessionId, 'thread-started-1');
+    assert.deepEqual(server.session._sessionByProject[MAIN_KEY], {
+      resumeId: 'thread-started-1',
+      harness: 'codex-app-server',
+    });
+    assert.equal(events.some((e) => e.type === 'error' && /failed to start engine/i.test(e.message)), false);
+    assert.ok(events.some((e) => e.type === 'toast' && /fresh thread/i.test(e.message)));
+  } finally {
+    await server.stop();
+    if (oldMode === undefined) delete process.env.FAKE_CODEX_MODE;
+    else process.env.FAKE_CODEX_MODE = oldMode;
   }
 });

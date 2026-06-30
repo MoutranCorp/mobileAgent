@@ -18,6 +18,10 @@ function respond(id, result) {
   send({ jsonrpc: '2.0', id, result });
 }
 
+function respondError(id, message, code = -32000) {
+  send({ jsonrpc: '2.0', id, error: { code, message } });
+}
+
 rl.on('line', async (line) => {
   if (!line.trim()) return;
   const msg = JSON.parse(line);
@@ -61,6 +65,10 @@ rl.on('line', async (line) => {
       notify('thread/started', { thread: { id: 'thread-started-1' } });
       break;
     case 'thread/resume':
+      if (mode === 'resumeMissing') {
+        respondError(msg.id, `No rollout found for thread id: ${msg.params.threadId}`);
+        break;
+      }
       respond(msg.id, { thread: { id: msg.params.threadId } });
       notify('thread/started', { thread: { id: msg.params.threadId } });
       break;
