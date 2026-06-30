@@ -208,12 +208,15 @@ Current adapter coverage:
 - The Codex adapter passes `model`, `effort`, and `serviceTier` through
   `thread/start` and `turn/start`. An unset service tier is omitted so Codex can
   use its catalog default; explicit Standard is sent as `serviceTier: null`.
+- Codex `effort` and `serviceTier` are per-turn controls. Changing them updates
+  the active app-server adapter and the next `turn/start`; it does not restart or
+  `thread/resume` the current thread.
 - The session manager must not carry Claude aliases such as `haiku` into Codex
   restarts/resumes. Explicit custom model overrides still work when they are not
   obviously incompatible with the target harness.
 - Stale persisted Codex thread ids are recoverable. A missing-thread resume
   failure clears only that session key's resume hint and falls back to
-  `thread/start`, with a warning toast instead of a stuck engine.
+  `thread/start` without a user-facing banner.
 - Codex persisted thread ids are workspace-scoped. Missing-cwd legacy records and
   records for another cwd are ignored before `thread/resume`.
 - Broker-known Codex sessions are included in `LIST_SESSIONS` / the folder sheet

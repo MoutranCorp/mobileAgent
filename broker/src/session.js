@@ -368,10 +368,6 @@ export class SessionManager {
         this._deleteResume(key);
         const m = this.meta.get(key);
         if (m) m.sessionId = null;
-        this.emit(event(EventType.TOAST, {
-          level: 'warn',
-          message: 'Saved Codex thread was unavailable; started a fresh thread for this tab.',
-        }));
         return this._startEngineInner(profileId, {
           ...opts,
           resumeId: null,
@@ -575,6 +571,11 @@ export class SessionManager {
     const m = this._activeMeta;
     this.defaultEffort = level;
     if (m) m.effort = level;
+    if (m?.harness === 'codex-app-server' && this.engine) {
+      this.engine.effort = level === 'ultracode' ? 'xhigh' : level;
+      this._emitSessions();
+      return this.engine;
+    }
     const resumeId = this.engine?.sessionId || this._resumeIdFor(this.activeKey, m?.harness || this.engine?.harness, m?.cwd || this.engine?.cwd) || null;
     this._log(`set effort -> ${level} (resume ${resumeId || 'none'})`);
     return this.startEngine(this.activeProfileId, { resumeId });
@@ -584,6 +585,11 @@ export class SessionManager {
     const m = this._activeMeta;
     this.defaultServiceTier = serviceTier ?? null;
     if (m) m.serviceTier = serviceTier ?? null;
+    if (m?.harness === 'codex-app-server' && this.engine) {
+      this.engine.serviceTier = serviceTier ?? null;
+      this._emitSessions();
+      return this.engine;
+    }
     const resumeId = this.engine?.sessionId || this._resumeIdFor(this.activeKey, m?.harness || this.engine?.harness, m?.cwd || this.engine?.cwd) || null;
     this._log(`set service tier -> ${serviceTier || 'standard'} (resume ${resumeId || 'none'})`);
     return this.startEngine(this.activeProfileId, { resumeId, serviceTier: serviceTier ?? null });

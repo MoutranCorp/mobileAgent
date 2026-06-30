@@ -2590,7 +2590,9 @@
       sel.innerHTML = '<option value="">standard</option>';
       return;
     }
-    const wanted = state.serviceTier ?? state.engineOptions?.selected?.serviceTier ?? model.defaultServiceTier ?? null;
+    const selected = state.engineOptions?.selected || null;
+    const selectedHasTier = selected && Object.prototype.hasOwnProperty.call(selected, 'serviceTier');
+    const wanted = selectedHasTier ? (selected.serviceTier ?? null) : (state.serviceTier ?? model.defaultServiceTier ?? null);
     sel.innerHTML = '';
     for (const tier of tiers) {
       const o = document.createElement('option');

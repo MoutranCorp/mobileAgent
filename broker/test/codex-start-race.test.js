@@ -172,7 +172,7 @@ test('Codex stale stored thread id is cleared and replaced with a fresh thread',
       cwd: projects,
     });
     assert.equal(events.some((e) => e.type === 'error' && /failed to start engine/i.test(e.message)), false);
-    assert.ok(events.some((e) => e.type === 'toast' && /fresh thread/i.test(e.message)));
+    assert.equal(events.some((e) => e.type === 'toast' && /fresh thread/i.test(e.message)), false);
   } finally {
     await server.stop();
     if (oldMode === undefined) delete process.env.FAKE_CODEX_MODE;
@@ -434,6 +434,58 @@ test('Codex sessions appear in the session history list under their project', as
     assert.ok(scoped.items.some((s) => s.id === sessionId && s.projectId === 'demo'));
   } finally {
     ws.close();
+    await server.stop();
+    if (oldMode === undefined) delete process.env.FAKE_CODEX_MODE;
+    else process.env.FAKE_CODEX_MODE = oldMode;
+  }
+});
+
+test('Codex speed changes update the active thread without resume fallback', async () => {
+  const projects = await tmpDir('codex-speed-proj-');
+  const state = await tmpDir('codex-speed-state-');
+  await fs.writeFile(path.join(state, 'profiles.json'), JSON.stringify([
+    {
+      id: 'codex-app-server',
+      label: 'Codex Speed',
+      harness: 'codex-app-server',
+      codexBin: process.execPath,
+      codexArgs: [fixture],
+      model: 'gpt-5.5',
+      models: ['gpt-5.5'],
+      billing: 'none',
+    },
+  ], null, 2));
+
+  const oldMode = process.env.FAKE_CODEX_MODE;
+  process.env.FAKE_CODEX_MODE = 'inputEcho';
+  const config = loadConfig(['--profile', 'codex-app-server', '--port', '0', '--projects', projects, '--state', state]);
+  const server = new BrokerServer(config);
+  const events = [];
+  const originalEmit = server._emitEvent.bind(server);
+  server._emitEvent = (ev) => { events.push(ev); return originalEmit(ev); };
+
+  try {
+    await server.start();
+    const engine = await server.session.ensureEngine();
+    const sessionId = engine.sessionId;
+
+    await server.session.setServiceTier('priority');
+    assert.equal(server.session.engine, engine, 'fast speed does not restart Codex');
+    assert.equal(engine.sessionId, sessionId);
+    assert.equal(engine.serviceTier, 'priority');
+
+    await server.session.setServiceTier(null);
+    assert.equal(server.session.engine, engine, 'standard speed does not restart Codex');
+    assert.equal(engine.sessionId, sessionId);
+    assert.equal(engine.serviceTier, null);
+    assert.equal(server.session.serviceTier, null);
+
+    await server.session.sendUserMessage('standard speed smoke');
+    await waitUntil(() => events.some((e) => e.type === 'result'));
+    const text = events.filter((e) => e.type === 'assistant_text').map((e) => e.delta || '').join('');
+    assert.match(text, /serviceTier:standard/);
+    assert.equal(events.some((e) => e.type === 'toast' && /fresh thread/i.test(e.message)), false);
+  } finally {
     await server.stop();
     if (oldMode === undefined) delete process.env.FAKE_CODEX_MODE;
     else process.env.FAKE_CODEX_MODE = oldMode;

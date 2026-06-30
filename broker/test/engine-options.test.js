@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { codexCatalog, normalizedCatalog, normalizeCodexModel, profileCatalog, probeCodexModelList } from '../src/controls/engine-options.js';
+import { EngineOptionsResolver, codexCatalog, normalizedCatalog, normalizeCodexModel, profileCatalog, probeCodexModelList } from '../src/controls/engine-options.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixture = path.join(__dirname, 'fixtures', 'fake-codex-app-server.mjs');
@@ -64,6 +64,47 @@ test('normalized catalog uses default service tier only when selection is unset'
 
   assert.equal(normalizedCatalog(catalog).selected.serviceTier, 'priority');
   assert.equal(normalizedCatalog({ ...catalog, selected: { model: 'gpt-5.5', serviceTier: null } }).selected.serviceTier, null);
+});
+
+test('engine options prefer active Standard speed over cached Codex Fast selection', async () => {
+  const profile = { id: 'codex-app-server', harness: 'codex-app-server', model: 'gpt-5.5' };
+  const session = {
+    activeProfileId: profile.id,
+    activeKey: 'demo',
+    currentModel: 'gpt-5.5',
+    effort: 'high',
+    serviceTier: null,
+    engine: null,
+    _activeMeta: { serviceTier: null },
+  };
+  const resolver = new EngineOptionsResolver({
+    config: { projectsDir: __dirname, codexBin: process.execPath },
+    profiles: { get: () => profile },
+    secrets: { envForProfile: () => ({}) },
+    session,
+    modelResolver: { cache: {} },
+    getActiveProject: () => null,
+  });
+  resolver.cache.set(`${profile.id}:visible`, {
+    ts: Date.now(),
+    value: codexCatalog([
+      {
+        id: 'gpt-5.5',
+        model: 'gpt-5.5',
+        defaultReasoningEffort: 'high',
+        supportedReasoningEfforts: [{ reasoningEffort: 'high' }],
+        serviceTiers: [{ id: 'priority', name: 'Fast' }],
+        defaultServiceTier: 'priority',
+      },
+    ], {
+      profile,
+      selected: { model: 'gpt-5.5', effort: 'high', serviceTier: 'priority' },
+    }),
+  });
+
+  const ev = await resolver.eventForActive();
+
+  assert.equal(ev.selected.serviceTier, null);
 });
 
 test('profile catalog preserves Claude alias labels and effort options', () => {

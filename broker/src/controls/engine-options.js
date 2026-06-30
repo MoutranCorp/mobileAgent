@@ -48,7 +48,10 @@ export class EngineOptionsResolver {
       ...catalog,
       profileId: profile.id,
       harness: profile.harness,
-      selected: { ...selected, ...(catalog.selected || {}) },
+      // The cached/probed catalog can contain the selection from when it was
+      // fetched. The live session selection must win, especially for explicit
+      // Standard speed (`serviceTier: null`) over a catalog default like Fast.
+      selected: { ...(catalog.selected || {}), ...selected },
       activeKey: this.session.activeKey,
       sessionKey: this.session.activeKey,
       stale: !!catalog.stale,
