@@ -57,7 +57,7 @@ test('readSessionTranscript parses a Claude .jsonl into canonical records', asyn
   const proj = await tmpDir('rt-proj-');
   // Claude stores transcripts under ~/.claude/projects/<encoded cwd>/<id>.jsonl.
   const home = os.homedir();
-  const encoded = proj.replace(/[/\\:]+/g, '-').replace(/^-+/, '-');
+  const encoded = encodeCwd(proj);
   const dir = path.join(home, '.claude', 'projects', encoded);
   await fs.mkdir(dir, { recursive: true });
   const id = 'sess-test-1234';

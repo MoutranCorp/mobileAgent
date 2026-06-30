@@ -5,7 +5,7 @@ import path from 'node:path';
  * @typedef {Object} Profile
  * @property {string} id            stable id, e.g. 'claude-max'
  * @property {string} label         display name
- * @property {string} harness       'claude-code' | 'opencode' | 'mock'
+ * @property {string} harness       'claude-code' | 'codex-app-server' | 'opencode' | 'mock'
  * @property {string} [baseUrl]     ANTHROPIC_BASE_URL override (alt endpoints)
  * @property {string} [authRef]     name of a secret holding the auth token
  * @property {string} [model]       default model for this profile
@@ -37,6 +37,16 @@ export const DEFAULT_PROFILES = [
     model: 'glm-5.2',
     models: ['glm-5.2', 'glm-5.2[1m]'],
     billing: 'flat',
+    permissionMode: 'default',
+  },
+  {
+    id: 'codex-app-server',
+    label: 'Codex (app-server)',
+    harness: 'codex-app-server',
+    baseUrl: null,
+    authRef: null,
+    model: null,
+    billing: 'metered',
     permissionMode: 'default',
   },
   {

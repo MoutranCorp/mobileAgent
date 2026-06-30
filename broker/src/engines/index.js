@@ -1,4 +1,5 @@
 import { ClaudeCodeEngine } from './claude-code.js';
+import { CodexAppServerEngine } from './codex-app-server.js';
 import { OpencodeEngine } from './opencode.js';
 import { MockEngine } from './mock.js';
 
@@ -8,6 +9,7 @@ import { MockEngine } from './mock.js';
  */
 const REGISTRY = {
   'claude-code': ClaudeCodeEngine,
+  'codex-app-server': CodexAppServerEngine,
   opencode: OpencodeEngine,
   mock: MockEngine,
 };

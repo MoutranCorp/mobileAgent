@@ -4,10 +4,9 @@ import os from 'node:os';
 import fs from 'node:fs/promises';
 import fssync from 'node:fs';
 import path from 'node:path';
-import { ClaudeConfig } from '../src/controls/claude-config.js';
+import { ClaudeConfig, encodeCwd } from '../src/controls/claude-config.js';
 
 async function tmpDir(p) { return fs.mkdtemp(path.join(os.tmpdir(), p)); }
-function encodeCwd(dir) { return String(dir).replace(/[/\\:]+/g, '-').replace(/^-+/, '-'); }
 
 test('claude-config: project mapping, rename sidecar, title override, delete', async () => {
   const projDir = await tmpDir('sess-proj-');

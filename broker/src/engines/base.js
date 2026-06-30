@@ -10,6 +10,7 @@ export const DEFAULT_ENGINE_FEATURES = Object.freeze({
   models: false,
   effort: false,
   config: false,
+  appServer: false,
 });
 
 /**

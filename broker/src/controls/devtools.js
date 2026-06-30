@@ -131,7 +131,7 @@ export class DevTools {
         this._diagnoseExpoManifest(this.metroChannel(projectId), port, host); // log what Expo Go would receive
         return;
       }
-      await new Promise((r) => setTimeout(r, 1500));
+      await sleepUnref(1500);
     }
     // Still alive but slow — leave it running, just stop claiming "starting".
     this._emitMetro(projectId, false, port, url,
@@ -503,4 +503,11 @@ export class DevTools {
     this.emit(event(EventType.ERROR, { message }));
     return { error: message };
   }
+}
+
+function sleepUnref(ms) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
 }

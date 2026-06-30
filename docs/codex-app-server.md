@@ -1,10 +1,11 @@
 # Codex App Server Integration Plan
 
-Status: planning / not implemented.
+Status: scaffolding implemented; real-Codex smoke pending.
 
-This is the delegation spec for adding Codex CLI as a first-class engine. It
-assumes `docs/multi-engine.md` Phase 1 and Phase 2 are done first, or are being
-implemented in the same change.
+This is the delegation spec for adding Codex CLI as a first-class engine. The
+repo now includes a `codex-app-server` profile/harness and a testable JSON-RPC
+stdio adapter scaffold. The current tests use a fake app-server child process, so
+they do not require Codex to be installed or logged in.
 
 ## Sources
 
@@ -63,8 +64,8 @@ Implementation rules:
 
 ## Adapter Shape
 
-Add a new engine profile/harness, likely `codex-app-server`, behind the normal
-`createEngine(profile)` dispatch. Do not route it through Claude-only modules.
+The implemented harness is `codex-app-server`, behind the normal
+`createEngine(profile)` dispatch. It does not route through Claude-only modules.
 
 Feature declaration:
 
@@ -81,14 +82,17 @@ Feature declaration:
 }
 ```
 
-Use exact booleans based on the implemented MVP. If a feature is not mapped yet,
-declare it false and hide/degrade the UI.
+The scaffold declares the implemented booleans above, plus `config: false`.
+`appServer` is part of the base feature surface so other engines explicitly
+report `false`.
 
 ## JSON-RPC Lifecycle
 
 On adapter start:
 
-1. Spawn `codex app-server --stdio`.
+1. Spawn `codex app-server --stdio`. Tests may override the binary and args to
+   launch `broker/test/fixtures/fake-codex-app-server.mjs`; the production
+   default remains `codex app-server --stdio`.
 2. Read stdout line-by-line as JSON-RPC messages.
 3. Send `initialize` with client info, then `initialized`.
 4. Start or resume a Codex thread:
@@ -140,6 +144,16 @@ Events:
 - `error`, `warning`, `configWarning`, `deprecationNotice` -> `ERROR` or `TOAST`
   depending on severity
 
+Current scaffold coverage:
+
+- JSONL JSON-RPC request/response/notification plumbing over stdio.
+- `initialize` / `initialized`, `thread/start`, `thread/resume`, and `turn/start`.
+- `item/agentMessage/delta` -> `ASSISTANT_TEXT`.
+- reasoning text deltas -> `ASSISTANT_THINKING`.
+- `turn/completed` -> `RESULT`, `USAGE`, and idle status.
+- command/process output deltas and simple item start/completion mapping to
+  canonical tool events.
+
 Approvals/questions:
 
 - Server requests include command execution approval, file change approval,
@@ -151,6 +165,12 @@ Approvals/questions:
   possible.
 - Always answer the exact JSON-RPC request id. On interrupt/teardown, resolve or
   reject pending requests so the app-server child cannot hang forever.
+
+The scaffold maps approval/permission/exec-like server requests to
+`PERMISSION_REQUEST` and answers the exact JSON-RPC request id from
+`respondPermission`. Question-like requests currently surface through
+`QUESTION_REQUEST` and are immediately cancelled/resolved until the real schema is
+validated against Codex.
 
 ## Permissions And Sandbox Mapping
 
@@ -181,13 +201,15 @@ Codex app-server should reuse normal Codex CLI auth where possible.
 ## MVP Task List
 
 1. Finish multi-engine feature declarations and per-session state.
-2. Add a `codex-app-server` profile/harness.
+2. Add a `codex-app-server` profile/harness. **Done.**
 3. Implement a JSON-RPC stdio client with request id tracking and notification
-   dispatch.
-4. Implement thread start/resume and turn start.
+   dispatch. **Scaffold done.**
+4. Implement thread start/resume and turn start. **Scaffold done.**
 5. Map agent/reasoning/command/file/tool deltas to the canonical protocol.
-6. Map approval and user-input requests.
-7. Add focused tests with a fake app-server process fixture.
+   **Partial scaffold done.**
+6. Map approval and user-input requests. **Approval scaffold done; user-input
+   schema still needs real-Codex validation.**
+7. Add focused tests with a fake app-server process fixture. **Done.**
 8. Add one optional smoke path using `codex exec --json` only as a fixture/source
    sanity check, not as the adapter implementation.
 
@@ -200,4 +222,3 @@ Codex app-server should reuse normal Codex CLI auth where possible.
   deltas, request/resolve an approval if triggered, and resume by thread id.
 - UI controls degrade by `features`; no Claude-only Manage tabs or permission
   labels appear as if they are Codex-native.
-
