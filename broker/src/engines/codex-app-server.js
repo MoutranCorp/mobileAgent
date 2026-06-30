@@ -19,8 +19,8 @@ export class CodexAppServerEngine extends EngineAdapter {
 
   constructor(opts) {
     super(opts);
-    this.bin = opts.codexBin || this.profile?.codexBin || 'codex';
-    this.args = opts.codexArgs || this.profile?.codexArgs || ['app-server', '--stdio'];
+    this.bin = this.profile?.codexBin || opts.codexBin || 'codex';
+    this.args = this.profile?.codexArgs || opts.codexArgs || ['app-server', '--stdio'];
     this.resumeId = opts.resumeId || null;
     this.proc = null;
     this._buf = '';

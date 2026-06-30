@@ -176,6 +176,10 @@ Current adapter coverage:
   Capture the `turnId` from the `turn/start` response as well as the later
   `turn/started` notification; otherwise an immediate user interrupt can race
   before the notification is processed and no interrupt request is sent.
+- The WebUI can send `switch_engine` and a prompt back-to-back. `SessionManager`
+  must wait for a `starting` Codex engine to become `ready` before calling
+  `send()`, or the prompt can hit the adapter before `thread/start` returns a
+  session id.
 
 Approvals/questions:
 

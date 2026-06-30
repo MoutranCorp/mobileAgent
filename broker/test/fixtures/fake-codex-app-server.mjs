@@ -4,6 +4,7 @@ const rl = readline.createInterface({ input: process.stdin });
 let mode = process.env.FAKE_CODEX_MODE || 'start';
 let turnCount = 0;
 let activeTurnId = null;
+const delayThreadStartMs = Number(process.argv.find((arg) => arg.startsWith('--delay-thread-start='))?.split('=')[1] || 0);
 
 function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -17,7 +18,7 @@ function respond(id, result) {
   send({ jsonrpc: '2.0', id, result });
 }
 
-rl.on('line', (line) => {
+rl.on('line', async (line) => {
   if (!line.trim()) return;
   const msg = JSON.parse(line);
 
@@ -55,6 +56,7 @@ rl.on('line', (line) => {
     case 'initialized':
       break;
     case 'thread/start':
+      if (delayThreadStartMs > 0) await sleep(delayThreadStartMs);
       respond(msg.id, { thread: { id: 'thread-started-1' } });
       notify('thread/started', { thread: { id: 'thread-started-1' } });
       break;
@@ -137,4 +139,8 @@ function summarizeInput(input) {
     if (item.type === 'text') return item.text.slice(0, 500);
     return item.type;
   }).join('|');
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

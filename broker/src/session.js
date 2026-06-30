@@ -150,7 +150,13 @@ export class SessionManager {
 
   async ensureEngine(key = this.activeKey) {
     const e = this.engines.get(key);
-    if (e && e.state !== 'stopped') return e;
+    if (e && e.state === 'ready') return e;
+    if (e && e.state === 'starting') {
+      const ready = await this._waitForEngineReady(e);
+      if (ready) return ready;
+    } else if (e && e.state !== 'stopped' && e.state !== 'stopping') {
+      return e;
+    }
     const m = this.meta.get(key);
     if (m) {
       // Cold-resume a previously-live (idle-evicted) session in ITS OWN folder —
@@ -164,6 +170,32 @@ export class SessionManager {
       return this.startEngine(profileId, { key, project, cwd: m.cwd, resumeId, focus: key === this.activeKey });
     }
     return this.startEngine(this.activeProfileId, { key, focus: key === this.activeKey });
+  }
+
+  _waitForEngineReady(engine, timeoutMs = 90_000) {
+    if (!engine) return Promise.resolve(null);
+    if (engine.state === 'ready') return Promise.resolve(engine);
+    if (engine.state === 'stopped') return Promise.resolve(null);
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (value) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        engine.off('engine_state', onState);
+        resolve(value);
+      };
+      const onState = (state) => {
+        if (state === 'ready') finish(engine);
+        else if (state === 'stopped') finish(null);
+      };
+      const timer = setTimeout(() => {
+        this._emitError('Engine startup timed out. Try sending the message again.');
+        finish(null);
+      }, timeoutMs);
+      if (timer.unref) timer.unref();
+      engine.on('engine_state', onState);
+    });
   }
 
   async startEngine(profileId, opts = {}) {

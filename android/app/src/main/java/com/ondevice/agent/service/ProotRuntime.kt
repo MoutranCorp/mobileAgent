@@ -474,6 +474,6 @@ class ProotRuntime(private val ctx: Context) {
         private const val ROOTFS_VERSION = "2-symlink-extract"
         // Bump to re-run broker-source delivery (e.g. to migrate an existing bundled
         // install to a git clone) without re-running the toolchain/rootfs steps.
-        private const val BROKER_SOURCE_VERSION = "4-broker-deps-verified"
+        private const val BROKER_SOURCE_VERSION = "5-engine-start-wait"
     }
 }
