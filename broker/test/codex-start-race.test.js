@@ -16,6 +16,15 @@ async function tmpDir(prefix) {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
 }
 
+async function waitUntil(pred, ms = 9000) {
+  const start = Date.now();
+  while (Date.now() - start < ms) {
+    if (pred()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error('timeout');
+}
+
 test('prompt waits for a Codex engine that is still starting after switch_engine', async () => {
   const projects = await tmpDir('codex-race-proj-');
   const state = await tmpDir('codex-race-state-');
@@ -425,6 +434,65 @@ test('Codex sessions appear in the session history list under their project', as
     assert.ok(scoped.items.some((s) => s.id === sessionId && s.projectId === 'demo'));
   } finally {
     ws.close();
+    await server.stop();
+    if (oldMode === undefined) delete process.env.FAKE_CODEX_MODE;
+    else process.env.FAKE_CODEX_MODE = oldMode;
+  }
+});
+
+test('Codex session history recency comes from transcript messages, not tab open', async () => {
+  const projects = await tmpDir('codex-recency-proj-');
+  const state = await tmpDir('codex-recency-state-');
+  const appDir = path.join(projects, 'demo');
+  await fs.mkdir(appDir, { recursive: true });
+  await fs.writeFile(path.join(appDir, 'package.json'), JSON.stringify({ name: 'demo' }));
+  await fs.writeFile(path.join(state, 'profiles.json'), JSON.stringify([
+    {
+      id: 'codex-app-server',
+      label: 'Codex Recency',
+      harness: 'codex-app-server',
+      codexBin: process.execPath,
+      codexArgs: [fixture],
+      model: 'gpt-5.5',
+      models: ['gpt-5.5'],
+      billing: 'none',
+    },
+  ], null, 2));
+
+  const oldMode = process.env.FAKE_CODEX_MODE;
+  process.env.FAKE_CODEX_MODE = 'inputEcho';
+  const config = loadConfig(['--profile', 'codex-app-server', '--port', '0', '--projects', projects, '--state', state]);
+  const server = new BrokerServer(config);
+  const events = [];
+  const originalEmit = server._emitEvent.bind(server);
+  server._emitEvent = (ev) => { events.push(ev); return originalEmit(ev); };
+
+  try {
+    await server.start();
+    server.projects.setActive('demo');
+    await server._switchView('demo');
+    await server.session.sendUserMessage('codex recency smoke');
+    await waitUntil(() => events.some((e) => e.type === 'result'));
+
+    const key = 'demo';
+    const sessionId = server.session.meta.get(key)?.sessionId;
+    const messageTs = server.transcript.lastMessageTime(key);
+    assert.ok(sessionId, 'Codex session id is known');
+    assert.ok(messageTs, 'broker transcript has a real message timestamp');
+
+    server.session.meta.get(key).lastTurnTs = Date.now() + 60_000;
+    let row = server._sessionHistoryItems('all').find((s) => s.id === sessionId);
+    assert.equal(row.lastTs, messageTs, 'history ignores live lastTurnTs when transcript messages exist');
+
+    await server.session.stopEngineKeepTranscript(key);
+    const preservedTurnTs = messageTs - 5 * 60 * 1000;
+    server.session.meta.get(key).lastTurnTs = preservedTurnTs;
+    await server.session.setActiveKey(key);
+
+    assert.equal(server.session.meta.get(key).lastTurnTs, preservedTurnTs, 'cold-open status does not advance lastTurnTs');
+    row = server._sessionHistoryItems('all').find((s) => s.id === sessionId);
+    assert.equal(row.lastTs, messageTs, 'opening the Codex tab does not make history read just now');
+  } finally {
     await server.stop();
     if (oldMode === undefined) delete process.env.FAKE_CODEX_MODE;
     else process.env.FAKE_CODEX_MODE = oldMode;

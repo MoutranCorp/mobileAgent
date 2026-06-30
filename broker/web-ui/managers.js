@@ -662,8 +662,8 @@
     const keyById = new Map();  // sessionId -> project key (to switch to a live bg session)
     for (const s of live) if (s.sessionId) { busyById.set(s.sessionId, s.busy); keyById.set(s.sessionId, s.key); }
     // How long since the last real MESSAGE in a session — NOT the file mtime
-    // (`claude --resume` rewrites it on open) and NOT the live `lastTurnTs` (bumped
-    // when a tab is opened), both of which made a just-opened old session read
+    // (`claude --resume` rewrites it on open) and NOT live fallback timestamps such
+    // as `lastTurnTs`/process-open time, which made a just-opened old session read
     // "just now". `lastTs` is parsed from the session log's last user/assistant
     // entry (see claude-config `lastMessageTsOf`) and always falls back to mtime.
     const sessTs = (s) => (s && (s.lastTs || s.mtime)) || 0;

@@ -190,18 +190,35 @@ echo "sdk.dir=/path/to/Android/sdk" > local.properties      # gitignored
 # 2) accept SDK licenses once:
 <sdk>/cmdline-tools/latest/bin/sdkmanager --licenses
 
-# 3) build the debug APK:
+# 3) make sure the self-contained runtime asset is present:
+# From the repo root, on a Bash-capable machine:
+ARCH=aarch64 bash provisioning/make-runtime.sh
+
+# 4) build the debug APK:
 ./gradlew :app:assembleDebug    # → app/build/outputs/apk/debug/app-debug.apk (~16 MB)
 ./gradlew :app:lintDebug        # passes
 ./gradlew :app:installDebug     # sideload to a connected adb device
 ```
 
-**One-command build on Linux (incl. arm64):** the repo ships two scripts that do
-all of the above (and the arm64 dance below):
+**Preferred Linux build (incl. arm64):** the repo ships scripts for SDK setup and
+APK build/copy. Stage proot first when `assets/proot-aarch64/proot` is absent:
 
 ```bash
 sudo android/setup-build-tools.sh   # once: JDK 17 + SDK (+ qemu/amd64 libs on arm64)
+ARCH=aarch64 bash provisioning/make-runtime.sh
 android/build-apk.sh                 # build → refresh dist/app-debug.apk
+jar tf dist/app-debug.apk | grep 'assets/proot-aarch64/proot'
+```
+
+On Windows/PowerShell, build only after `proot-aarch64` is already staged (or use
+a real Bash/WSL environment to run `make-runtime.sh` first):
+
+```powershell
+cd android
+.\gradlew.bat :app:assembleDebug
+cd ..
+Copy-Item -Force android\app\build\outputs\apk\debug\app-debug.apk dist\app-debug.apk
+jar tf dist\app-debug.apk | Select-String 'assets/proot-aarch64/proot'
 ```
 
 **aarch64 (arm64 Linux) gotcha — Android's `aapt2`/`zipalign` are x86_64-only.**
@@ -221,12 +238,14 @@ Key build facts (from [`android/app/build.gradle.kts`](../android/app/build.grad
   app's writable data dir (W^X), which would break the **bundled proot + Debian
   guest**. `compileSdk = 34` (Compose needs it; AGP allows target < compile),
   `minSdk = 26`.
-- **Build the self-contained APK:** stage proot once (`ARCH=aarch64 bash
-  provisioning/make-runtime.sh` → `assets/proot-<arch>/`), then `cd android &&
-  ./gradlew :app:assembleDebug` → `app/build/outputs/apk/debug/app-debug.apk` (the
-  `stageBroker` task bundles `broker.tar.gz` automatically). The Debian rootfs, Node,
-  CLI and broker are provisioned on the device at first launch — see
-  [on-device-runtime.md](on-device-runtime.md).
+- **Build the self-contained APK:** `android/app/src/main/assets/proot-aarch64/proot`
+  is mandatory. Stage it with `ARCH=aarch64 bash provisioning/make-runtime.sh` if
+  missing, then build with `cd android && ./gradlew :app:assembleDebug` or
+  `android/build-apk.sh`. The Gradle `verifyBundledProot` prebuild check fails when
+  the asset is missing, because a fresh phone must start on-device provisioning, not
+  external-broker mode. `stageBroker` bundles `broker.tar.gz` automatically. The
+  Debian rootfs, Node, CLI and broker are provisioned on the device at first launch
+  — see [on-device-runtime.md](on-device-runtime.md).
 - **Lint disables `ExpiredTargetSdkVersion` and `BatteryLife`** on purpose
   (`disable += setOf("ExpiredTargetSdkVersion", "BatteryLife")`) — both are
   documented, deliberate decisions for a sideloaded app, not oversights.
@@ -240,9 +259,9 @@ exercise the full UI without provisioning the on-device runtime:
 2. `adb reverse tcp:8765 tcp:8765`
 3. In the app's **Agent** tab, tap **Load agent UI anyway**.
 
-For the real on-device runtime, no manual asset drop is needed — the self-contained
-APK auto-provisions on first launch (proot is bundled by the build; the rootfs is
-downloaded). See [on-device-runtime.md](on-device-runtime.md).
+For the real on-device runtime, the APK must contain bundled proot assets and then
+auto-provisions on first launch (the rootfs is downloaded). See
+[on-device-runtime.md](on-device-runtime.md).
 
 ---
 

@@ -713,9 +713,10 @@ export class SessionManager {
       const busy = ev.state !== StatusState.IDLE && ev.state !== StatusState.ERROR;
       // A plain IDLE here is the engine's INIT (before "thinking"), NOT the end of the
       // turn — so DON'T clear inTurn on idle; only ERROR ends a turn (result clears the
-      // normal completion). This is why we track inTurn separately from busy.
+      // normal completion). Status is also not session-history activity: Codex emits
+      // startup/status notifications when a tab is opened or cold-resumed.
       const changed = !m || m.busy !== busy || m.lastStatus !== ev.state;
-      if (m) { m.lastStatus = ev.state; m.busy = busy; m.lastActivityTs = Date.now(); m.lastTurnTs = Date.now(); // engine status change = real conversation activity (unlike focus)
+      if (m) { m.lastStatus = ev.state; m.busy = busy; m.lastActivityTs = Date.now();
         if (ev.state === StatusState.ERROR) m.inTurn = false; }
       // Keep the sessions screen + nav badge live for EVERY session (active too),
       // so a working session always shows its indicator.

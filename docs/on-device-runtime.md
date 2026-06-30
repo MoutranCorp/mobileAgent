@@ -29,6 +29,13 @@ Additional key files for Codex runtime support:
 3. **provision** the toolchain — apt + Node 22 + Claude CLI + Codex CLI (`.provisioned`).
 4. **deliver the broker source** (`.broker_source`).
 
+The APK build must include `assets/proot-aarch64/proot`. If that asset is missing,
+`RuntimeLauncher` reports `BOOTSTRAP_MISSING`, which means the APK was built
+incorrectly for the self-contained install path. The Android Gradle `preBuild`
+task checks this via `verifyBundledProot`; stage the asset with
+`ARCH=aarch64 bash provisioning/make-runtime.sh` before building or running
+`android/build-apk.sh`.
+
 The provision step installs both `@anthropic-ai/claude-code` and `@openai/codex`
 for fresh environments. Existing already-provisioned environments skip this
 one-time marker-gated step; use the Runtime screen's Codex install/update action

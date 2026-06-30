@@ -7,7 +7,7 @@ import path from 'node:path';
 import { WebSocket } from 'ws';
 import { loadConfig } from '../src/config.js';
 import { BrokerServer } from '../src/server.js';
-import { EventType } from '../src/protocol.js';
+import { EventType, StatusState } from '../src/protocol.js';
 import { evictionCandidates } from '../src/controls/resources.js';
 
 async function tmpDir(p) { return fs.mkdtemp(path.join(os.tmpdir(), p)); }
@@ -109,6 +109,10 @@ test('lastTurnTs tracks prompt/response, not tab focus', async () => {
     await server.session.setActiveKey('projA');
     assert.equal(server.session.meta.get('projA').lastTurnTs, past, 'focus does not advance lastTurnTs');
     assert.ok(server.session.meta.get('projA').lastActivityTs > past, 'but focus does reset the idle timer');
+    // Engine startup/status noise must not count either; Codex emits an idle
+    // status when an existing thread is opened.
+    server.session._onEngineEvent({ type: EventType.STATUS, state: StatusState.IDLE }, 'projA', 'projA');
+    assert.equal(server.session.meta.get('projA').lastTurnTs, past, 'status does not advance lastTurnTs');
     // A model result (a turn boundary) DOES advance it.
     server.session._onEngineEvent({ type: EventType.RESULT }, 'projA', 'projA');
     assert.ok(server.session.meta.get('projA').lastTurnTs > past, 'a result advances lastTurnTs');

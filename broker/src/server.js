@@ -378,14 +378,16 @@ export class BrokerServer {
       const projectId = s.projectId || null;
       if (scope !== 'all' && projectId !== activeId) continue;
       const project = projectId ? projects.get(projectId) : null;
-      const ts = s.lastTurnTs || Date.now();
+      const lastMessageTs = this.transcript.lastMessageTime(s.key);
+      const transcriptMtime = this.transcript.transcriptMtime(s.key);
+      const ts = lastMessageTs || transcriptMtime || s.lastTurnTs || Date.now();
       out.push({
         id: s.sessionId,
         key: s.key,
         sessionKey: s.key,
         summary: s.title || this._transcriptSummaryForKey(s.key) || sessionHistoryLabel(s),
         titled: !!s.title,
-        mtime: ts,
+        mtime: transcriptMtime || ts,
         lastTs: ts,
         size: 0,
         project: project?.name || projectId || 'Main',

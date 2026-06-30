@@ -863,8 +863,8 @@
       info.appendChild(el('span', 'fs-session-name', s.summary || s.id.slice(0, 8)));
       // Time of the latest MESSAGE in the session (parsed from the session log's last
       // real user/assistant entry — `lastTs`). NOT the file mtime (claude --resume
-      // rewrites the file on open) and NOT lastTurnTs (bumped on any status change),
-      // both of which made a just-opened session read "just now".
+      // rewrites the file on open) and NOT live fallback timestamps such as
+      // lastTurnTs/process-open time, which made a just-opened session read "just now".
       const ts = s.lastTs || s.mtime || (live && live.lastTurnTs) || null;
       info.appendChild(el('span', 'fs-session-meta', relTime(ts) + (live ? ' · live' : '')));
       row.appendChild(info);

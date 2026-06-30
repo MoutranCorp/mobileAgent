@@ -154,6 +154,34 @@ export class TranscriptStore {
     return b.events.slice();
   }
 
+  /** Timestamp (ms) of the latest real user/assistant message for a session.
+   *  Status/result/session_meta events are intentionally ignored so opening or
+   *  cold-resuming a tab does not make old conversations look freshly active. */
+  lastMessageTime(key = this.activeKey) {
+    const b = this.buffers.get(key);
+    const events = b ? b.events.slice() : this._load(key);
+    if (b?.pendText?.delta) events.push(b.pendText);
+    for (let i = events.length - 1; i >= 0; i--) {
+      const rec = events[i];
+      if (!isMessageRecord(rec)) continue;
+      const t = Date.parse(rec.ts || '');
+      if (!Number.isNaN(t)) return t;
+    }
+    return null;
+  }
+
+  /** Fallback timestamp for sessions that have a transcript but no stamped
+   *  message records, such as legacy broker transcripts. */
+  transcriptMtime(key = this.activeKey) {
+    try {
+      const file = this._file(key);
+      if (!file) return null;
+      return fs.statSync(file).mtimeMs;
+    } catch {
+      return null;
+    }
+  }
+
   /** Commit pending streamed text/thinking for EVERY session buffer to disk (not
    *  just the active one) — used on shutdown so a background session's in-flight
    *  reply isn't lost. */
@@ -229,3 +257,7 @@ export class TranscriptStore {
 }
 
 function safe(s) { return String(s).replace(/[^a-zA-Z0-9_-]/g, '_'); }
+
+function isMessageRecord(rec) {
+  return rec?.type === 'user_echo' || rec?.type === 'assistant_text';
+}

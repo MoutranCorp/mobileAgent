@@ -58,6 +58,45 @@ npm test               # node:test suite — run it for the live count, don't tr
 
 Open http://127.0.0.1:8765/ and drive the full UI against the mock engine.
 
+## APK build invariant
+
+Every APK meant for a phone must be **self-contained**. Do not ship or hand off an
+APK that relies on `adb reverse` or an external broker for first launch. Before
+building, `android/app/src/main/assets/proot-aarch64/proot` must exist; if it is
+missing, stage it from a Bash-capable environment:
+
+```bash
+ARCH=aarch64 bash provisioning/make-runtime.sh
+```
+
+Then build and refresh the sideload artifact:
+
+```bash
+cd android
+./gradlew :app:assembleDebug
+cd ..
+cp android/app/build/outputs/apk/debug/app-debug.apk dist/app-debug.apk
+jar tf dist/app-debug.apk | grep 'assets/proot-aarch64/proot'
+```
+
+PowerShell equivalent after staging proot:
+
+```powershell
+cd android
+.\gradlew.bat :app:assembleDebug
+cd ..
+Copy-Item -Force android\app\build\outputs\apk\debug\app-debug.apk dist\app-debug.apk
+jar tf dist\app-debug.apk | Select-String 'assets/proot-aarch64/proot'
+```
+
+On Linux/Android-proot, prefer `android/build-apk.sh` after staging proot; it
+builds and copies `dist/app-debug.apk`. This Windows box can build the APK if the
+proot asset is already staged, but it cannot run `provisioning/make-runtime.sh`
+unless a real Bash/WSL environment is available. The Gradle `preBuild` task now
+fails if the bundled proot asset is missing, because `BOOTSTRAP_MISSING` on a
+fresh phone means the APK was built incorrectly. External-broker mode is only a
+manual UI debug fallback, not an acceptable install path.
+
 **Prerequisites:** Node **≥ 21** (the test script relies on `node --test` glob
 expansion, which is 21+), npm, git. For the current real engine: the Claude Code
 CLI logged in on a Max plan. For the Codex engine: Codex CLI auth and the

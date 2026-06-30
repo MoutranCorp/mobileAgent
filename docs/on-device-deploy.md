@@ -22,8 +22,9 @@ lock, battery exemption, proot launch, Keystore secret injection — see
 
 > **External-broker mode is a degraded fallback, not the default.** You *can* run the
 > broker on a PC and bridge it with `adb reverse tcp:8765 tcp:8765` (see
-> [First run, external-broker mode](#fallback-external-broker-mode) below). Only reach
-> for that when the on-device proot runtime isn't provisioned yet. The on-device
+> [Fallback: external-broker mode](#fallback-external-broker-mode) below). Use it
+> only for manual UI debugging. A fresh-phone install should use a self-contained
+> APK with bundled proot and start the on-device provisioning flow. The on-device
 > localhost loop is the core goal; lead with it.
 
 ## Self-contained APK: provisioning & updating (the current default)
@@ -224,10 +225,14 @@ On the phone with USB debugging on:
 adb install dist/app-debug.apk
 ```
 
-(This `adb install` line is currently **missing from
-[`../dist/README.md`](../dist/README.md)** — add it there.) To rebuild:
-`cd ../android && ./gradlew assembleDebug` (needs JDK 17 + Android SDK
-`android-34`; see [`../android/README.md`](../android/README.md)).
+To rebuild the sideload artifact, first ensure
+`android/app/src/main/assets/proot-aarch64/proot` exists. If it is missing, stage
+it from a Bash-capable environment with
+`ARCH=aarch64 bash provisioning/make-runtime.sh`. Then build and refresh
+`dist/app-debug.apk` with `cd android && ./gradlew :app:assembleDebug` followed by
+copying `app/build/outputs/apk/debug/app-debug.apk` to `../dist/app-debug.apk`, or
+use `android/build-apk.sh` on Linux/Android-proot after staging proot. Verify the
+final artifact with `jar tf dist/app-debug.apk | grep 'assets/proot-aarch64/proot'`.
 
 On the device, you'll need:
 - **Settings ▸ Developer options ▸ USB debugging** enabled (for `adb`), or
@@ -242,8 +247,9 @@ block the bundled **proot** (and its Debian guest) from launching. Tap through i
 <a name="fallback-external-broker-mode"></a>
 ### Fallback: external-broker mode
 
-If **no bootstrap is bundled**, the APK runs in external-broker mode. This is the
-degraded fallback — useful for trying the UI before provisioning:
+If bundled proot is missing, the APK is not a valid self-contained build. The app
+may still load an external broker manually for UI debugging, but do not treat that
+as a first-run install path:
 
 1. Run the broker on your computer: `cd ../broker && npm run dev` (or `--engine mock`).
 2. `adb reverse tcp:8765 tcp:8765`.
@@ -256,13 +262,17 @@ This is the current default — the build + auto-provision + update flow is docu
 in [Self-contained APK: provisioning & updating](#self-contained-apk-provisioning--updating-the-current-default)
 at the top. In short:
 
-1. Stage proot once (any Linux box): `ARCH=aarch64 bash provisioning/make-runtime.sh`
-   → `android/app/src/main/assets/proot-<arch>/`. The broker is staged automatically
+1. Stage proot when missing (any Bash-capable box): `ARCH=aarch64 bash provisioning/make-runtime.sh`
+   → `android/app/src/main/assets/proot-aarch64/`. The broker is staged automatically
    by the Gradle `stageBroker` task.
-2. `cd android && ./gradlew :app:assembleDebug` → `app/build/outputs/apk/debug/app-debug.apk`.
-3. Install + open → **Start runtime**. First launch downloads the Debian rootfs and
+2. Build and refresh the sideload artifact: `cd android && ./gradlew :app:assembleDebug`,
+   then copy `app/build/outputs/apk/debug/app-debug.apk` to `../dist/app-debug.apk`
+   (or run `android/build-apk.sh` from the repo root on Linux/Android-proot).
+3. Verify the APK contains proot:
+   `jar tf dist/app-debug.apk | grep 'assets/proot-aarch64/proot'`.
+4. Install + open → **Start runtime**. First launch downloads the Debian rootfs and
    installs the toolchain + broker (minutes, one-time); later launches just start it.
-4. Sign in via the **Runtime tab → Sign in to Claude** (native
+5. Sign in via the **Runtime tab → Sign in to Claude** (native
    `claude setup-token`) and/or **Sign in to Codex** (native
    `codex login --device-auth` or `codex login --with-api-key`). The same Runtime
    tab can update both CLIs.

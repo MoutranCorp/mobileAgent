@@ -150,9 +150,10 @@ any browser pointed at the broker. Open the managers with the **☰** menu, or h
    Debian rootfs, installs the toolchain, and delivers the broker on first launch.
 2. **Authenticate** Claude on your Max plan: `claude` then `/login` (flat
    subscription, no metered API billing).
-3. **Build the app**: [`android/README.md`](android/README.md). It installs and
-   runs even before the on-device bootstrap exists (external-broker mode), so you
-   can use the full UI immediately via `adb reverse`.
+3. **Build the app**: [`android/README.md`](android/README.md). APKs intended for
+   a phone must include `assets/proot-aarch64/proot`; stage it with
+   `ARCH=aarch64 bash provisioning/make-runtime.sh` before building if it is
+   missing, then verify `dist/app-debug.apk` contains the proot asset.
 
 ## Repo layout
 
@@ -180,8 +181,10 @@ any browser pointed at the broker. Open the managers with the **☰** menu, or h
 
 Nothing blocks the Windows/laptop demo. For the real phone runtime:
 
-- **Stage proot assets** before building the self-contained APK when they are not
-  already present: `ARCH=aarch64 bash provisioning/make-runtime.sh`.
+- **Stage proot assets** before building any APK you intend to install on a phone
+  when they are not already present: `ARCH=aarch64 bash provisioning/make-runtime.sh`.
+  The Gradle build fails if `android/app/src/main/assets/proot-aarch64/proot` is
+  missing; external-broker mode is only for manual UI debugging.
 - **Claude sign-in** is the one account step: use the app Runtime tab or run
   Claude login inside the guest, depending on the path in
   [`docs/on-device-deploy.md`](docs/on-device-deploy.md).

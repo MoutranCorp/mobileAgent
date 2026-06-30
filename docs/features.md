@@ -420,9 +420,9 @@ live/sleeping sessions from other engines such as Codex.
 `state.recentSessionsByProject`). Live ones are flagged, tap=`switchTab`, and their
 dot takes the **folder's colour** when open as a tab; historical tap=`RESUME
 {sessionId, projectId, projectDir}` (NOT `switch_session`). The "ago" label uses the
-session's **transcript mtime** (time of the latest message), NOT `lastTurnTs` — which
-the engine bumps on any status change, so opening/spawning a session made a fresh tab
-read "just now". Folder recency is likewise by newest-message mtime.
+session's **latest transcript user/assistant message timestamp** (`lastTs`, falling
+back to transcript mtime for legacy rows), NOT `lastTurnTs` or process-open time.
+Folder recency is likewise by newest-message time.
 Broker-known non-Claude rows are the exception to the older Claude-only resume
 path: they carry `sessionKey` in the history item, so the folder sheet and
 Manage > Sessions open them with `switch_session` instead of Claude `RESUME`.
