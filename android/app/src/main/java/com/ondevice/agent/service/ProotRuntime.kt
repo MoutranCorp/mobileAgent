@@ -274,8 +274,13 @@ class ProotRuntime(private val ctx: Context) {
         CLONE_OK=0
         rm -rf /root/mobileAgent.new
         if git clone --depth 1 "${'$'}REPO_URL" /root/mobileAgent.new; then
-          rm -rf /root/mobileAgent; mv /root/mobileAgent.new /root/mobileAgent
-          ( cd /root/mobileAgent/broker && npm install --omit=dev ) && CLONE_OK=1
+          if grep -q 'mergeBuiltInProfiles' /root/mobileAgent.new/broker/src/profiles.js 2>/dev/null &&
+             grep -q 'codex-app-server' /root/mobileAgent.new/broker/src/profiles.js 2>/dev/null; then
+            rm -rf /root/mobileAgent; mv /root/mobileAgent.new /root/mobileAgent
+            ( cd /root/mobileAgent/broker && npm install --omit=dev ) && CLONE_OK=1
+          else
+            echo "cloned broker is older than the APK bundle - using bundled broker"
+          fi
         fi
         rm -rf /root/mobileAgent.new
         if [ "${'$'}CLONE_OK" = 1 ]; then
@@ -290,6 +295,7 @@ class ProotRuntime(private val ctx: Context) {
             rm -rf /root/agent-broker; mv /root/agent-broker.new /root/agent-broker
             rm -f /root/agent-broker.tar.gz
             ( cd /root/agent-broker && npm install --omit=dev )
+            rm -rf /root/mobileAgent
           fi
         fi
     """.trimIndent()
@@ -449,6 +455,6 @@ class ProotRuntime(private val ctx: Context) {
         private const val ROOTFS_VERSION = "2-symlink-extract"
         // Bump to re-run broker-source delivery (e.g. to migrate an existing bundled
         // install to a git clone) without re-running the toolchain/rootfs steps.
-        private const val BROKER_SOURCE_VERSION = "2-codex-app-server"
+        private const val BROKER_SOURCE_VERSION = "3-profile-defaults-merge"
     }
 }

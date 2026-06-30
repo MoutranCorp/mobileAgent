@@ -188,7 +188,7 @@ later `newSession()`/restart-in-place can't route a turn into a sibling session.
 | `protocol.js` | Canonical `EventType` / `CommandType` / `StatusState` + `event()`. The contract. |
 | `jsonl.js` | `JsonLineBuffer` — reassembles stream-json across chunked stdout reads. |
 | `config.js` | CLI-arg + env config loader (port, host, projectsDir, stateDir, claudeBin, …). |
-| `profiles.js` | `ProfileStore` + `DEFAULT_PROFILES` — engine/model profiles (claude-max, codex-app-server, glm-zai, opencode, mock) and their billing/auth. |
+| `profiles.js` | `ProfileStore` + `DEFAULT_PROFILES` — engine/model profiles (claude-max, codex-app-server, glm-zai, opencode, mock) and their billing/auth. Existing `<stateDir>/profiles.json` files are merged with new built-in defaults on load, so already-provisioned devices pick up new built-in profiles without losing custom/user-edited profiles. |
 | `secrets.js` | `SecretStore` — auth tokens / env for a profile (`<stateDir>/secrets.json`, Keystore-injected on phone). `claudeEnv()`/`hasClaudeAuth()` back the in-app Claude sign-in (`SET_SECRET` command stores `CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_API_KEY`, `CLAUDE_AUTH` event reports status), injected into default-endpoint claude-code engines. |
 
 ### `broker/src/engines/` (adapters — the pluggable brain)

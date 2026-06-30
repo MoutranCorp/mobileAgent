@@ -88,7 +88,11 @@ export class ProfileStore {
     try {
       if (exists) {
         const raw = JSON.parse(fs.readFileSync(this.file, 'utf8'));
-        if (Array.isArray(raw) && raw.length) return raw;
+        if (Array.isArray(raw) && raw.length) {
+          const merged = mergeBuiltInProfiles(raw);
+          if (JSON.stringify(merged) !== JSON.stringify(raw)) this._save(merged);
+          return merged;
+        }
         console.warn(`[profiles] ${this.file} is not a non-empty array — overwriting with defaults`);
       }
     } catch (e) {
@@ -122,4 +126,19 @@ export class ProfileStore {
     else this.profiles.push(profile);
     this._save(this.profiles);
   }
+}
+
+function mergeBuiltInProfiles(saved) {
+  const byId = new Map(DEFAULT_PROFILES.map((p) => [p.id, p]));
+  const seen = new Set();
+  const merged = saved.map((profile) => {
+    if (!profile?.id) return profile;
+    seen.add(profile.id);
+    const builtIn = byId.get(profile.id);
+    return builtIn ? { ...builtIn, ...profile } : profile;
+  });
+  for (const profile of DEFAULT_PROFILES) {
+    if (!seen.has(profile.id)) merged.push(profile);
+  }
+  return merged;
 }

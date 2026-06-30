@@ -84,7 +84,7 @@ export class CodexAppServerEngine extends EngineAdapter {
     this.emitEvent(EventType.USER_ECHO, { text: cmd.text || '' });
     this.emitStatus(StatusState.THINKING);
     try {
-      await this._request('turn/start', {
+      const turn = await this._request('turn/start', {
         threadId: this.sessionId,
         input: await this._toUserInput(cmd.text || '', cmd.attachments || cmd.images || []),
         cwd: this.cwd,
@@ -94,6 +94,7 @@ export class CodexAppServerEngine extends EngineAdapter {
         approvalsReviewer: 'user',
         sandboxPolicy: mapSandboxPolicy(this.permissionMode, this.cwd),
       });
+      this._activeTurnId = pickTurnId(turn) || this._activeTurnId;
     } catch (e) {
       this.emitError(`codex turn failed: ${e.message}`);
     }

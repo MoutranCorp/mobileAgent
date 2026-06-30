@@ -173,6 +173,9 @@ Current adapter coverage:
 - `item/commandExecution/outputDelta`, `item/fileChange/outputDelta`, and
   `item/fileChange/patchUpdated` mapping.
 - `turn/interrupt` with the active Codex `turnId`.
+  Capture the `turnId` from the `turn/start` response as well as the later
+  `turn/started` notification; otherwise an immediate user interrupt can race
+  before the notification is processed and no interrupt request is sent.
 
 Approvals/questions:
 
@@ -224,6 +227,9 @@ Codex app-server should reuse normal Codex CLI auth where possible.
   `npm install -g @openai/codex` install/update action inside the guest, so
   credentials live under `/root/.codex` and existing already-provisioned phones
   can add Codex without wiping the Debian environment.
+- Existing broker state may have a stale `<stateDir>/profiles.json` created
+  before Codex existed. `ProfileStore` merges missing built-in defaults on load,
+  including `codex-app-server`, while preserving custom profile edits.
 - Never write tokens into project files or broker transcripts.
 
 ## MVP Task List

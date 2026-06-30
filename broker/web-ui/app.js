@@ -2457,6 +2457,16 @@
     const resolved = new Map(state.models.map((m) => [m.alias, m]));
     const selected = state.selectedModel || (active && active.model) || aliases[0];
     sel.innerHTML = '';
+    if (!aliases.length) {
+      state.selectedModel = null;
+      const o = document.createElement('option');
+      o.value = '';
+      o.textContent = active ? `${active.label} default` : 'Engine default';
+      o.selected = true;
+      sel.appendChild(o);
+      updateEffortOptions();
+      return;
+    }
     const seen = new Map(); // label -> count, to disambiguate any collisions
     for (const alias of aliases) {
       const o = document.createElement('option');
@@ -3052,7 +3062,12 @@
       else if (e.key === 'Enter') { e.preventDefault(); const it = _palItems[_palIdx]; if (it) { it.run(); closePalette(); } }
     });
 
-    $('modelSelect').onchange = (e) => { state.selectedModel = e.target.value; updateEffortOptions(); send({ type: 'switch_model', model: e.target.value }); };
+    $('modelSelect').onchange = (e) => {
+      const model = e.target.value || null;
+      state.selectedModel = model;
+      updateEffortOptions();
+      send({ type: 'switch_model', model });
+    };
     // Resolve alias -> version labels lazily the first time the user opens the picker.
     $('modelSelect').addEventListener('mousedown', resolveModelsOnce);
     $('modelSelect').addEventListener('focus', resolveModelsOnce);

@@ -49,6 +49,9 @@ is **shallow**, so Update uses `git fetch --depth=1 origin <branch>` + `git rese
 all necessary objects" and can corrupt the object store); if the fetch fails it
 **re-clones fresh**. Bumping `BROKER_SOURCE_VERSION` re-runs *only* step 4, migrating an
 existing bundled install to a clone without re-downloading the rootfs or re-running apt.
+For migrations where the APK bundle is newer than the default remote, the clone
+is validated before use; an older clone falls back to the bundled broker and is
+removed from the broker launch path.
 
 **Manual recovery if the clone is corrupt** ("`fatal: bad object …`" / "did not send
 all necessary objects" from a `git pull` interrupted mid-fetch) — in the in-app
