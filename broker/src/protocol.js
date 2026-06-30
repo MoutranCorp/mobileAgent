@@ -32,6 +32,7 @@ export const EventType = Object.freeze({
   PERMISSION_DENIED: 'permission_denied', // { toolName, reason } from result.permission_denials
   PERMISSION_MODE: 'permission_mode', // { mode } effective permission mode
   MODELS: 'models', // { items: [{ alias, id, label }], resolvedModel }
+  ENGINE_OPTIONS: 'engine_options', // { profileId, harness, source, selected:{model,effort,serviceTier}, models:[...] }
   EFFORT: 'effort', // { level } current reasoning effort
   // Accounting / context
   USAGE: 'usage', // { inTok, outTok, cacheReadTok?, cacheWriteTok?, cost? }
@@ -115,7 +116,9 @@ export const CommandType = Object.freeze({
   SWITCH_ENGINE: 'switch_engine', // { profileId }
   SWITCH_MODEL: 'switch_model', // { model }
   MODELS_LIST: 'models_list', // { refresh? } resolve alias -> version
+  ENGINE_OPTIONS_LIST: 'engine_options_list', // { refresh?, includeHidden? } refresh dynamic model/effort/speed catalog
   SET_EFFORT: 'set_effort', // { level } low|medium|high|xhigh|max|ultracode
+  SET_SERVICE_TIER: 'set_service_tier', // { serviceTier } engine speed/service tier; null = standard/default
   LIST_SESSIONS: 'list_sessions', // { scope?: 'all' } on-disk session list
   LIST_LIVE_SESSIONS: 'list_live_sessions', // {} currently-running engines
   SWITCH_SESSION: 'switch_session', // { key } bring a live session to the foreground (no engine stop)

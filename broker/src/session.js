@@ -41,12 +41,13 @@ export class SessionManager {
     this.emit = emit;
 
     this.engines = new Map(); // sessionKey -> engine (MANY live sessions, may share a project)
-    this.meta = new Map(); // sessionKey -> { busy, lastStatus, profileId, harness, model, effort, permissionMode, sessionId, projectId, lastActivityTs, pinned, title }
+    this.meta = new Map(); // sessionKey -> { busy, lastStatus, profileId, harness, model, effort, serviceTier, permissionMode, sessionId, projectId, lastActivityTs, pinned, title }
     this._activeKeyByProject = new Map(); // projectId -> the project's currently-bound session key
     this.activeKey = this._sessionKeyFor(getActiveProject());
     this.defaultProfileId = config.defaultProfile;
     this.defaultPermissionMode = config.permissionMode || 'default';
     this.defaultEffort = config.effort || 'high'; // low|medium|high|xhigh|max|ultracode
+    this.defaultServiceTier = undefined;
     this.defaultModel = null;
     this.defaultModelsByProfile = new Map();
     this.sessionsFile = path.join(config.stateDir, 'sessions.json');
@@ -72,6 +73,15 @@ export class SessionManager {
     this.defaultEffort = level;
     const m = this._activeMeta;
     if (m) m.effort = level;
+  }
+  get serviceTier() {
+    const m = this._activeMeta;
+    return m && Object.prototype.hasOwnProperty.call(m, 'serviceTier') ? m.serviceTier : this.defaultServiceTier;
+  }
+  set serviceTier(value) {
+    this.defaultServiceTier = value ?? null;
+    const m = this._activeMeta;
+    if (m) m.serviceTier = value ?? null;
   }
   get currentModel() {
     const profile = this.profiles.get(this.activeProfileId);
@@ -315,6 +325,9 @@ export class SessionManager {
     // Effort: a per-call override (cron jobs) wins over the global pref; never mutate
     // the default effort from a detached run.
     const effortPref = opts.effort || prevMeta?.effort || this.defaultEffort;
+    const serviceTier = profile.harness === 'codex-app-server'
+      ? (opts.serviceTier !== undefined ? opts.serviceTier : (prevMeta?.serviceTier ?? this.defaultServiceTier))
+      : null;
     const isUltra = effortPref === 'ultracode'; // maps to xhigh + the ultracode setting
 
     const engine = createEngine(profile, {
@@ -324,6 +337,7 @@ export class SessionManager {
       codexBin: this.config.codexBin,
       permissionMode,
       effort: isUltra ? 'xhigh' : effortPref,
+      serviceTier,
       ultracode: isUltra,
       // A detached/background session (cron) sends its prompt immediately, so its
       // real init arrives at once — skip the capability-warmup probe there. The
@@ -335,7 +349,7 @@ export class SessionManager {
     this.meta.set(key, {
       busy: false, lastStatus: prevMeta?.lastStatus || StatusState.IDLE,
       profileId, harness: profile.harness, model: chosen,
-      permissionMode, effort: effortPref,
+      permissionMode, effort: effortPref, serviceTier,
       sessionId: resolvedResume || null, projectId, cwd,
       lastActivityTs: Date.now(), lastTurnTs: prevMeta?.lastTurnTs || Date.now(),
       pinned: prevMeta?.pinned || false, title: prevMeta?.title || null,
@@ -433,7 +447,7 @@ export class SessionManager {
       const working = !!(m.busy || m.inTurn); // a queued-but-not-yet-acked prompt counts as working
       out.push({
         key, projectId: m.projectId, profileId: m.profileId, harness: m.harness,
-        model: m.model, effort: m.effort, permissionMode: m.permissionMode,
+        model: m.model, effort: m.effort, serviceTier: m.serviceTier ?? null, permissionMode: m.permissionMode,
         sessionId: m.sessionId, busy: working, lastStatus: m.lastStatus,
         active: key === this.activeKey,
         pid: e.proc?.pid ?? null,
@@ -469,7 +483,7 @@ export class SessionManager {
       const waking = !!m.inTurn;
       out.push({
         key, projectId: m.projectId, profileId: m.profileId, harness: m.harness,
-        model: m.model, effort: m.effort, permissionMode: m.permissionMode,
+        model: m.model, effort: m.effort, serviceTier: m.serviceTier ?? null, permissionMode: m.permissionMode,
         sessionId: m.sessionId, busy: waking, lastStatus: waking ? 'working' : 'idle',
         active: key === this.activeKey, pid: null, status: waking ? 'working' : 'sleeping',
         idleMs: waking ? 0 : (m.lastActivityTs ? Math.max(0, now - m.lastActivityTs) : 0),
@@ -528,7 +542,7 @@ export class SessionManager {
     if (m) m.sessionId = null;
   }
 
-  async switchModel(model) {
+  async switchModel(model, opts = {}) {
     const profileId = this.activeProfileId;
     const profile = this.profiles.get(profileId);
     const clean =
@@ -537,8 +551,15 @@ export class SessionManager {
     this._log(`switching model -> ${clean || 'default'} (fresh session)`);
     this.defaultModel = clean;
     this._rememberModelForProfile(profileId, clean);
+    if (Object.prototype.hasOwnProperty.call(opts, 'effort')) this.defaultEffort = opts.effort;
+    if (Object.prototype.hasOwnProperty.call(opts, 'serviceTier')) this.defaultServiceTier = opts.serviceTier ?? null;
     this._deleteResume(this.activeKey); // a fresh session for THIS key only
-    return this.startEngine(profileId, { model: clean, resumeId: null });
+    return this.startEngine(profileId, {
+      model: clean,
+      resumeId: null,
+      effort: opts.effort,
+      serviceTier: opts.serviceTier,
+    });
   }
 
   async setPermissionMode(mode) {
@@ -557,6 +578,15 @@ export class SessionManager {
     const resumeId = this.engine?.sessionId || this._resumeIdFor(this.activeKey, m?.harness || this.engine?.harness, m?.cwd || this.engine?.cwd) || null;
     this._log(`set effort -> ${level} (resume ${resumeId || 'none'})`);
     return this.startEngine(this.activeProfileId, { resumeId });
+  }
+
+  async setServiceTier(serviceTier) {
+    const m = this._activeMeta;
+    this.defaultServiceTier = serviceTier ?? null;
+    if (m) m.serviceTier = serviceTier ?? null;
+    const resumeId = this.engine?.sessionId || this._resumeIdFor(this.activeKey, m?.harness || this.engine?.harness, m?.cwd || this.engine?.cwd) || null;
+    this._log(`set service tier -> ${serviceTier || 'standard'} (resume ${resumeId || 'none'})`);
+    return this.startEngine(this.activeProfileId, { resumeId, serviceTier: serviceTier ?? null });
   }
 
   async refreshCapabilities() {
@@ -587,7 +617,7 @@ export class SessionManager {
    * preserved. `fresh` mints a new session in the folder; pass a stable `key` +
    * `resumeId` to continue one persistent session. Returns { engine, key } or null.
    */
-  async startDetached({ projectId, cwd, resumeId = null, fresh = false, key, profileId = null, model = null, effort = null } = {}) {
+  async startDetached({ projectId, cwd, resumeId = null, fresh = false, key, profileId = null, model = null, effort = null, serviceTier = undefined } = {}) {
     const project = this._projectById(projectId) || (cwd ? { id: projectId || null, dir: cwd } : this.getActiveProject());
     const pid = project?.id ?? null;
     const saved = {
@@ -595,7 +625,7 @@ export class SessionManager {
       binding: pid != null ? this._activeKeyByProject.get(pid) : undefined,
     };
     // Per-job engine overrides (cron): fall back to the foreground profile/model/effort.
-    const engine = await this.startEngine(profileId || this.activeProfileId, { key, project, cwd: cwd || project?.dir, resumeId, fresh, model: model || undefined, effort: effort || undefined, detached: true });
+    const engine = await this.startEngine(profileId || this.activeProfileId, { key, project, cwd: cwd || project?.dir, resumeId, fresh, model: model || undefined, effort: effort || undefined, serviceTier, detached: true });
     const newKey = this.activeKey; // startEngine focused the (possibly minted) key; capture before restoring
     // Restore the foreground view — the detached session runs in the background.
     // Crucially also restore the project→activeKey binding, which startEngine
@@ -658,6 +688,7 @@ export class SessionManager {
       lastStatus: this._activeMeta?.lastStatus || StatusState.IDLE,
       permissionMode: this.permissionMode,
       effort: this.effort,
+      serviceTier: this.serviceTier,
       activeKey: this.activeKey,
     };
   }

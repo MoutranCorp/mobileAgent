@@ -11,6 +11,7 @@ import { ProjectManager } from './controls/projects.js';
 import { DevTools } from './controls/devtools.js';
 import { ClaudeConfig } from './controls/claude-config.js';
 import { ModelResolver, labelFor } from './controls/model-resolver.js';
+import { EngineOptionsResolver } from './controls/engine-options.js';
 import { Updater } from './controls/updater.js';
 import { backupNow, backupInfo, backupEnabled } from './controls/backup.js';
 import { TranscriptStore } from './controls/transcript.js';
@@ -75,11 +76,21 @@ export class BrokerServer {
       getProject: (id) => this.projects.get(id), // resolve a session's own folder for cold-resume
       emit,
     });
+    this.engineOptions = new EngineOptionsResolver({
+      config,
+      profiles: this.profiles,
+      secrets: this.secrets,
+      session: this.session,
+      modelResolver: this.modelResolver,
+      getActiveProject: () => this.projects.getActive(),
+      log: (m) => this._log(m),
+    });
     // Re-apply the user's last-used engine prefs so a broker restart keeps them
     // (the session otherwise falls back to config/env defaults).
     const _us = this.userSettings.get();
     if (_us.engine) {
       if (_us.engine.effort) this.session.effort = _us.engine.effort;
+      if (Object.prototype.hasOwnProperty.call(_us.engine, 'serviceTier')) this.session.serviceTier = _us.engine.serviceTier ?? null;
       if (_us.engine.permissionMode) this.session.permissionMode = _us.engine.permissionMode;
       if (_us.engine.model) this.session.currentModel = _us.engine.model;
     }
@@ -415,6 +426,7 @@ export class BrokerServer {
     this.broadcast(event(EventType.PERMISSION_MODE, { mode: this.session.permissionMode }));
     this.broadcast(event(EventType.EFFORT, { level: this.session.effort }));
     this.broadcast(this._modelsEvent());
+    await this._sendEngineOptions(null);
     this.broadcast(event(EventType.PROFILES, {
       profiles: this.profiles.list().map((p) => ({ ...p, ready: this.secrets.isReady(p) })),
       activeProfileId: this.session.activeProfileId,
@@ -517,6 +529,7 @@ export class BrokerServer {
     // Current effort + whatever model labels we already know (no probe spawn here).
     this._send(ws, event(EventType.EFFORT, { level: this.session.effort }));
     this._send(ws, this._modelsEvent());
+    this._sendEngineOptions(ws).catch((e) => this._log(`engine options snapshot failed: ${e.message}`));
     // Persisted per-user UI/engine prefs (open tabs, manage tab order, …) so the
     // client can restore the workspace exactly as it was left.
     this._send(ws, event(EventType.USER_SETTINGS, { settings: this.userSettings.get() }));
@@ -566,7 +579,36 @@ export class BrokerServer {
       const cwd = this.projects.getActive()?.dir || this.config.projectsDir;
       try { await this.modelResolver.list(aliases, { cwd, env, refresh }); } catch { /* keep labels */ }
     }
-    return this.broadcast(this._modelsEvent());
+    this.broadcast(this._modelsEvent());
+    return this._sendEngineOptions(ws, { refresh });
+  }
+
+  async _sendEngineOptions(ws = null, opts = {}) {
+    const ev = await this.engineOptions.eventForActive(opts);
+    if (ws) this._send(ws, ev);
+    else this.broadcast(ev);
+    return ev;
+  }
+
+  async _validatedControlsForModel(model) {
+    const ev = await this.engineOptions.eventForActive();
+    const item = (ev.models || []).find((m) => m.model === model);
+    if (!item) return {};
+    const effortIds = new Set((item.efforts || []).map((e) => e.id));
+    const tierIds = new Set((item.serviceTiers || []).map((t) => t.id ?? null));
+    const out = {};
+    if (effortIds.size) {
+      out.effort = effortIds.has(this.session.effort) ? this.session.effort : (item.defaultEffort || item.efforts[0]?.id);
+    }
+    if (tierIds.size) {
+      const current = this.session.serviceTier;
+      out.serviceTier = current !== undefined && tierIds.has(current ?? null)
+        ? (current ?? null)
+        : (tierIds.has(item.defaultServiceTier ?? null) ? (item.defaultServiceTier ?? null) : null);
+    } else {
+      out.serviceTier = null;
+    }
+    return out;
   }
 
   async _onMessage(ws, raw) {
@@ -795,17 +837,32 @@ export class BrokerServer {
           profiles: this.profiles.list().map((p) => ({ ...p, ready: this.secrets.isReady(p) })),
           activeProfileId: this.session.activeProfileId,
         }));
-        return this.broadcast(this._modelsEvent());
+        this.broadcast(this._modelsEvent());
+        return this._sendEngineOptions(null, { refresh: true });
       case CommandType.SWITCH_MODEL:
-        await this.session.switchModel(cmd.model);
-        this.userSettings.patch({ engine: { model: this.session.currentModel || null } }); // remember the validated model across restarts
-        return this.broadcast(this._modelsEvent());
+        await this.session.switchModel(cmd.model, await this._validatedControlsForModel(cmd.model));
+        this.userSettings.patch({
+          engine: {
+            model: this.session.currentModel || null,
+            effort: this.session.effort || null,
+            serviceTier: this.session.serviceTier ?? null,
+          },
+        }); // remember the validated controls across restarts
+        this.broadcast(this._modelsEvent());
+        return this._sendEngineOptions(null);
       case CommandType.MODELS_LIST:
         return this._sendModels(ws, !!cmd.refresh);
+      case CommandType.ENGINE_OPTIONS_LIST:
+        return this._sendEngineOptions(ws, { refresh: !!cmd.refresh, includeHidden: !!cmd.includeHidden });
       case CommandType.SET_EFFORT:
         await this.session.setEffort(cmd.level);
         this.userSettings.patch({ engine: { effort: cmd.level } }); // remember the effort across restarts
-        return this.broadcast(event(EventType.EFFORT, { level: cmd.level }));
+        this.broadcast(event(EventType.EFFORT, { level: cmd.level }));
+        return this._sendEngineOptions(null);
+      case CommandType.SET_SERVICE_TIER:
+        await this.session.setServiceTier(cmd.serviceTier ?? null);
+        this.userSettings.patch({ engine: { serviceTier: cmd.serviceTier ?? null } });
+        return this._sendEngineOptions(null);
       case CommandType.USER_SETTINGS_PATCH:
         // Persist a client-supplied settings patch (tabs, manage tab order, …).
         this.userSettings.patch(cmd.patch || {});

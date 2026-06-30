@@ -61,7 +61,10 @@ run natively on Windows.
   model persists across effort/permission/resume restarts. The Codex profile
   advertises `gpt-5.5` in the same composer picker and the session manager drops
   obviously incompatible saved aliases (for example `haiku` into Codex) while
-  preserving deliberate custom model overrides.
+  preserving deliberate custom model overrides. Codex now also uses app-server
+  `model/list` through the engine-neutral `ENGINE_OPTIONS` event, so available
+  models, per-model reasoning efforts, and service tiers such as Fast are
+  discovered dynamically with a checked-in fallback catalog.
 - **Controls** (`src/controls/`): `transcript` (per-session persistence + replay),
   `checkpoints` (git snapshot per turn + restore + diff), `files` (list/read/grep/
   find&replace/diff/write incl. `.env`), `projects`, `prompts`, `usage-ledger`

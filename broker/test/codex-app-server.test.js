@@ -162,9 +162,14 @@ test('codex app-server maps tool user input through the question flow', async ()
   await engine.stop();
 });
 
-test('codex app-server converts broker attachments instead of dropping them', async () => {
+test('codex app-server converts broker attachments and sends selected model controls', async () => {
   const cwd = await tmpProject();
-  const engine = makeEngine(cwd, { env: { FAKE_CODEX_MODE: 'inputEcho' } });
+  const engine = makeEngine(cwd, {
+    env: { FAKE_CODEX_MODE: 'inputEcho' },
+    model: 'gpt-fake',
+    effort: 'xhigh',
+    serviceTier: 'priority',
+  });
   const events = collect(engine);
 
   await engine.start();
@@ -183,8 +188,26 @@ test('codex app-server converts broker attachments instead of dropping them', as
   assert.match(text, /localImage:path/);
   assert.match(text, /Attached file notes\.txt/);
   assert.match(text, /hello notes/);
+  assert.match(text, /model:gpt-fake/);
+  assert.match(text, /effort:xhigh/);
+  assert.match(text, /serviceTier:priority/);
 
   await engine.stop();
+});
+
+test('codex app-server includes serviceTier in thread params, including standard null', async () => {
+  const cwd = await tmpProject();
+  const fast = makeEngine(cwd, { serviceTier: 'priority' });
+  assert.equal(fast._threadStartParams().serviceTier, 'priority');
+  assert.equal(fast._threadResumeParams().serviceTier, 'priority');
+
+  const standard = makeEngine(cwd, { serviceTier: null });
+  assert.equal(standard._threadStartParams().serviceTier, null);
+  assert.equal(standard._threadResumeParams().serviceTier, null);
+
+  const unset = makeEngine(cwd);
+  assert.equal(Object.prototype.hasOwnProperty.call(unset._threadStartParams(), 'serviceTier'), true);
+  assert.equal(unset._threadStartParams().serviceTier, undefined);
 });
 
 test('codex app-server interrupts with turn/interrupt and the active turn id', async () => {

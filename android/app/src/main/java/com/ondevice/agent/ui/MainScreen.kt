@@ -134,9 +134,8 @@ private fun AgentTab(state: RuntimeState, detail: String, actions: MainActions) 
             if (state == RuntimeState.BOOTSTRAP_MISSING) {
                 Spacer(Modifier.height(18.dp))
                 Text(
-                    "No on-device bootstrap yet. Provision it (provisioning/README) " +
-                        "or run the broker on your computer and use `adb reverse tcp:8765 tcp:8765`, " +
-                        "then tap “Load agent UI anyway”.",
+                    "This install is missing the bundled on-device runtime. Install a self-contained APK; " +
+                        "fresh installs should not require adb reverse or manual bootstrap steps.",
                     color = TextDim, fontSize = 12.sp,
                 )
             }

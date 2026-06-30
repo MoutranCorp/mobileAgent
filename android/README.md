@@ -60,22 +60,29 @@ echo "sdk.dir=/path/to/Android/sdk" > local.properties
 ./gradlew installDebug       # sideload to a connected device (adb)
 ```
 
+The debug build is expected to be self-contained. `preBuild` fails if
+`app/src/main/assets/proot-aarch64/proot` is missing; stage it with
+`ARCH=aarch64 bash ../provisioning/make-runtime.sh` from a Bash-capable
+environment before building. Gradle regenerates `broker.tar.gz` automatically.
+
 > **Verified:** the project compiles to a debug APK and passes lint with the SDK
 > at `compileSdk 34` / `targetSdk 28`. (Android Studio: File ▸ Open this folder ▸
 > Run ▶ also works.)
 
 ## First run
 
-The app installs and launches with **no bootstrap** present and runs in
-*external-broker mode* — perfect for trying the full UI immediately:
+The app installs with bundled proot assets and provisions the Debian guest on
+first launch:
+
+1. Open the app and tap **Start runtime**.
+2. Wait for the one-time Debian rootfs download and toolchain install.
+3. Sign in from the **Runtime** tab when provisioning is complete.
+
+External-broker mode is only a debug fallback for UI work:
 
 1. Run the broker on your computer: `cd ../broker && npm run dev`
 2. `adb reverse tcp:8765 tcp:8765`
 3. In the app, open the **Agent** tab and tap **Load agent UI anyway**.
-
-For the real on-device runtime, provision proot + the broker (see
-[`../provisioning`](../provisioning)) and drop the bootstrap tarball into
-`app/src/main/assets/` (see [`app/src/main/assets/README.md`](app/src/main/assets/README.md)).
 
 ## Key files
 

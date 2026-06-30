@@ -31,9 +31,9 @@ class RuntimeLauncher(private val ctx: Context) {
             if (!rt.hasBundledProot()) {
                 RuntimeController.setState(
                     RuntimeState.BOOTSTRAP_MISSING,
-                    "No bundled proot — run an external broker (adb reverse) or rebuild with provisioning/make-runtime.sh."
+                    "This APK is missing its bundled proot runtime. Install a self-contained APK built with android/app/src/main/assets/proot-aarch64/proot."
                 )
-                RuntimeController.log("[runtime] no bundled proot — external-broker mode")
+                RuntimeController.log("[runtime] missing bundled proot asset; this APK is not self-contained")
                 pollHealth()
                 return
             }

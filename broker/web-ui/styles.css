@@ -792,6 +792,8 @@ svg { display: block; }
 /* effort shown as a bordered badge, matching the model status colour */
 .model-pill #effortSelect { color: var(--orange); font-weight: 650; max-width: 30vw; padding: 1px 5px;
   border: 1px solid rgba(var(--orange-rgb), .5); border-radius: 7px; }
+.model-pill #speedSelect { color: var(--green); font-weight: 650; max-width: 24vw; padding: 1px 5px;
+  border: 1px solid rgba(var(--green-rgb), .5); border-radius: 7px; }
 #sendBtn {
   width: 40px; height: 40px; flex: 0 0 auto; border-radius: 12px; padding: 0; border: none;
   background: var(--fill-2); color: var(--label-2);

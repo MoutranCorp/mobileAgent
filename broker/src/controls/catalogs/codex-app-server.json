@@ -1,0 +1,61 @@
+[
+  {
+    "id": "gpt-5.5",
+    "model": "gpt-5.5",
+    "displayName": "GPT-5.5",
+    "description": "Frontier model for complex coding, research, and real-world work.",
+    "hidden": false,
+    "isDefault": true,
+    "defaultReasoningEffort": "xhigh",
+    "supportedReasoningEfforts": [
+      { "reasoningEffort": "low", "description": "Fast responses with lighter reasoning" },
+      { "reasoningEffort": "medium", "description": "Balances speed and reasoning depth for everyday tasks" },
+      { "reasoningEffort": "high", "description": "Greater reasoning depth for complex problems" },
+      { "reasoningEffort": "xhigh", "description": "Extra high reasoning depth for complex problems" }
+    ],
+    "inputModalities": ["text", "image"],
+    "serviceTiers": [
+      { "id": "priority", "name": "Fast", "description": "1.5x speed, increased usage" }
+    ],
+    "defaultServiceTier": "priority"
+  },
+  {
+    "id": "gpt-5.4",
+    "model": "gpt-5.4",
+    "displayName": "GPT-5.4",
+    "description": "Strong model for everyday coding.",
+    "hidden": false,
+    "isDefault": false,
+    "upgrade": "gpt-5.5",
+    "defaultReasoningEffort": "medium",
+    "supportedReasoningEfforts": [
+      { "reasoningEffort": "low", "description": "Fast responses with lighter reasoning" },
+      { "reasoningEffort": "medium", "description": "Balances speed and reasoning depth for everyday tasks" },
+      { "reasoningEffort": "high", "description": "Greater reasoning depth for complex problems" },
+      { "reasoningEffort": "xhigh", "description": "Extra high reasoning depth for complex problems" }
+    ],
+    "inputModalities": ["text", "image"],
+    "serviceTiers": [
+      { "id": "priority", "name": "Fast", "description": "1.5x speed, increased usage" }
+    ],
+    "defaultServiceTier": "priority"
+  },
+  {
+    "id": "gpt-5.4-mini",
+    "model": "gpt-5.4-mini",
+    "displayName": "GPT-5.4-Mini",
+    "description": "Small, fast, and cost-efficient model for simpler coding tasks.",
+    "hidden": false,
+    "isDefault": false,
+    "defaultReasoningEffort": "medium",
+    "supportedReasoningEfforts": [
+      { "reasoningEffort": "low", "description": "Fast responses with lighter reasoning" },
+      { "reasoningEffort": "medium", "description": "Balances speed and reasoning depth for everyday tasks" },
+      { "reasoningEffort": "high", "description": "Greater reasoning depth for complex problems" },
+      { "reasoningEffort": "xhigh", "description": "Extra high reasoning depth for complex problems" }
+    ],
+    "inputModalities": ["text", "image"],
+    "serviceTiers": [],
+    "defaultServiceTier": null
+  }
+]

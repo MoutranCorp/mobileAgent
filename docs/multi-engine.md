@@ -152,6 +152,19 @@ Acceptance for this phase:
 - Per-engine auth (the `profile.authRef` secret abstraction already exists; only
   claude needs the credentials-file drop + native PTY login).
 
+### Phase 4.5 - Cross-engine handoff for live sessions
+
+Use [cross-engine-handoff.md](cross-engine-handoff.md) as the implementation
+worklist for seamless live switching between Claude Code, Codex app-server, and
+future engines.
+
+The key rule is that native engine resume ids are not portable. When a tab
+switches harnesses, the broker should keep the local visible transcript as the
+source of truth, build deterministic handoff context from that transcript and the
+session cwd, seed the target engine, and only then deliver the next real user
+message. This belongs in the engine/session seam, not in a Claude-only resume
+parser or a Codex-only workaround.
+
 ### Phase 5 — Genericize the protocol
 - Treat the claude-shaped `CAPABILITIES` fields as **optional**, gated by `features`;
   make `USAGE` cache-token fields, `EFFORT` levels, `THINKING`, and `COMPACT` optional

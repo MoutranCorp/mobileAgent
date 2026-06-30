@@ -23,34 +23,49 @@ remain useful background, but this file decides what should be executed first.
 
 - Current production engine: `claude-code`.
 - Existing conformance/non-default engines: `mock`, partial `opencode`.
-- Planned next engine: Codex CLI, via `codex app-server`, not by copying the
-  Claude stream-json adapter.
+- Codex CLI support exists through `codex app-server`, with remaining work around
+  cross-engine continuity, selector/control parity, and real Android/proot-Debian
+  verification.
 - Persona/agent management is designed, but its current implementation details
-  are Claude-specific and should not be built as the next cross-engine feature.
+  are Claude-specific and should not be built as the next cross-engine feature
+  until the handoff and per-session engine seams are solid.
 
 ## Execution Order
 
-1. **Multi-engine foundation**
+1. **Multi-engine foundation and parity fixes**
    - Implement `docs/multi-engine.md` Phase 1 and Phase 2 first.
    - Add adapter feature declarations.
    - Move active model, effort, permission mode, status, capabilities, and profile
      state into per-session metadata.
    - Keep all changes passing on Windows and Android/proot-Debian.
 
-2. **Codex app-server adapter MVP**
+2. **Codex app-server stabilization**
    - Follow `docs/codex-app-server.md`.
    - Use `codex app-server --stdio` as the primary transport.
    - Map Codex threads/turns/items/approval requests onto the canonical broker
      protocol without routing through Claude-only modules.
+   - Preserve the project cwd for every Codex thread/turn and keep model, effort,
+     and speed controls in sync with the active tab.
+   - `docs/model-control-catalog.md` is implemented for the broker/WebUI Codex
+     path: Codex model, reasoning effort, and speed/service-tier discovery now
+     flows through app-server `model/list` with a fallback catalog.
 
-3. **Engine-neutral persona layer**
+3. **Seamless cross-engine handoff**
+   - Follow `docs/cross-engine-handoff.md`.
+   - Build deterministic local handoff context from the broker transcript and
+     session metadata before switching engines.
+   - Seed the target engine before the next real user prompt.
+   - Store native resume ids per harness so switching back can use the right
+     engine-native conversation when available.
+
+4. **Engine-neutral persona layer**
    - Rework `docs/agent-management/design.md` into an engine-neutral `AgentStore`
      plus engine-specific mappers.
    - Implement the Claude mapper first only if explicitly scoped as Claude-only.
    - Implement the Codex mapper after the Codex adapter exposes the required
      capabilities.
 
-4. **Android native engine flows**
+5. **Android native engine flows**
    - Parameterize native login/update/provisioning flows after a second real
      engine exists.
    - Keep the self-contained APK path primary; keep external-broker mode as a
@@ -80,4 +95,3 @@ For Android/runtime changes:
 - Build the debug APK on Windows when possible.
 - Verify runtime behavior on a real phone; this Windows machine cannot prove
   WebView/native/proot behavior by itself.
-

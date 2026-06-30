@@ -104,7 +104,28 @@ val stageBroker by tasks.registering(Tar::class) {
         exclude("node_modules", "test", ".uishots", ".uitmp", "coverage", "**/*.log", ".uitmp/**")
     }
 }
-tasks.named("preBuild") { dependsOn(stageBroker) }
+
+val verifyBundledProot by tasks.registering {
+    val assetsDir = layout.projectDirectory.dir("src/main/assets")
+    val prootAsset = assetsDir.file("proot-aarch64/proot")
+    dependsOn(stageBroker)
+    inputs.file(prootAsset).optional()
+    doLast {
+        val arch = "aarch64"
+        val proot = prootAsset.asFile
+        if (!proot.isFile) {
+            throw GradleException(
+                "Missing bundled proot at ${proot.relativeTo(projectDir)}. " +
+                    "The APK must be self-contained; run `ARCH=$arch bash provisioning/make-runtime.sh` " +
+                    "from the repo root before building."
+            )
+        }
+    }
+}
+
+tasks.named("preBuild") {
+    dependsOn(stageBroker, verifyBundledProot)
+}
 
 dependencies {
     // BOM 2024.06.00 (Compose 1.6.8) is solidly compatible with Kotlin 1.9.24 +

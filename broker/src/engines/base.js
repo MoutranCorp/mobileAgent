@@ -9,6 +9,9 @@ export const DEFAULT_ENGINE_FEATURES = Object.freeze({
   slashCommands: false,
   models: false,
   effort: false,
+  speed: false,
+  dynamicModelCatalog: false,
+  customModel: false,
   config: false,
   appServer: false,
 });
@@ -181,6 +184,10 @@ export class EngineAdapter extends EventEmitter {
       level: 'warn',
       message: `${this.harness} ignored unsupported question response ${id}`,
     });
+  }
+
+  async listControlOptions() {
+    return null;
   }
 
   interrupt() {

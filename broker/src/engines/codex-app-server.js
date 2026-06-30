@@ -22,6 +22,7 @@ export class CodexAppServerEngine extends EngineAdapter {
     this.bin = this.profile?.codexBin || opts.codexBin || 'codex';
     this.args = this.profile?.codexArgs || opts.codexArgs || ['app-server', '--stdio'];
     this.resumeId = opts.resumeId || null;
+    this.serviceTier = opts.serviceTier;
     this.proc = null;
     this._buf = '';
     this._nextId = 1;
@@ -90,6 +91,7 @@ export class CodexAppServerEngine extends EngineAdapter {
         cwd: this.cwd,
         model: this.model || undefined,
         effort: this.effort || undefined,
+        serviceTier: this.serviceTier,
         approvalPolicy: mapApprovalPolicy(this.permissionMode),
         approvalsReviewer: 'user',
         sandboxPolicy: mapSandboxPolicy(this.permissionMode, this.cwd),
@@ -179,6 +181,7 @@ export class CodexAppServerEngine extends EngineAdapter {
     return {
       cwd: this.cwd,
       model: this.model || undefined,
+      serviceTier: this.serviceTier,
       approvalPolicy: mapApprovalPolicy(this.permissionMode),
       approvalsReviewer: 'user',
       sandbox: mapSandboxMode(this.permissionMode),
@@ -190,6 +193,7 @@ export class CodexAppServerEngine extends EngineAdapter {
       threadId: this.resumeId,
       cwd: this.cwd,
       model: this.model || undefined,
+      serviceTier: this.serviceTier,
       approvalPolicy: mapApprovalPolicy(this.permissionMode),
       approvalsReviewer: 'user',
       sandbox: mapSandboxMode(this.permissionMode),

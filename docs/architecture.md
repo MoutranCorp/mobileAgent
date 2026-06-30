@@ -298,3 +298,11 @@ straight through to the CLI, which enforces them itself.
 - The "why" behind locked decisions → [`ondevice-claude-code-plan.md`](../ondevice-claude-code-plan.md).
 - Run the stack with no credentials: `cd broker && npm install && npm run dev`, then open `http://127.0.0.1:8765/`.
 - Verify the suite: `cd broker && npm test`.
+
+## Model/control catalog addendum
+
+The model selector now uses an engine-neutral `ENGINE_OPTIONS` event. The broker
+builds that event in `broker/src/controls/engine-options.js`: Codex uses
+app-server `model/list` for model display names, supported reasoning efforts,
+and speed/service tiers, while engines without dynamic catalogs fall back to
+profile data and the legacy Claude alias resolver.

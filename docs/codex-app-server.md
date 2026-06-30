@@ -200,6 +200,14 @@ Current adapter coverage:
 - The built-in `codex-app-server` profile advertises `gpt-5.5` as its default
   selectable model. Existing installs with a stale Codex profile that has no
   model/model list are backfilled by `ProfileStore`.
+- Codex model controls are catalog-driven. The broker probes app-server
+  `model/list` and emits an engine-neutral `ENGINE_OPTIONS` event containing
+  model display names, descriptions, default reasoning effort, supported
+  reasoning efforts, and service tiers. If dynamic discovery fails, it falls
+  back to `broker/src/controls/catalogs/codex-app-server.json`.
+- The Codex adapter passes `model`, `effort`, and `serviceTier` through
+  `thread/start` and `turn/start`. An unset service tier is omitted so Codex can
+  use its catalog default; explicit Standard is sent as `serviceTier: null`.
 - The session manager must not carry Claude aliases such as `haiku` into Codex
   restarts/resumes. Explicit custom model overrides still work when they are not
   obviously incompatible with the target harness.

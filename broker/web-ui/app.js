@@ -35,8 +35,10 @@
     permissionMode: 'default',
     resolvedModel: null, // resolved id of the active model (e.g. claude-opus-4-8)
     models: [], // [{ alias, id, label }] resolved model list
+    engineOptions: null,
     selectedModel: null, // alias currently active in the picker
     effort: 'high',
+    serviceTier: null,
     attachments: [], // [{ mime, dataBase64, url, name }]
     checkpoints: [],
     reconnectTimer: null,
@@ -292,6 +294,7 @@
       case 'permission_denied': onPermissionDenied(ev); break;
       case 'permission_mode': onPermissionMode(ev); break;
       case 'models': onModels(ev); break;
+      case 'engine_options': onEngineOptions(ev); break;
       case 'effort': onEffort(ev); break;
       case 'usage': onUsage(ev); break;
       case 'context': onContext(ev); break;
@@ -2441,8 +2444,13 @@
   }
 
   function onProfiles(ev) {
+    const previousProfileId = state.activeProfileId;
     state.profiles = ev.profiles || [];
     state.activeProfileId = ev.activeProfileId;
+    if (previousProfileId && previousProfileId !== state.activeProfileId) {
+      state.engineOptions = null;
+      _modelsRequested = false;
+    }
     // Engine switching now lives in ☰ → Engine (reads state.profiles, sends switch_engine).
     renderModelOptions();
     if (window.Managers) window.Managers.onProfiles(ev);
@@ -2452,6 +2460,38 @@
     const active = state.profiles.find((p) => p.id === state.activeProfileId);
     const sel = $('modelSelect');
     if (!sel) return;
+    const catalog = state.engineOptions;
+    if (catalog && catalog.profileId === state.activeProfileId && Array.isArray(catalog.models)) {
+      const models = catalog.models;
+      let selected = state.selectedModel || catalog.selected?.model || (active && active.model) || models.find((m) => m.isDefault)?.model || models[0]?.model;
+      if (models.length && !models.some((m) => m.model === selected)) selected = catalog.selected?.model || models.find((m) => m.isDefault)?.model || models[0]?.model;
+      state.selectedModel = selected || null;
+      sel.innerHTML = '';
+      if (!models.length) {
+        const o = document.createElement('option');
+        o.value = '';
+        o.textContent = active ? `${active.label} default` : 'Engine default';
+        o.selected = true;
+        sel.appendChild(o);
+      } else {
+        const seen = new Map();
+        for (const m of models) {
+          const o = document.createElement('option');
+          o.value = m.model;
+          let label = m.label || m.model;
+          if (m.custom) label += ' (custom)';
+          if (seen.has(label)) label = `${label} (${m.model})`;
+          seen.set(label, true);
+          o.textContent = label;
+          o.title = m.description || m.availabilityMessage || '';
+          if (m.model === selected) o.selected = true;
+          sel.appendChild(o);
+        }
+      }
+      updateEffortOptions();
+      updateSpeedOptions();
+      return;
+    }
     const aliases = (active && active.models) || (active && active.model ? [active.model] : []);
     // Prefer the broker's resolved list ([{alias,id,label}]); fall back to raw aliases.
     const resolved = new Map(state.models.map((m) => [m.alias, m]));
@@ -2467,6 +2507,7 @@
       o.selected = true;
       sel.appendChild(o);
       updateEffortOptions();
+      updateSpeedOptions();
       return;
     }
     const seen = new Map(); // label -> count, to disambiguate any collisions
@@ -2489,12 +2530,41 @@
       sel.appendChild(o);
     }
     updateEffortOptions();
+    updateSpeedOptions();
   }
 
   // Ultracode only does anything on Opus/Fable — hide the option otherwise, and
   // if it was selected on a now-unsupported model, fall back to xhigh.
   function updateEffortOptions() {
-    const opt = $('ultracodeOpt');
+    const sel = $('effortSelect');
+    if (!sel) return;
+    const model = selectedCatalogModel();
+    if (model && Array.isArray(model.efforts) && model.efforts.length) {
+      const wanted = state.effort || state.engineOptions?.selected?.effort || model.defaultEffort || model.efforts[0].id;
+      sel.innerHTML = '';
+      for (const effort of model.efforts) {
+        const o = document.createElement('option');
+        o.value = effort.id;
+        o.textContent = effort.label || effort.id;
+        o.title = effort.description || '';
+        if (effort.id === wanted) o.selected = true;
+        sel.appendChild(o);
+      }
+      const supported = model.efforts.some((e) => e.id === wanted);
+      state.effort = supported ? wanted : (model.defaultEffort || model.efforts[0].id);
+      sel.value = state.effort;
+      return;
+    }
+    const current = state.effort || 'high';
+    sel.innerHTML = '';
+    for (const value of ['low', 'medium', 'high', 'xhigh', 'max', 'ultracode']) {
+      const o = document.createElement('option');
+      o.value = value;
+      o.textContent = value;
+      if (value === current) o.selected = true;
+      sel.appendChild(o);
+    }
+    const opt = [...sel.options].find((o) => o.value === 'ultracode');
     if (!opt) return;
     const fam = familyOf(state.selectedModel) || familyOf(state.resolvedModel);
     const supported = fam === 'opus' || fam === 'fable';
@@ -2507,9 +2577,70 @@
     }
   }
 
+  function updateSpeedOptions() {
+    const sel = ensureSpeedSelect();
+    if (!sel) return;
+    const model = selectedCatalogModel();
+    const tiers = model && Array.isArray(model.serviceTiers) ? model.serviceTiers : [];
+    const show = tiers.some((t) => t.id);
+    sel.classList.toggle('hidden', !show);
+    sel.disabled = !show;
+    if (!show) {
+      state.serviceTier = null;
+      sel.innerHTML = '<option value="">standard</option>';
+      return;
+    }
+    const wanted = state.serviceTier ?? state.engineOptions?.selected?.serviceTier ?? model.defaultServiceTier ?? null;
+    sel.innerHTML = '';
+    for (const tier of tiers) {
+      const o = document.createElement('option');
+      o.value = tier.id || '';
+      o.textContent = tier.label || tier.id || 'Standard';
+      o.title = tier.description || '';
+      if ((tier.id || null) === (wanted || null)) o.selected = true;
+      sel.appendChild(o);
+    }
+    const supported = tiers.some((t) => (t.id || null) === (wanted || null));
+    state.serviceTier = supported ? (wanted || null) : null;
+    sel.value = state.serviceTier || '';
+  }
+
+  function selectedCatalogModel() {
+    const models = state.engineOptions?.models || [];
+    return models.find((m) => m.model === state.selectedModel) || null;
+  }
+
+  function ensureSpeedSelect() {
+    let sel = $('speedSelect');
+    if (sel) return sel;
+    const effort = $('effortSelect');
+    if (!effort || !effort.parentElement) return null;
+    sel = document.createElement('select');
+    sel.id = 'speedSelect';
+    sel.title = 'Speed';
+    sel.className = 'hidden';
+    sel.innerHTML = '<option value="">standard</option>';
+    sel.onchange = (e) => {
+      state.serviceTier = e.target.value || null;
+      send({ type: 'set_service_tier', serviceTier: state.serviceTier });
+    };
+    effort.parentElement.insertBefore(sel, effort.nextSibling);
+    return sel;
+  }
+
   function onModels(ev) {
     state.models = Array.isArray(ev.items) ? ev.items : [];
     if (ev.resolvedModel) state.resolvedModel = ev.resolvedModel;
+    if (!state.engineOptions) renderModelOptions();
+  }
+
+  function onEngineOptions(ev) {
+    state.engineOptions = ev || null;
+    if (ev?.selected) {
+      state.selectedModel = ev.selected.model || state.selectedModel;
+      state.effort = ev.selected.effort || state.effort;
+      state.serviceTier = ev.selected.serviceTier ?? null;
+    }
     renderModelOptions();
   }
 
@@ -2517,10 +2648,10 @@
   function resolveModelsOnce() {
     // If any alias is still unresolved, ask the broker to probe (free init spawn).
     if (_modelsRequested) return;
-    const unresolved = !state.models.length || state.models.some((m) => !m.id);
+    const unresolved = !state.engineOptions && (!state.models.length || state.models.some((m) => !m.id));
     if (!unresolved) return;
     _modelsRequested = true;
-    send({ type: 'models_list' });
+    send({ type: 'engine_options_list' });
   }
 
   function onEffort(ev) {
@@ -3072,6 +3203,7 @@
       const model = e.target.value || null;
       state.selectedModel = model;
       updateEffortOptions();
+      updateSpeedOptions();
       send({ type: 'switch_model', model });
     };
     // Resolve alias -> version labels lazily the first time the user opens the picker.
@@ -3079,6 +3211,7 @@
     $('modelSelect').addEventListener('focus', resolveModelsOnce);
     const effortSel = $('effortSelect');
     if (effortSel) effortSel.onchange = (e) => { state.effort = e.target.value; send({ type: 'set_effort', level: e.target.value }); };
+    ensureSpeedSelect();
     $('permModeSelect').onchange = (e) => {
       const mode = e.target.value;
       if (mode === 'bypassPermissions' &&

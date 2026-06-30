@@ -59,6 +59,31 @@ rl.on('line', async (line) => {
       break;
     case 'initialized':
       break;
+    case 'model/list':
+      respond(msg.id, {
+        data: [
+          {
+            id: 'gpt-fake',
+            model: 'gpt-fake',
+            displayName: 'GPT Fake',
+            description: 'Fake dynamic model',
+            hidden: false,
+            isDefault: true,
+            defaultReasoningEffort: 'high',
+            supportedReasoningEfforts: [
+              { reasoningEffort: 'low', description: 'Low effort' },
+              { reasoningEffort: 'high', description: 'High effort' },
+            ],
+            serviceTiers: [
+              { id: 'priority', name: 'Fast', description: 'Fast tier' },
+            ],
+            defaultServiceTier: 'priority',
+            inputModalities: ['text', 'image'],
+          },
+        ],
+        nextCursor: null,
+      });
+      break;
     case 'thread/start':
       if (delayThreadStartMs > 0) await sleep(delayThreadStartMs);
       respond(msg.id, { thread: { id: 'thread-started-1' } });
@@ -82,6 +107,9 @@ rl.on('line', async (line) => {
       if (mode === 'inputEcho') {
         notify('item/agentMessage/delta', { delta: ` ${summarizeInput(msg.params.input)}` });
         if (msg.params.cwd) notify('item/agentMessage/delta', { delta: ` cwd:${msg.params.cwd}` });
+        if (msg.params.model) notify('item/agentMessage/delta', { delta: ` model:${msg.params.model}` });
+        if (msg.params.effort) notify('item/agentMessage/delta', { delta: ` effort:${msg.params.effort}` });
+        if (Object.prototype.hasOwnProperty.call(msg.params, 'serviceTier')) notify('item/agentMessage/delta', { delta: ` serviceTier:${msg.params.serviceTier ?? 'standard'}` });
         notify('turn/completed', { usage: { inputTokens: 5, outputTokens: 5 } });
         break;
       }
