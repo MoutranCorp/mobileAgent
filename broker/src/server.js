@@ -94,6 +94,10 @@ export class BrokerServer {
       if (_us.engine.permissionMode) this.session.permissionMode = _us.engine.permissionMode;
       if (_us.engine.model) this.session.currentModel = _us.engine.model;
     }
+    this.session.restorePersistedSessions({
+      projects: this.projects.list(),
+      activityForKey: (key) => this.transcript.lastMessageTime(key) || this.transcript.transcriptMtime(key) || 0,
+    });
     this.transcript.setProject(this.session.activeKey); // same key convention as sessions (project.id | '__main__')
 
     this.usage = new UsageLedger(config.stateDir);
@@ -253,6 +257,11 @@ export class BrokerServer {
     if (!key || key === '__main__') return null;
     const pid = this.session.meta.get(key)?.projectId;
     return (pid && this.projects.get(pid)) || this.projects.get(key) || null;
+  }
+
+  _viewKeyForProjectId(projectId) {
+    const project = projectId ? this.projects.get(projectId) : null;
+    return project ? this.session.keyForProject(project) : MAIN_KEY;
   }
 
   /** One resource sample + lifecycle pass: broadcast RESOURCES, then idle-evict
@@ -1118,7 +1127,7 @@ export class BrokerServer {
         this.projects.setActive(cmd.projectId);
         this._nativeFingerprint = null;
         this.broadcast(event(EventType.PROJECTS, this.projects.snapshot()));
-        await this._switchView(cmd.projectId);
+        await this._switchView(this._viewKeyForProjectId(cmd.projectId));
         this._emitActiveMetro();
         return;
       }
@@ -1135,7 +1144,7 @@ export class BrokerServer {
         if (res.error) { this.broadcast(event(EventType.ERROR, { message: res.error })); return; }
         this._nativeFingerprint = null;
         this.broadcast(event(EventType.PROJECTS, this.projects.snapshot()));
-        await this._switchView(this.projects.activeId);
+        await this._switchView(this._viewKeyForProjectId(this.projects.activeId));
         this._emitActiveMetro();
         return;
       }
@@ -1158,7 +1167,7 @@ export class BrokerServer {
         this._nativeFingerprint = null;
         // 4) If the deleted project was active, bring the new active project (or the
         //    no-project scratch) into the foreground.
-        if (res.wasActive) await this._switchView(res.newActiveId || MAIN_KEY);
+        if (res.wasActive) await this._switchView(res.newActiveId ? this._viewKeyForProjectId(res.newActiveId) : MAIN_KEY);
         this.broadcast(event(EventType.PROJECTS, this.projects.snapshot()));
         this.broadcast(event(EventType.SESSIONS, { items: this.session.uiSessions(), activeKey: this.session.activeKey }));
         this.broadcast(event(EventType.TOAST, {

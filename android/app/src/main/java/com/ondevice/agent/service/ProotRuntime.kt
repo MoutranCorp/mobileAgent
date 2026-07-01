@@ -367,7 +367,7 @@ class ProotRuntime(private val ctx: Context) {
         a += listOf(
             "/usr/bin/env", "-i",
             "HOME=/root", "TERM=xterm-256color", "LANG=C.UTF-8",
-            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "PATH=$GUEST_PATH",
             "TMPDIR=/tmp", "WATCHMAN_DISABLE=1", "EXPO_NO_TELEMETRY=1",
         )
         for ((k, v) in KeystoreSecrets(ctx).all()) a += "$k=$v"
@@ -469,6 +469,8 @@ class ProotRuntime(private val ctx: Context) {
     }.getOrElse { log("process error: ${it.message}"); false }
 
     companion object {
+        private const val GUEST_PATH =
+            "/root/.npm-global/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
         // Bump when the rootfs extraction logic changes so a stale extraction from an
         // older build is discarded (app data survives install-over).
         private const val ROOTFS_VERSION = "2-symlink-extract"

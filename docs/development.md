@@ -210,6 +210,20 @@ android/build-apk.sh                 # build → refresh dist/app-debug.apk
 jar tf dist/app-debug.apk | grep 'assets/proot-aarch64/proot'
 ```
 
+When building directly on the phone from the app's proot-Debian guest, use the
+same setup once, then run:
+
+```bash
+android/build-and-offer-apk.sh
+```
+
+That builds the self-contained debug APK and copies it to
+`/sdcard/Download/mobile-agent-debug.apk`. If Android's `am` tool is visible from
+the current shell it also opens the package installer; otherwise open the APK from
+Files/Downloads. Current builds also expose **Runtime → App update → Install
+exported APK**, which opens that same file through the app's FileProvider. The
+debug keystore is stable, so this preserves app data.
+
 On Windows/PowerShell, build only after `proot-aarch64` is already staged (or use
 a real Bash/WSL environment to run `make-runtime.sh` first):
 

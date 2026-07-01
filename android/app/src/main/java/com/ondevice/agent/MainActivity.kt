@@ -215,6 +215,25 @@ class MainActivity : ComponentActivity(), MainActions {
         }.onFailure { Toast.makeText(this, "Can't open: $url", Toast.LENGTH_SHORT).show() }
     }
 
+    override fun installDownloadedApk() {
+        val apk = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "mobile-agent-debug.apk")
+        if (!apk.isFile) {
+            Toast.makeText(this, "No exported APK found in Downloads", Toast.LENGTH_SHORT).show()
+            return
+        }
+        runCatching {
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", apk)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+        }.onFailure {
+            Toast.makeText(this, "Couldn't open APK installer: ${it.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
     private fun beginRecognition() {
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             Toast.makeText(this, "Voice recognition unavailable", Toast.LENGTH_SHORT).show()

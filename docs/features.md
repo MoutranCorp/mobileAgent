@@ -270,6 +270,9 @@ The **Runtime screen** also hosts the native flows: Start/Stop, Claude sign-in
 secrets, and **GitHub sign-in** (`GitHubAuth.kt` — device flow or a pasted PAT) that
 wires the on-device git to push/pull/merge your repos. See
 [on-device-runtime.md](on-device-runtime.md#native-github-sign-in-githubauthkt).
+It also has **App update → Install exported APK**, which opens the APK produced by
+`android/build-and-offer-apk.sh` at `/sdcard/Download/mobile-agent-debug.apk` through
+the app's FileProvider.
 
 Codex has matching native runtime controls: `codex login --device-auth`,
 `codex login --with-api-key`, `codex login status`, and a backfill-safe
@@ -337,11 +340,15 @@ transcript and only broadcasts the active session's full stream (others → a
 lightweight `SESSIONS` busy overlay).
 
 Resume hints persist in `<stateDir>/sessions.json` keyed by `sessionKey` as
-`{ resumeId, harness, cwd? }`, so a Claude resume id is never handed to an
-opencode/Codex profile (and vice versa). Legacy string values are treated as
-Claude-only until rewritten by the next session metadata event. Codex resume
-hints require a matching cwd; legacy Codex records without cwd and Codex records
-for another folder are ignored and overwritten by the next fresh thread.
+`{ resumeId, harness, cwd?, profileId?, projectId?, model? }`, so a Claude
+resume id is never handed to an opencode/Codex profile (and vice versa). Legacy
+string values are treated as Claude-only until rewritten by the next session
+metadata event. On broker startup those persisted records are hydrated back into
+sleeping-session `meta`, and each project is rebound to its latest transcript-active
+session key, so restarting the broker preserves the latest tab/history row instead
+of creating a fresh empty replacement session for that folder. Codex resume hints
+require a matching cwd; legacy Codex records without cwd and Codex records for
+another folder are ignored and overwritten by the next fresh thread.
 
 ### The tab strip (sessions + files)
 
@@ -360,7 +367,9 @@ id=`'file:'+rel`).
   `new_session` clears its transcript broker-side, so a **reused key** (the first
   session's key is always the projectId, so it recurs across restarts) can't surface
   a dead session's leftover messages. The `-<hex>` suffixes are non-recycling, so the
-  extra-session keys themselves never collide.
+  extra-session keys themselves never collide. `open_project` now resolves through the
+  project's bound session key, so reopening a folder returns to the latest tab for that
+  folder instead of always forcing the bare `projectId` session.
 - **File tabs** are **client-only** — `state.activeTabId` is decoupled from the broker
   `activeKey`, so switching a file tab does NOT `switch_session`. `applyViewMode()`
   swaps in `#fileView` (name · Rendered|Source toggle · Save · ⬇ · ✕) and hides the

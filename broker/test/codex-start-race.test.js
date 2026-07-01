@@ -170,6 +170,8 @@ test('Codex stale stored thread id is cleared and replaced with a fresh thread',
       resumeId: 'thread-started-1',
       harness: 'codex-app-server',
       cwd: projects,
+      profileId: 'codex-app-server',
+      model: 'gpt-5.5',
     });
     assert.equal(events.some((e) => e.type === 'error' && /failed to start engine/i.test(e.message)), false);
     assert.equal(events.some((e) => e.type === 'toast' && /fresh thread/i.test(e.message)), false);
@@ -217,6 +219,8 @@ test('Codex legacy stored thread id without cwd is ignored before resume', async
       resumeId: 'thread-started-1',
       harness: 'codex-app-server',
       cwd: projects,
+      profileId: 'codex-app-server',
+      model: 'gpt-5.5',
     });
     assert.equal(events.some((e) => e.type === 'toast' && /fresh thread/i.test(e.message)), false);
   } finally {
@@ -264,12 +268,86 @@ test('Codex stored thread id for another cwd is ignored before resume', async ()
       resumeId: 'thread-started-1',
       harness: 'codex-app-server',
       cwd: projects,
+      profileId: 'codex-app-server',
+      model: 'gpt-5.5',
     });
     assert.equal(events.some((e) => e.type === 'toast' && /fresh thread/i.test(e.message)), false);
   } finally {
     await server.stop();
     if (oldMode === undefined) delete process.env.FAKE_CODEX_MODE;
     else process.env.FAKE_CODEX_MODE = oldMode;
+  }
+});
+
+test('Codex restart rehydrates persisted project sessions and resumes the latest key', async () => {
+  const projects = await tmpDir('codex-rehydrate-proj-');
+  const state = await tmpDir('codex-rehydrate-state-');
+  const appDir = path.join(projects, 'demo');
+  const transcriptsDir = path.join(state, 'transcripts');
+  await fs.mkdir(appDir, { recursive: true });
+  await fs.mkdir(transcriptsDir, { recursive: true });
+  await fs.writeFile(path.join(appDir, 'package.json'), JSON.stringify({ name: 'demo' }));
+  await fs.writeFile(path.join(state, 'profiles.json'), JSON.stringify([
+    {
+      id: 'codex-app-server',
+      label: 'Codex Resume',
+      harness: 'codex-app-server',
+      codexBin: process.execPath,
+      codexArgs: [fixture],
+      model: 'gpt-5.5',
+      models: ['gpt-5.5'],
+      billing: 'none',
+    },
+  ], null, 2));
+  await fs.writeFile(path.join(state, 'sessions.json'), JSON.stringify({
+    demo: {
+      resumeId: 'thread-older',
+      harness: 'codex-app-server',
+      cwd: appDir,
+      profileId: 'codex-app-server',
+      projectId: 'demo',
+      model: 'gpt-5.5',
+    },
+    'demo-deadbeef': {
+      resumeId: 'thread-latest',
+      harness: 'codex-app-server',
+      cwd: appDir,
+      profileId: 'codex-app-server',
+      projectId: 'demo',
+      model: 'gpt-5.5',
+    },
+  }, null, 2));
+  await fs.writeFile(path.join(transcriptsDir, 'demo.jsonl'), `${JSON.stringify({
+    type: 'user_echo',
+    text: 'older codex turn',
+    ts: '2026-06-30T00:00:00.000Z',
+  })}\n`);
+  await fs.writeFile(path.join(transcriptsDir, 'demo-deadbeef.jsonl'), `${JSON.stringify({
+    type: 'user_echo',
+    text: 'latest codex turn',
+    ts: '2026-07-01T00:00:00.000Z',
+  })}\n`);
+
+  const config = loadConfig(['--profile', 'codex-app-server', '--port', '0', '--projects', projects, '--state', state]);
+  const server = new BrokerServer(config);
+  try {
+    await server.start();
+    assert.equal(server.session.activeKey, 'demo-deadbeef');
+    assert.equal(server.session.keyForProject(server.projects.get('demo')), 'demo-deadbeef');
+    assert.equal(server.session.meta.get('demo-deadbeef')?.projectId, 'demo');
+    assert.ok(server.session.meta.has('demo'));
+
+    const engine = await server.session.ensureEngine();
+    assert.ok(engine, 'latest persisted Codex session cold-resumed');
+    assert.equal(engine.sessionId, 'thread-latest');
+
+    const rows = server._sessionHistoryItems('all')
+      .filter((r) => r.projectDir === appDir && r.harness === 'codex-app-server');
+    assert.equal(rows.length, 2);
+    assert.deepEqual(rows.map((r) => r.id).sort(), ['thread-latest', 'thread-older']);
+    assert.match(rows.find((r) => r.id === 'thread-latest')?.summary || '', /latest codex turn/);
+  } finally {
+    await server.stop();
   }
 });
 

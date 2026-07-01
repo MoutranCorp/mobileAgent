@@ -300,6 +300,22 @@ test('SWITCH_SESSION keeps projects.activeId synced to the focused session proje
   } finally { ws.close(); await server.stop(); }
 });
 
+test('OPEN_PROJECT focuses the project-bound session key, not always the bare project id', async () => {
+  const { server, ws, send, waitNext, open } = await boot(['projA', 'projB']);
+  try {
+    await open('projA');
+    const p1 = waitNext((e) => e.type === 'sessions' && e.items.length === 2);
+    send({ type: 'new_session' });
+    await p1;
+    const fresh = server.session.liveSessions().map((s) => s.key).find((k) => k !== 'projA');
+    await open('projB');
+    const reopen = waitNext((e) => e.type === 'sessions' && e.activeKey === fresh);
+    send({ type: 'open_project', projectId: 'projA' });
+    await reopen;
+    assert.equal(server.session.activeKey, fresh, 'folder reopen restores the bound foreground session');
+  } finally { ws.close(); await server.stop(); }
+});
+
 test('SWITCH_SESSION ignores stale restored tab keys instead of creating sessions', async () => {
   const { server, ws, send, waitNext, open } = await boot(['projA']);
   try {
@@ -335,6 +351,62 @@ test('SWITCH_SESSION reopens a persisted sleeping key in its project folder', as
     assert.equal(m?.sessionId, 'mock-persisted-session');
     assert.ok(String(server.session.engines.get(key)?.cwd).includes('projA'));
   } finally { ws.close(); await server.stop(); }
+});
+
+test('broker restart rehydrates persisted sessions and keeps the latest project tab bound', async () => {
+  const { server, ws, send, waitFor, waitNext, open, projectsDir, state } = await boot(['projA']);
+  const waitState = async (fn, ms = 9000) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) { if (fn()) return; await new Promise((r) => setTimeout(r, 25)); }
+    throw new Error('timeout waiting for state');
+  };
+  try {
+    await open('projA');
+    const firstResult = waitNext((e) => e.type === 'result' && e.sessionKey === 'projA');
+    send({ type: 'user_message', text: 'older session turn' });
+    await firstResult;
+    await waitState(() => server.session.meta.get('projA')?.sessionId);
+    const firstId = server.session.meta.get('projA').sessionId;
+
+    const spawned = waitFor((e) => e.type === 'sessions' && e.items.length === 2);
+    send({ type: 'new_session' });
+    await spawned;
+    const fresh = server.session.liveSessions().map((s) => s.key).find((k) => k !== 'projA');
+    const secondResult = waitNext((e) => e.type === 'result' && e.sessionKey === fresh);
+    send({ type: 'user_message', text: 'latest session turn' });
+    await secondResult;
+    await waitState(() => server.session.meta.get(fresh)?.sessionId);
+    const freshId = server.session.meta.get(fresh).sessionId;
+
+    server.session.flushSessionsFile();
+    ws.close();
+    await server.stop();
+
+    const config = loadConfig(['--profile', 'mock', '--port', '0', '--projects', projectsDir, '--state', state]);
+    const restarted = new BrokerServer(config);
+    try {
+      await restarted.start();
+      assert.equal(restarted.session.activeKey, fresh, 'latest project session is rebound as active on restart');
+      assert.equal(restarted.session.keyForProject(restarted.projects.get('projA')), fresh, 'project reopen target is the latest session key');
+      assert.ok(restarted.session.meta.has('projA'), 'first session meta restored');
+      assert.ok(restarted.session.meta.has(fresh), 'latest session meta restored');
+
+      const engine = await restarted.session.ensureEngine();
+      assert.ok(engine, 'restored session can cold-resume');
+      assert.equal(engine.sessionId, freshId, 'cold-resume uses the persisted latest session id');
+
+      const rows = restarted._sessionHistoryItems('all')
+        .filter((r) => r.projectId === 'projA' && r.harness === 'mock');
+      assert.deepEqual(rows.map((r) => r.id).sort(), [firstId, freshId].sort());
+      assert.equal(rows.length, 2, 'restart did not create a fresh blank replacement session for this project');
+      assert.ok(rows.find((r) => r.id === freshId)?.summary.includes('latest session turn'));
+    } finally {
+      await restarted.stop();
+    }
+  } catch (e) {
+    try { ws.close(); await server.stop(); } catch { /* ignore */ }
+    throw e;
+  }
 });
 
 test('SWITCH_SESSION rejects resume-only keys from another harness instead of creating active-engine sessions', async () => {
@@ -465,6 +537,9 @@ test('sessions.json persists resume ids with harness/cwd and refuses cross-harne
     assert.equal(stored.projA.resumeId, id);
     assert.equal(stored.projA.harness, 'mock');
     assert.equal(path.resolve(stored.projA.cwd), path.resolve(path.join(projectsDir, 'projA')));
+    assert.equal(stored.projA.profileId, 'mock');
+    assert.equal(stored.projA.projectId, 'projA');
+    assert.equal(stored.projA.model, 'mock-1');
     assert.equal(server.session._resumeIdFor('projA', 'mock'), id);
     assert.equal(server.session._resumeIdFor('projA', 'claude-code'), null);
     assert.equal(server.session._resumeIdFor('projA', 'opencode'), null);

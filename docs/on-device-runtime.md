@@ -125,11 +125,18 @@ overrides the repo.
 
 A "Claude Code" section on the Runtime screen runs the CLI's built-in
 `claude update` in the guest (same `script -qec` PTY + ANSI-strip pattern as sign-in)
-and reports the installed version (`claude --version`). It's in the APK, not the web
-UI, on purpose: it's a runtime action (available before the broker is up) that
+and reports the installed version (`claude --version`). If an older provisioned
+guest has lost the `claude` shim or installed it under a user npm prefix, the updater
+adds the global npm bin directory to `PATH` and backfills
+`npm install -g @anthropic-ai/claude-code` before retrying. It's in the APK, not the
+web UI, on purpose: it's a runtime action (available before the broker is up) that
 updates the very binary the broker spawns. A refreshed CLI takes effect on **new**
 agent sessions; live engines keep the binary they launched with, so Stop & Start the
-runtime to move every session onto it. Output streams to the runtime log.
+runtime to move every session onto it. It also repairs the common "broken global
+npm install" state seen on install-over phones: stale
+`.../@anthropic-ai/.claude-code-*` temp dirs are removed, a non-executable
+`claude` shim is deleted, and then the package is reinstalled cleanly before the
+update is retried. Output streams to the runtime log.
 
 ## Native Codex sign-in/update (`CodexLogin.kt`, `CodexUpdate.kt`)
 

@@ -2,4 +2,6 @@
 <paths>
     <!-- Exposes cacheDir/exports for sharing exported conversation files. -->
     <cache-path name="exports" path="exports/" />
+    <!-- Exposes the on-device build artifact copied by android/build-and-offer-apk.sh. -->
+    <external-path name="downloaded_apks" path="Download/" />
 </paths>

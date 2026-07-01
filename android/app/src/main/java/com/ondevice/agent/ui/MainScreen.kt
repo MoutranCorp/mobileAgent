@@ -61,6 +61,7 @@ interface MainActions {
     fun notifyUser(title: String, body: String)
     fun startVoice(onResult: (String?) -> Unit)
     fun openExternal(url: String)
+    fun installDownloadedApk()
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -167,6 +168,8 @@ private fun RuntimeTab(state: RuntimeState, detail: String, actions: MainActions
         ClaudeUpdateSection(state)
 
         CodexUpdateSection(state)
+
+        AppUpdateSection(actions)
 
         FileAccessSection(actions)
 
@@ -499,6 +502,20 @@ private fun ClaudeUpdateSection(runtime: RuntimeState) {
         FilledButton(if (busy) "Updating…" else "Update Claude Code") {
             if (!busy) ClaudeUpdate.update(ctx)
         }
+    }
+}
+
+/** Open the APK exported by android/build-and-offer-apk.sh. */
+@Composable
+private fun AppUpdateSection(actions: MainActions) {
+    Section("App update") {
+        Text(
+            "Builds exported on-device land at /sdcard/Download/mobile-agent-debug.apk.",
+            color = TextDim,
+            fontSize = 12.sp,
+        )
+        Spacer(Modifier.height(8.dp))
+        FilledButton("Install exported APK") { actions.installDownloadedApk() }
     }
 }
 

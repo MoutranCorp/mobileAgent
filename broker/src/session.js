@@ -147,12 +147,22 @@ export class SessionManager {
   /** The engine the UI is currently viewing (back-compat for `session.engine`). */
   get engine() { return this.engines.get(this.activeKey) || null; }
 
+  /** The session key currently bound to a project (its last foreground session). */
+  keyForProject(project) { return this._sessionKeyFor(project); }
+
   _resumeRecord(key) {
     const rec = this._sessionByProject[key];
     if (!rec) return null;
     if (typeof rec === 'string') return { resumeId: rec, harness: 'claude-code', legacy: true };
     if (rec && typeof rec === 'object' && rec.resumeId) {
-      return { resumeId: rec.resumeId, harness: rec.harness || null, cwd: rec.cwd || null };
+      return {
+        resumeId: rec.resumeId,
+        harness: rec.harness || null,
+        cwd: rec.cwd || null,
+        profileId: rec.profileId || null,
+        projectId: rec.projectId || null,
+        model: rec.model || null,
+      };
     }
     return null;
   }
@@ -174,10 +184,13 @@ export class SessionManager {
     return meta.sessionId;
   }
 
-  _storeResume(key, resumeId, harness, cwd = null) {
+  _storeResume(key, resumeId, harness, cwd = null, extra = {}) {
     if (!key || !resumeId) return;
     const rec = { resumeId, harness: harness || null };
     if (cwd) rec.cwd = cwd;
+    if (extra.profileId) rec.profileId = extra.profileId;
+    if (extra.projectId) rec.projectId = extra.projectId;
+    if (extra.model) rec.model = extra.model;
     this._sessionByProject[key] = rec;
     this._saveSessions();
   }
@@ -187,6 +200,73 @@ export class SessionManager {
       delete this._sessionByProject[key];
       this._saveSessions();
     }
+  }
+
+  /** Rebuild sleeping-session meta from persisted resume hints on broker startup. */
+  restorePersistedSessions({ projects = [], activityForKey } = {}) {
+    const projectsById = new Map((projects || []).map((p) => [p.id, p]));
+    const projectsByCwd = new Map((projects || [])
+      .map((p) => [normCwd(p.dir), p])
+      .filter(([cwd]) => !!cwd));
+    const bestByProject = new Map();
+    const activityAt = (key) => {
+      try { return Math.max(0, Number(activityForKey?.(key)) || 0); } catch { return 0; }
+    };
+
+    for (const key of Object.keys(this._sessionByProject || {})) {
+      if (this.meta.has(key)) continue;
+      const rec = this._resumeRecord(key);
+      if (!rec?.resumeId) continue;
+
+      const project = rec.projectId
+        ? (projectsById.get(rec.projectId) || null)
+        : (rec.cwd ? (projectsByCwd.get(normCwd(rec.cwd)) || null) : (projectsById.get(key) || null));
+      const projectId = rec.projectId || project?.id || (key !== MAIN_KEY && projectsById.has(key) ? key : null);
+      const cwd = project?.dir ||
+        (projectId ? projectsById.get(projectId)?.dir || null : null) ||
+        (key === MAIN_KEY ? this.config.projectsDir : rec.cwd) ||
+        null;
+      const profileId = this._profileIdForHarness(rec.harness, rec.profileId);
+      const profile = profileId ? this.profiles.get(profileId) : null;
+      const harness = rec.harness || profile?.harness || null;
+      const lastTs = activityAt(key);
+      const startedAt = lastTs || Date.now();
+      const model =
+        this._sanitizeModelForProfile(profile, rec.model, { allowCustom: true }) ||
+        this._preferredModelForProfile(profileId, profile);
+
+      this.meta.set(key, {
+        busy: false,
+        lastStatus: StatusState.IDLE,
+        profileId,
+        harness,
+        model,
+        permissionMode: profile?.permissionMode || this.defaultPermissionMode,
+        effort: this.defaultEffort,
+        serviceTier: harness === 'codex-app-server' ? (this.defaultServiceTier ?? null) : null,
+        sessionId: rec.resumeId,
+        projectId,
+        cwd,
+        lastActivityTs: startedAt,
+        lastTurnTs: startedAt,
+        pinned: false,
+        title: null,
+      });
+
+      if (projectId) {
+        const prev = bestByProject.get(projectId);
+        if (!prev || lastTs > prev.lastTs || (!prev.lastTs && key === projectId)) {
+          bestByProject.set(projectId, { key, lastTs });
+        }
+      }
+    }
+
+    for (const [projectId, rec] of bestByProject) this._activeKeyByProject.set(projectId, rec.key);
+
+    const activeProjectId = this.getActiveProject()?.id || null;
+    const activeBound = activeProjectId ? this._activeKeyByProject.get(activeProjectId) : null;
+    if (activeBound && this.meta.has(activeBound)) this.activeKey = activeBound;
+    else if (!activeProjectId && this.meta.has(MAIN_KEY)) this.activeKey = MAIN_KEY;
   }
 
   // --- public API -------------------------------------------------------------
@@ -712,7 +792,11 @@ export class SessionManager {
       // session" bug). Cold-resume/eviction also reads meta.sessionId directly.
       const harness = ev.engine || m?.harness || this.engines.get(key)?.harness || null;
       const cwd = ev.cwd || m?.cwd || this.engines.get(key)?.cwd || null;
-      this._storeResume(key, ev.sessionId, harness, cwd);
+      this._storeResume(key, ev.sessionId, harness, cwd, {
+        profileId: m?.profileId || null,
+        projectId: m?.projectId || null,
+        model: m?.model || ev.model || null,
+      });
       if (m) { m.sessionId = ev.sessionId; m.harness = harness; if (cwd) m.cwd = cwd; }
     }
     if (ev.type === EventType.STATUS && ev.state) {
@@ -774,6 +858,17 @@ export class SessionManager {
     if (!profileId) return;
     if (model) this.defaultModelsByProfile.set(profileId, model);
     else this.defaultModelsByProfile.delete(profileId);
+  }
+  _profileIdForHarness(harness, preferredId = null) {
+    if (preferredId) {
+      const preferred = this.profiles.get(preferredId);
+      if (preferred && (!harness || preferred.harness === harness)) return preferred.id;
+    }
+    const active = this.profiles.get(this.activeProfileId);
+    if (active && (!harness || active.harness === harness)) return active.id;
+    const matches = this.profiles.list().filter((p) => !harness || p?.harness === harness);
+    if (!matches.length) return null;
+    return (matches.find((p) => this.secrets.isReady(p)) || matches[0]).id;
   }
   _preferredModelForProfile(profileId, profile) {
     return this._sanitizeModelForProfile(profile, this.defaultModelsByProfile.get(profileId), { allowCustom: true }) ||

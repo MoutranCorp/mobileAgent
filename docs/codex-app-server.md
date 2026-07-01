@@ -118,10 +118,13 @@ remains visible locally, but the new Codex process does not have the unavailable
 thread's server-side context.
 
 Codex resume hints are cwd-qualified. New `sessions.json` records include
-`{ resumeId, harness, cwd }`; legacy Codex records without cwd, or records whose
-cwd differs from the session cwd, are skipped before `thread/resume` and replaced
-by the next fresh `thread/start`. Claude legacy string records remain
-Claude-only for compatibility.
+`{ resumeId, harness, cwd, profileId, projectId, model }`; legacy Codex records
+without cwd, or records whose cwd differs from the session cwd, are skipped
+before `thread/resume` and replaced by the next fresh `thread/start`. Claude
+legacy string records remain Claude-only for compatibility. On broker startup,
+those persisted records are also hydrated back into sleeping session metadata so
+the latest project tab/history row survives a restart instead of being replaced
+by a fresh blank Codex thread.
 
 Generated schema fields observed in `codex-cli 0.142.4`:
 
@@ -225,6 +228,9 @@ Current adapter coverage:
   Unknown/stale restored tab keys, including resume-only keys from another
   harness, must be rejected instead of treated as permission to start a new Codex
   thread during app startup.
+- Project opens must target the project's bound `sessionKey`, not always the bare
+  `projectId`, so reopening a folder after a restart returns to the latest Codex
+  tab instead of silently creating a new empty `gpt-5.5` session.
 
 Approvals/questions:
 
